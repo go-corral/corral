@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "corral sandbox filesystem baseline",
+  "description": "Schema for sandbox-permissions.json — corral's single source of truth for the SAFE BASE FILESYSTEM the sandbox exposes, and nothing more. It is embedded as a HARD baseline (deny-by-default: a path is reachable only if a rule allows it) and compiled by the Linux bwrap backend now and the macOS Seatbelt backend at M7; OS differences are expressed per-rule via 'archs'. It deliberately contains NO feature-tied mounts (docker socket, ssh-agent socket, kubeconfig) and NO 'when' gate — which paths to mount for an opt-in feature is the Providers' scope (DESIGN §4 / M5), not the policy's. User config paths.rw/ro layer additive on top; this baseline is not loosenable. 'additionalProperties: false' is intentional: a typo'd key fails the load closed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rules"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Link to this schema so editors validate the file on save."
+    },
+    "_comment": {
+      "description": "Free-form documentation block (ignored by consumers, which only read .rules).",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "rules": {
+      "type": "array",
+      "description": "The ordered filesystem allow rules. Every path the sandbox exposes comes from here (plus the per-launch working dir + user config, supplied by the launcher).",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "description"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host path. The tokens $HOME and $AGENT_CONFIG_DIR are expanded at launch (macOS-only rules may reference $SESSION_TMPDIR / $AGENT_BIN_DIR / $XDG_RUNTIME_DIR, expanded by the M7 backend). When regex:true this is an SBPL regex pattern instead. Must not contain a tab or newline."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human text for the generated permissions reference and for auditing."
+        },
+        "writeable": {
+          "type": "boolean",
+          "default": false,
+          "description": "true => writable (Linux --bind / macOS SBPL write-allow). Default false: read-only, the safe default."
+        },
+        "archs": {
+          "type": "array",
+          "description": "Restrict the rule to these platforms. Default: both.",
+          "default": ["linux", "macos"],
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["linux", "macos"] }
+        },
+        "recursive": {
+          "type": "boolean",
+          "default": true,
+          "description": "true => whole subtree (macOS subpath); false => single node (macOS literal). Informational on Linux (a bind is always recursive)."
+        },
+        "regex": {
+          "type": "boolean",
+          "default": false,
+          "description": "macOS only: path is an SBPL regex emitted as (regex #\"...\"). The Linux backend skips regex rules (cannot bind a regex)."
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false,
+          "description": "true => Linux uses --bind-try/--ro-bind-try (skip if the source is missing); macOS emits regardless (an absent allow path is harmless)."
+        },
+        "create": {
+          "type": "boolean",
+          "default": false,
+          "description": "true => mkdir -p the host path before binding (e.g. a sandbox-private cache dir)."
+        },
+        "resolveSymlinks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fully canonicalize the path through every symlink hop and emit the resolved TARGET instead of reproducing the link: Linux binds the target's content at the (unresolved) destination; macOS allows the resolved path plus each symlink node crossed on the way to it, since the child still walks the host chain and every readlink is policed. Set it on a path whose host symlink points OUTSIDE the sandbox's mounted tree (e.g. /etc/resolv.conf -> /run/systemd/resolve/... on systemd-resolved, where a reproduced --symlink would dangle and break DNS) or a user dotfile that may be a chained/symlinked-ancestor symlink (e.g. ~/.gitconfig -> ~/.dotfiles/git/gitconfig)."
+        }
+      }
+    }
+  }
+}

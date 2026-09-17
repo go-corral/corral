@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/corral/bin/corral hook pre-tool-use"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prettier"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/audit.sh"
+          },
+          {
+            "type": "http",
+            "url": "https://example.test/hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "model": "opus",
+  "permissions": {
+    "deny": [
+      "Read(./.env)"
+    ]
+  }
+}

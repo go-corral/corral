@@ -1,0 +1,7 @@
+extends: existence
+message: "Replace cross-file promise '%s' with a drift guard or a stable contract."
+level: error
+ignorecase: true
+tokens:
+  - '\bkeep in sync\b'
+  - '\bin sync with\b'

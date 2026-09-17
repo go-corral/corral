@@ -1,0 +1,21 @@
+{
+  "name": "corral-helper",
+  "displayName": "corral helper",
+  "description": "Helps new users install, configure, run, and troubleshoot corral — the sandbox that wraps Claude Code and enforces security policy on its tool calls.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Mathias Merscher, Nicolai Rybnikar"
+  },
+  "homepage": "https://github.com/go-corral/corral",
+  "repository": "https://github.com/go-corral/corral",
+  "license": "MIT",
+  "keywords": [
+    "corral",
+    "sandbox",
+    "claude-code",
+    "security",
+    "bubblewrap",
+    "seatbelt",
+    "onboarding"
+  ]
+}

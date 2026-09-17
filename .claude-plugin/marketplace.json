@@ -1,0 +1,17 @@
+{
+  "name": "corral",
+  "owner": {
+    "name": "Mathias Merscher, Nicolai Rybnikar"
+  },
+  "description": "Plugins for corral — the Claude Code sandbox. Ships the corral onboarding/usage helper skill.",
+  "plugins": [
+    {
+      "name": "corral-helper",
+      "source": "./plugins/corral-helper",
+      "description": "Helps new users install, configure, run, and troubleshoot corral (the Claude Code security sandbox).",
+      "category": "developer-tools",
+      "keywords": ["corral", "sandbox", "claude-code", "security", "bubblewrap", "seatbelt"],
+      "license": "MIT"
+    }
+  ]
+}

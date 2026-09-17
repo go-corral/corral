@@ -1,0 +1,12 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Writes to stdout/stderr for human-facing CLI output: a failed write to a
+      # closed terminal is not actionable, and checking it everywhere just adds
+      # noise. Real I/O (files, settings.json) is still checked.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln

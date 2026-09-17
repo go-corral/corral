@@ -1,0 +1,79 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prettier"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Grep|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"/opt/corral/bin/corral\" ]; then exec \"/opt/corral/bin/corral\" hook post-tool-use; elif [ -n \"$CORRAL_SANDBOX\" ]; then echo \"corral: policy hook binary missing inside the sandbox - refusing (reinstall corral, then run 'corral sync')\" >&2; exit 2; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/audit.sh"
+          },
+          {
+            "type": "http",
+            "url": "https://example.test/hook",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"/opt/corral/bin/corral\" ]; then exec \"/opt/corral/bin/corral\" hook pre-tool-use; elif [ -n \"$CORRAL_SANDBOX\" ]; then echo \"corral: policy hook binary missing inside the sandbox - refusing (reinstall corral, then run 'corral sync')\" >&2; exit 2; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"/opt/corral/bin/corral\" ]; then exec \"/opt/corral/bin/corral\" hook session-start; elif [ -n \"$CORRAL_SANDBOX\" ]; then echo \"corral: policy hook binary missing inside the sandbox - refusing (reinstall corral, then run 'corral sync')\" >&2; exit 2; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -x \"/opt/corral/bin/corral\" ]; then exec \"/opt/corral/bin/corral\" hook user-prompt-submit; elif [ -n \"$CORRAL_SANDBOX\" ]; then echo \"corral: policy hook binary missing inside the sandbox - refusing (reinstall corral, then run 'corral sync')\" >&2; exit 2; fi",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "model": "opus",
+  "permissions": {
+    "deny": [
+      "Read(./.env)"
+    ]
+  }
+}

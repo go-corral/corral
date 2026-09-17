@@ -1,0 +1,1 @@
+../../../../../../docs/reference/sandbox-permissions.md

@@ -1,0 +1,300 @@
+{
+  "$schema": "./sandbox-permissions.schema.json",
+  "_comment": [
+    "corral's embedded HARD baseline: the safe base filesystem the sandbox exposes,",
+    "and nothing more. Deny-by-default. OS differences are per-rule via 'archs'. The",
+    "Linux bwrap backend compiles the linux/both rules now; macOS rules ride along as",
+    "DATA for the M7 Seatbelt backend (the Linux compiler skips them).",
+    "",
+    "This baseline deliberately OMITS: the when-gated feature mounts (docker socket,",
+    "ssh-agent socket, kubeconfig) which are Providers scope (M5), not the policy; the",
+    "$AGENT_CONFIG_DIR/hooks + settings.json read-only overlays (hooks is only a naming",
+    "convention so the protection would be illusory, and settings.json must stay writable",
+    "so claude can persist /config); and the npm cache mount (deferred to the M5",
+    "cache-isolation provider). The when field is also removed from the schema.",
+    "",
+    "Tokens $HOME and $AGENT_CONFIG_DIR are expanded by the launcher (which also ensures",
+    "$AGENT_CONFIG_DIR exists). macOS-only rules may use $SESSION_TMPDIR / $AGENT_BIN_DIR /",
+    "$XDG_RUNTIME_DIR, expanded by the M7 backend.",
+    "",
+    "Optionality (Linux): a rule WITHOUT optional:true is REQUIRED (a missing source fails",
+    "the launch closed); WITH optional:true it is skipped if absent (bwrap --bind-try).",
+    "",
+    "macOS rules are faithful-but-UNVERIFIED and MUST be reviewed by a macOS developer at M7."
+  ],
+  "rules": [
+    {
+      "path": "/opt",
+      "description": "System binaries (opt)"
+    },
+    {
+      "path": "/usr",
+      "description": "System binaries and libraries"
+    },
+    {
+      "path": "/bin",
+      "description": "System binaries"
+    },
+    {
+      "path": "/lib",
+      "description": "System libraries",
+      "archs": ["linux"]
+    },
+    {
+      "path": "/lib64",
+      "description": "64-bit system libraries",
+      "archs": ["linux"],
+      "optional": true
+    },
+    {
+      "path": "/etc/resolv.conf",
+      "description": "DNS resolver config",
+      "recursive": false,
+      "resolveSymlinks": true
+    },
+    {
+      "path": "/etc/hosts",
+      "description": "Static host table",
+      "recursive": false
+    },
+    {
+      "path": "/etc/ssl",
+      "description": "TLS trust store"
+    },
+    {
+      "path": "/etc/ca-certificates",
+      "description": "CA certificates"
+    },
+    {
+      "path": "/etc/passwd",
+      "description": "User lookup",
+      "recursive": false
+    },
+    {
+      "path": "/etc/group",
+      "description": "Group lookup",
+      "recursive": false
+    },
+    {
+      "path": "/etc/nsswitch.conf",
+      "description": "NSS config",
+      "recursive": false
+    },
+    {
+      "path": "/etc/localtime",
+      "description": "Local timezone",
+      "recursive": false
+    },
+    {
+      "path": "/System",
+      "description": "dyld shared cache and frameworks",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Applications",
+      "description": "macOS Applications",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/private/var/select",
+      "description": "macOS shell selector — /bin/sh reads /var/select/sh at startup. A single /var leaf; the broad /private/var stays denied by absence.",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/private/var/db/timezone",
+      "description": "Local timezone data (/etc/localtime resolves here on macOS). A single /var/db leaf; the broad /private/var stays denied by absence.",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/private/var/db/xcode_select_link",
+      "description": "Active Xcode/CommandLineTools selector (xcrun/git/clang readlink it to find the toolchain; target is under /Library, already granted). A single /var/db leaf.",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/sbin",
+      "description": "System binaries",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library",
+      "description": "macOS frameworks and locale data",
+      "archs": ["macos"]
+    },
+    {
+      "path": "/",
+      "description": "Root dir node (dyld reads it at launch); traversal only, no subtree",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/etc",
+      "description": "/etc symlink (kernel readlink to /private/etc)",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/tmp",
+      "description": "/tmp symlink (kernel readlink to /private/tmp)",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/var",
+      "description": "/var symlink node — REQUIRED to resolve /var/... paths (e.g. /bin/sh reads /var/select/sh). Grants no /var CONTENT: the broad /private/var is absent.",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/null",
+      "description": "Null device",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/zero",
+      "description": "Zero device",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/tty",
+      "description": "Controlling terminal",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/ptmx",
+      "description": "Pty master (Bash tool / interactive shell)",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/stdin",
+      "description": "Standard input",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/stdout",
+      "description": "Standard output",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/stderr",
+      "description": "Standard error",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/random",
+      "description": "Randomness source",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/urandom",
+      "description": "Randomness source (non-blocking)",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/dtracehelper",
+      "description": "node DTrace USDT probe registration",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/dev/autofs_nowait",
+      "description": "autofs do-not-block control device",
+      "writeable": true,
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
+      "path": "^/dev/ttys",
+      "description": "Pty slaves (Bash tool / interactive shell)",
+      "writeable": true,
+      "regex": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "^/dev/fd/",
+      "description": "Process-substitution / inherited fds",
+      "writeable": true,
+      "regex": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "$HOME/.gitconfig",
+      "description": "Git identity",
+      "recursive": false,
+      "resolveSymlinks": true,
+      "optional": true
+    },
+    {
+      "path": "$HOME/.gitignore_global",
+      "description": "Global gitignore (core.excludesFile)",
+      "recursive": false,
+      "resolveSymlinks": true,
+      "optional": true
+    },
+    {
+      "path": "$HOME/.config/git",
+      "description": "Git config",
+      "optional": true
+    },
+    {
+      "path": "$HOME/.config/ccstatusline",
+      "description": "Status-line config",
+      "optional": true
+    },
+    {
+      "path": "$HOME/.config/corral",
+      "description": "corral's own config, read-only: the in-sandbox PreToolUse hook re-loads it to rebuild the policy engine, so it must be readable inside the sandbox (on macOS Seatbelt a visible-but-denied read is a hard EPERM that fails the hook closed). Read-only so the agent cannot widen its own policy mid-session.",
+      "optional": true
+    },
+    {
+      "path": "$HOME/.local/bin",
+      "description": "User-installed tools",
+      "optional": true
+    },
+    {
+      "path": "$HOME/.local/share/uv",
+      "description": "uv tool data",
+      "optional": true
+    },
+    {
+      "path": "$AGENT_BIN_DIR",
+      "description": "Directory of the resolved agent binary",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "$HOME/Library/Keychains",
+      "description": "macOS Keychain",
+      "writeable": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "$SESSION_TMPDIR",
+      "description": "Per-session temp dir (TMP/TMPDIR/TEMPDIR plus the selected agent's temp override — e.g. claude's CLAUDE_CODE_TMPDIR — point here, and TMPPREFIX=<dir>/zsh so zsh's heredoc temp files land inside it too; Linux uses /tmp/claude in the tmpfs instead)",
+      "writeable": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "$AGENT_CONFIG_DIR",
+      "description": "Agent config dir: sessions, history, caches",
+      "writeable": true
+    }
+  ]
+}
