@@ -44,3 +44,6 @@ release:
   draft: false
   prerelease: auto
   mode: keep-existing
+  use_existing_draft: true
+  preflight:
+    fail_on_error: true
