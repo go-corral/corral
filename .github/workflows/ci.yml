@@ -1,0 +1,117 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -ldflags '-s -w' -o bin/corral ./cmd/corral
+      - uses: actions/upload-artifact@v7
+        with:
+          name: corral-${{ matrix.os }}
+          path: bin/corral
+          retention-days: 7
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Run tests
+        run: |
+          go install gotest.tools/gotestsum@latest
+          "$(go env GOPATH)/bin/gotestsum" --junitfile report.xml --format pkgname \
+            -- -race -covermode=atomic -coverprofile=coverage.txt ./...
+      - name: Coverage summary
+        run: |
+          echo "### Coverage (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.txt | tail -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Golden files committed and current
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: |
+            report.xml
+            coverage.txt
+          retention-days: 7
+
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l internal cmd)" || { echo 'gofmt needed:'; gofmt -l internal cmd; exit 1; }
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+  vale:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Vale
+        uses: errata-ai/vale-action@v3
+        with:
+          version: 3.21.0
+          reporter: github-check
+          filter_mode: nofilter
+          fail_on_error: true
+          # sync with scripts/lint-vale.sh
+          vale_flags: "--glob=!{.git/**,.gopath/**,.gocache/**,.vale/**,.claude/**,.skill-eval-workspace/**,scratchpad/**,bin/**,dist/**,vendor/**,node_modules/**,**/CHANGELOG.md,docs/reference/sandbox-permissions.md,plugins/corral-helper/skills/corral/references/*/*}"
+          files: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: golang/govulncheck-action@v1

@@ -1,0 +1,194 @@
+(version 1)
+(allow default)
+
+;; Writes: deny everything, then re-allow a specific set.
+(deny file-write*)
+(allow file-write*
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/tty")
+  (literal "/dev/ptmx")
+  (literal "/dev/stdin")
+  (literal "/dev/stdout")
+  (literal "/dev/stderr")
+  (literal "/dev/dtracehelper")
+  (literal "/dev/autofs_nowait")
+  (regex #"^/dev/ttys")
+  (regex #"^/dev/fd/")
+  (subpath "/Users/u/Library/Keychains")
+  (subpath "/private/tmp/corral-501-abc")
+  (subpath "/Users/u/.claude")
+  (subpath "/Users/u/proj")
+  (subpath "/private/var/run/docker.sock")
+)
+
+;; Reads: deny by default, then re-allow the system roots the agent needs to
+;; boot (dyld shared cache, frameworks, libraries, locale/CA data) plus its
+;; own state and the resolved agent binary dir. $HOME stays deny-by-default
+;; (only the entries below are readable); /Users/<others>, /Volumes stay denied.
+(deny file-read*)
+(allow file-read*
+  (subpath "/opt")
+  (subpath "/usr")
+  (subpath "/bin")
+  (literal "/private/etc/resolv.conf")
+  (literal "/private/etc/hosts")
+  (subpath "/private/etc/ssl")
+  (subpath "/private/etc/ca-certificates")
+  (literal "/private/etc/passwd")
+  (literal "/private/etc/group")
+  (literal "/private/etc/nsswitch.conf")
+  (literal "/private/etc/localtime")
+  (subpath "/System")
+  (subpath "/Applications")
+  (subpath "/private/var/select")
+  (subpath "/private/var/db/timezone")
+  (literal "/private/var/db/xcode_select_link")
+  (subpath "/sbin")
+  (subpath "/Library")
+  (literal "/")
+  (literal "/etc")
+  (literal "/tmp")
+  (literal "/var")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/tty")
+  (literal "/dev/ptmx")
+  (literal "/dev/stdin")
+  (literal "/dev/stdout")
+  (literal "/dev/stderr")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (literal "/dev/dtracehelper")
+  (literal "/dev/autofs_nowait")
+  (regex #"^/dev/ttys")
+  (regex #"^/dev/fd/")
+  (literal "/Users/u/.gitconfig")
+  (literal "/Users/u/.gitignore_global")
+  (subpath "/Users/u/.config/git")
+  (subpath "/Users/u/.config/ccstatusline")
+  (subpath "/Users/u/.config/corral")
+  (subpath "/Users/u/.local/bin")
+  (subpath "/Users/u/.local/share/uv")
+  (subpath "/opt/claude/bin")
+  (subpath "/Users/u/Library/Keychains")
+  (subpath "/private/tmp/corral-501-abc")
+  (subpath "/Users/u/.claude")
+  (subpath "/Users/u/proj")
+  (subpath "/Users/u/work/ro")
+  (subpath "/private/var/run/docker.sock")
+)
+
+;; Exec: deny by default, then re-allow EXACTLY the readable set above — a
+;; binary (or a #! script's interpreter) may be exec'd only from a path the
+;; sandbox can also read. Without this, (allow default) lets the session exec
+;; any binary on the host, even in dirs whose contents are otherwise hidden.
+(deny process-exec*)
+(allow process-exec*
+  (subpath "/opt")
+  (subpath "/usr")
+  (subpath "/bin")
+  (literal "/private/etc/resolv.conf")
+  (literal "/private/etc/hosts")
+  (subpath "/private/etc/ssl")
+  (subpath "/private/etc/ca-certificates")
+  (literal "/private/etc/passwd")
+  (literal "/private/etc/group")
+  (literal "/private/etc/nsswitch.conf")
+  (literal "/private/etc/localtime")
+  (subpath "/System")
+  (subpath "/Applications")
+  (subpath "/private/var/select")
+  (subpath "/private/var/db/timezone")
+  (literal "/private/var/db/xcode_select_link")
+  (subpath "/sbin")
+  (subpath "/Library")
+  (literal "/")
+  (literal "/etc")
+  (literal "/tmp")
+  (literal "/var")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/tty")
+  (literal "/dev/ptmx")
+  (literal "/dev/stdin")
+  (literal "/dev/stdout")
+  (literal "/dev/stderr")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+  (literal "/dev/dtracehelper")
+  (literal "/dev/autofs_nowait")
+  (regex #"^/dev/ttys")
+  (regex #"^/dev/fd/")
+  (literal "/Users/u/.gitconfig")
+  (literal "/Users/u/.gitignore_global")
+  (subpath "/Users/u/.config/git")
+  (subpath "/Users/u/.config/ccstatusline")
+  (subpath "/Users/u/.config/corral")
+  (subpath "/Users/u/.local/bin")
+  (subpath "/Users/u/.local/share/uv")
+  (subpath "/opt/claude/bin")
+  (subpath "/Users/u/Library/Keychains")
+  (subpath "/private/tmp/corral-501-abc")
+  (subpath "/Users/u/.claude")
+  (subpath "/Users/u/proj")
+  (subpath "/Users/u/work/ro")
+  (subpath "/private/var/run/docker.sock")
+)
+
+;; Metadata-only (lstat) on the ancestors of the readable paths, so
+;; realpath walks that lstat each component still succeed under the
+;; deny-by-default read policy (directory contents stay unreadable).
+(allow file-read-metadata
+  (literal "/Users")
+  (literal "/Users/u")
+  (literal "/Users/u/.config")
+  (literal "/Users/u/.local")
+  (literal "/Users/u/.local/share")
+  (literal "/Users/u/Library")
+  (literal "/Users/u/work")
+  (literal "/private")
+  (literal "/private/tmp")
+  (literal "/private/var")
+  (literal "/private/var/run")
+)
+
+;; Blocked paths (always-blocked + config) — deny all reads, writes, and execs.
+;; Placed after the allow rules so it overrides them, e.g. ~/.ssh. process-exec*
+;; is included so a secret dir/file nested under an allowed mount can't be exec'd.
+(deny file-read* file-write* process-exec*
+  (subpath "/Users/u/.ssh")
+  (subpath "/Users/u/.gnupg")
+  (subpath "/Users/u/.aws")
+  (literal "/Users/u/.netrc")
+  (literal "/Users/u/proj/.env")
+)
+
+;; ...but re-allow lstat of the blocked-DIRECTORY leaves so the hook can
+;; canonicalize them at startup (literal only — contents stay hidden).
+(allow file-read-metadata
+  (literal "/Users/u/.ssh")
+  (literal "/Users/u/.gnupg")
+  (literal "/Users/u/.aws")
+)
+
+;; Process isolation — keep a compromised session from inspecting or controlling
+;; other processes. process-info* covers the proc_info syscall family;
+;; mach-task-read/mach-task-name cover the read/name task ports behind
+;; mach_vm_read/vmmap (else a session could dump ssh-agent / gpg-agent memory);
+;; mach-priv-task-port covers the full control port (task_for_pid), which also
+;; allows WRITING another task's memory and injecting threads. (target others)
+;; leaves self- and same-sandbox (child) targets intact.
+(deny process-info* (target others))
+(deny mach-task-read mach-task-name (target others))
+(deny mach-priv-task-port (target others))
+
+;; Sandbox-escape hardening: deny the LaunchServices/launchd hand-off `open` uses to
+;; spawn its target OUTSIDE this profile. Both coreservices subspaces are load-bearing —
+;; denying either alone still escapes. (Apple Events cross-app RCE is NOT closable in SBPL:
+;; appleeventsd brokers the send via the bootstrap port — neither a mach-lookup deny nor
+;; (deny appleevent-send) stops it, both verified on macOS 26. Accepted OS-layer residual.)
+(deny mach-lookup
+  (global-name-regex #"^com\.apple\.coreservices\.launchservices")
+  (global-name-regex #"^com\.apple\.coreservices\.quarantine")
+)

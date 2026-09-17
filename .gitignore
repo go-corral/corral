@@ -1,0 +1,86 @@
+### direnv ###
+.direnv
+.envrc
+
+### Git ###
+# Created by git for backups. To disable backups in Git:
+# $ git config --global mergetool.keepBackup false
+*.orig
+
+# Created by git when using merge tools for conflicts
+*.BACKUP.*
+*.BASE.*
+*.LOCAL.*
+*.REMOTE.*
+*_BACKUP_*.txt
+*_BASE_*.txt
+*_LOCAL_*.txt
+*_REMOTE_*.txt
+
+### Go ###
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+### OSX ###
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Build output
+/bin/
+# GoReleaser build/release output
+/dist/
+
+# Coverage artifacts (*.out is already covered by the Go section above)
+coverage.*
+
+# Vim swap files
+*.swp
+
+# Vale packages are restored by `vale sync`; repository vocabulary and rules are tracked.
+/.vale/styles/*
+!/.vale/styles/config/
+!/.vale/styles/config/**
+!/.vale/styles/CorralComments/
+!/.vale/styles/CorralComments/**
+
+/.claude/
+/.pi/
+/scratchpad/
+.corral.local.yml

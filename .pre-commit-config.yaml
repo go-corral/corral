@@ -1,0 +1,10 @@
+repos:
+  - repo: https://github.com/vale-cli/vale
+    rev: v3.20.0
+    hooks:
+      # The remote hook supplies the pinned Vale binary; the Make target owns scope and sync.
+      - id: vale
+        name: vale
+        entry: make vale
+        pass_filenames: false
+        always_run: true

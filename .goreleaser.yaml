@@ -1,0 +1,49 @@
+# Validate locally: goreleaser check && goreleaser release --snapshot --clean
+version: 2
+
+project_name: corral
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: corral
+    main: ./cmd/corral
+    binary: corral
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # {{ .Version }} is the tag with its leading "v" stripped (e.g. 0.1.0)
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: corral
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  algorithm: sha256
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+
+# The release, its tag, and its notes are owned by release-please; goreleaser
+# only builds and attaches artifacts.
+changelog:
+  disable: true
+
+release:
+  draft: false
+  prerelease: auto
+  mode: keep-existing
+  use_existing_draft: true
+  preflight:
+    fail_on_error: true
