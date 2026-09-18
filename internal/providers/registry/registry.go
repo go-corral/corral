@@ -54,6 +54,7 @@ var registry = []Registration{
 		Enabled: func(c *config.Config) bool {
 			return len(c.Providers.Block.Directories)+len(c.Providers.Block.Files) > 0
 		},
+		Warnings: func(c *config.Config) []string { return c.Providers.Block.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return block.New(c.ConfigBlockedDirs(d.Home), c.ConfigBlockedFiles(d.Home))
 		},

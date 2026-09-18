@@ -63,8 +63,9 @@ as successive layers, later one winning on scalars.
 config (net, profile, providers, extra rw/ro grants, blocked-path count), so it is
 obvious the sandbox is active and what the session grants. Advisory **warnings**
 (highlighted on a tty, suppressed under `NO_COLOR`/`TERM=dumb`) flag footguns that work
-but deserve a second look: docker enabled (root-equivalent host access), and a
-`providers.paths.rw` grant that overrides a baseline read-only system path. `corral validate`
+but deserve a second look: docker enabled (root-equivalent host access), a
+`providers.paths.rw` grant that overrides a baseline read-only system path, and a
+`providers.block` entry that does not exist on the host. `corral validate`
 surfaces the same advisory set from one shared renderer. The banner is on stderr so
 `--dry-run`'s stdout (the argv) stays pipeable.
 

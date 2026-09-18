@@ -1,7 +1,10 @@
 package block
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/go-corral/corral/internal/pathutil"
 )
@@ -39,4 +42,20 @@ func (c Config) Validate(floor []string) error {
 		}
 	}
 	return nil
+}
+
+// Warnings returns the lint results for the providers.block: entries that do not exist
+func (c Config) Warnings() []string {
+	var w []string
+	for _, l := range []struct {
+		key   string
+		paths []string
+	}{{"directories", c.Directories}, {"files", c.Files}} {
+		for _, p := range l.paths {
+			if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+				w = append(w, fmt.Sprintf("providers.block.%s %q does not exist", l.key, p))
+			}
+		}
+	}
+	return w
 }
