@@ -31,6 +31,7 @@ func isolatePromptHook(t *testing.T) {
 	t.Setenv(sandbox.SandboxEnvVar, "1")
 	t.Setenv("TMPDIR", dir)
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv(sandbox.GlobalConfigEnvVar, "")
 }
 
 // A prompt carrying a secret is swallowed with a warning that names the kind and the
@@ -215,6 +216,8 @@ func TestHooksDisabledBlocksNothingAndAuditsOnce(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv(sandbox.SandboxEnvVar, "")
 	t.Setenv(sandbox.DisableHooksEnvVar, "1")
+	t.Setenv(sandbox.GlobalConfigEnvVar, "")
+	t.Chdir(t.TempDir())
 
 	// Every event allows — including the ones that fail closed by default.
 	for _, ev := range []string{"pre-tool-use", "post-tool-use", "session-start", "user-prompt-submit", "bogus-event"} {
