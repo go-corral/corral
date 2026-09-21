@@ -1,39 +1,19 @@
 # Configuration reference
 
-corral uses layered YAML configuration. This page lists every accepted key, its type,
-default, valid values, and constraints.
+## Precedence
 
-## Layers and precedence
+| Order | Source                                                                | Use                                                                 |
+| ----- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1     | Built-in defaults                                                     | Defaults                                                            |
+| 2     | `~/.config/corral/config.yml` or `$XDG_CONFIG_HOME/corral/config.yml` | Your personal settings                                              |
+| 3     | `.corral.yml`                                                         | Intended to be commited with the project as project-scoped defaults |
+| 4     | `.corral.local.yml`                                                   | Intended to be gitignored, personal project-scoped settings         |
 
-corral merges these sources from lowest to highest precedence:
+All settings (profiles too) are merged with lists being appended and uniqued so they can't contain duplicate entries. The config syntax is checked and corral aborts when it's invalid.
 
-| Order | Source | Use |
-| --- | --- | --- |
-| 1 | Built-in defaults | Compiled defaults shown below. |
-| 2 | `~/.config/corral/config.yml` or `$XDG_CONFIG_HOME/corral/config.yml` | Settings for this user. |
-| 3 | `.corral.yml` | Shared project settings, found by walking up from the working directory. |
-| 4 | `.corral.local.yml` | Per-user project settings, normally ignored by Git. |
+Run [`corral validate`](commands.md#corral-validate) to list loaded config files and inspect the effective configuration.
 
-Scalars such as strings, booleans, and numbers replace the value from an earlier
-source. Lists merge append-unique, so a later source can add entries but cannot remove
-earlier entries. Maps such as `profiles` merge by key.
-
-An unknown key, invalid enum, malformed value, or other validation error stops the
-command. corral does not launch with partially understood config. Keys use
-**lowerCamelCase**, following Kubernetes conventions.
-
-Run [`corral validate`](commands.md#corral-validate) to list the contributing files and
-inspect selected effective settings. It does not attribute individual values to source
-files; inspect the listed files when provenance matters.
-
-**Repository config requires content approval.** corral hashes the exact bytes of
-`.corral.yml` and `.corral.local.yml`. The first real `corral run` or `corral sync` in a
-repository, and any later content change, requires interactive approval before the files
-are used. A real `run` also checks every enabled session-hook executable
-(`providers.hooks.*.exec`). `--yes` does not grant either approval, and a non-interactive
-command fails closed. See
-[Repository config approval](../explanation/trust-gate.md) for the files, commands, and
-limits.
+Project config files need your approval before corral uses them to prevent inadvertently running insecure configurations. If the config changes, it needs a new approval.
 
 ## The built-in defaults
 
@@ -65,19 +45,17 @@ providers:
     ro: []
   env:
     passthrough:
-      [
-        TERM,
-        COLORTERM,
-        NO_COLOR,
-        EDITOR,
-        VISUAL,
-        PAGER,
-        TMPDIR,
-        LANG,
-        CLAUDE_CONFIG_DIR,
-        PI_CODING_AGENT_DIR,
-        PI_CODING_AGENT_SESSION_DIR,
-      ]
+      - TERM
+      - COLORTERM
+      - NO_COLOR
+      - EDITOR
+      - VISUAL
+      - PAGER
+      - TMPDIR
+      - LANG
+      - CLAUDE_CONFIG_DIR
+      - PI_CODING_AGENT_DIR
+      - PI_CODING_AGENT_SESSION_DIR
     set: []
   docker:
     enabled: false
@@ -287,7 +265,7 @@ A grant may not re-expose an [always-blocked path](../explanation/threat-model.m
 
 - An always-blocked directory, anything under it, or a symlink resolving into it is
   rejected. For example: `providers.paths: "~/sshlink" resolves to "~/.ssh", which is
-  inside the always-blocked path`. corral checks the resolved directory because that is
+inside the always-blocked path`. corral checks the resolved directory because that is
   what the sandbox mounts under the symlink's name.
 - An ancestor, including `~`, remains valid because corral masks the always-blocked path
   again inside the mount. This also covers an always-blocked directory that is itself a
@@ -547,7 +525,7 @@ Tunes the hook-side policy engine.
 
 - **Type:** string
 - **Default:** empty, which uses `Treat this credential as potentially exposed:
-  rotate/revoke it and inform IT/Security.`
+rotate/revoke it and inform IT/Security.`
 - **Behavior:** replaces the incident-response sentence appended to secret-detection
   messages. Use it for an organization-specific contact or runbook, and do not include
   credentials.
