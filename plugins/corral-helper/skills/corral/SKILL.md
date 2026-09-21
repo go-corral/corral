@@ -2,11 +2,10 @@
 name: corral
 description: >-
   Help install, configure, run, update, uninstall, and troubleshoot corral, the coding-agent
-  sandbox for Claude Code and pi. Trigger when the user mentions corral, a Claude sandbox,
+  sandbox for Claude Code and pi. Trigger when the user mentions corral, an agent sandbox,
   doctor/sync/validate/run, .corral.yml, provider setup, filesystem or environment grants,
-  session hooks, blocked tool calls, the audit log, always-blocked paths (or the former name
-  "secure floor"), masked credential directories, or a vague report that the sandbox will not
-  allow something.
+  session hooks, blocked tool calls, the audit log, always-blocked paths, masked credential
+  directories, or a vague report that the sandbox will not allow something.
 ---
 
 # corral helper
@@ -43,12 +42,12 @@ task.
 
 Use these interfaces before proposing a fix:
 
-| Interface | Use it for |
-| --- | --- |
-| `corral doctor` | Binary, backend, agent integration, config health, provider availability, and update state. |
-| `corral validate` | Sectioned config report: sources and approval notices, sandbox settings including the private home, agent settings, path grants, environment names, and enabled providers. It does not show per-field provenance or host availability. |
-| `corral run --dry-run -- <agent args>` | The sandbox command that would launch, without running session hooks or creating temporary credentials. |
-| The audit record's `rule` and `reason` | The policy decision behind a blocked tool call. |
+| Interface                              | Use it for                                                                                                                                                                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `corral doctor`                        | Binary, backend, agent integration, config health, provider availability, and update state.                                                                                                                                            |
+| `corral validate`                      | Sectioned config report: sources and approval notices, sandbox settings including the private home, agent settings, path grants, environment names, and enabled providers. It does not show per-field provenance or host availability. |
+| `corral run --dry-run -- <agent args>` | The sandbox command that would launch, without running session hooks or creating temporary credentials.                                                                                                                                |
+| The audit record's `rule` and `reason` | The policy decision behind a blocked tool call.                                                                                                                                                                                        |
 
 Validation path trees identify configured grants with `[grant]`; terminal styling also makes
 them bold. Do not infer access from grouping branches. `--list` expands blocked paths, not
@@ -114,35 +113,29 @@ supported network mode; do not invent `net: none`.
 
 ## Make config changes safely
 
-The normal file layers are:
+Besides the built-in defaults, config lives in three files. Choose one by who the
+setting is for:
 
-1. `~/.config/corral/config.yml` for operator-wide settings;
-2. `.corral.yml` for shared project settings;
-3. `.corral.local.yml` for a per-user project override.
+| File                               | Who it is for                     | Git                                            |
+| ---------------------------------- | --------------------------------- | ---------------------------------------------- |
+| `~/.config/corral/config.yml`      | The user, in every project.       | Outside any repo.                              |
+| `.corral.yml` in the project       | All users working in the project. | Commit it with the project.                    |
+| `.corral.local.yml` in the project | The user, in this one project.    | Not ignored by itself; add it to `.gitignore`. |
 
-`.corral.local.yml` is ignored by Git only by convention, so ensure the repository's
-`.gitignore` covers it. Profiles are overlays selected at launch. Read
-[config.md](references/reference/config.md) for exact fields, defaults, constraints, and
-merge behavior.
+The global config is the user's own file, so corral never asks for approval. The first real `run` or `corral sync` in a repo asks the user to approve the project config files before it uses them and again when they change.
+When you recommend a layer, say in one short sentence what the file is for. Profiles are extra layers selected at launch with `--profile`. Read [config.md](references/reference/config.md) for exact fields, defaults, constraints, and merge behavior.
 
 Before editing:
 
-- run `corral validate` on the host to list the contributing sources and selected effective
-  settings;
-- inspect those source files when you need to identify which layer supplied a value;
-- verify the requested field and its effective default;
-- ask which layer to use if team policy versus personal preference is ambiguous;
-- choose the narrowest path and permission that satisfy the task.
+- run `corral validate` list the contributing sources and selected effective settings
+- inspect those source files when you need to identify which layer supplied a value
+- verify the requested field and its effective default
+- ask which layer to use if team policy versus personal preference is ambiguous
+- choose the narrowest path and permission that satisfy the task
 
-After editing, run host-side `corral validate` again. Repository config requires interactive
-content approval on the next real `run` or `sync`; `--yes` does not grant that approval.
-Any config change takes effect in a new session.
+After editing, run `corral validate` again. Any config change takes effect in a new session.
 
-Inside an active corral sandbox, policy blocks writes to corral's config files. Do not
-retry or attempt a bypass. Write the complete proposed content to an ordinary file in the
-working directory, such as `corral-local-new.yml`, and ask the user to review and move it
-to the protected destination from the host. Do not use a protected basename even under
-`scratchpad/`.
+Inside an active corral sandbox, policy blocks writes to corral's config files. Write the complete proposed content to a file in the working directory, such as `corral-local-new.yml`, and ask the user to review and move it to the protected destination from the host.
 
 ## Use the canonical guides
 
@@ -167,9 +160,3 @@ to the protected destination from the host. Do not use a protected basename even
 - **Repository approval:** [trust-gate.md](references/explanation/trust-gate.md).
 - **Guarantees and limits:** [threat-model.md](references/explanation/threat-model.md).
 - **Architecture:** [design.md](references/explanation/design.md).
-
-For session hooks, remember only the behavior that changes advice: they execute host code,
-readable enabled executables require content approval before `run`, required `preStart`
-failures abort launch, `postEnd` failures warn, and stdout from `preStart` is a strict
-machine-readable contribution channel. Read the setup and contract pages for everything
-else.
