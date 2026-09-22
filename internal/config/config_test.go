@@ -191,7 +191,7 @@ func TestEnvSetNameValidation(t *testing.T) {
 func TestEnvSetReservedRejected(t *testing.T) {
 	// corral-controlled vars must not be settable, so a config typo can never unset the
 	// sandbox marker or flip the connector kill switch.
-	for _, name := range []string{"CORRAL_SANDBOX", "CORRAL_GLOBAL_CONFIG", "CORRAL_PROVIDER_NOTES", "CORRAL_BACKEND_NOTES", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
+	for _, name := range []string{"CORRAL_SANDBOX", "CORRAL_GLOBAL_CONFIG", "CORRAL_AUDIT_PATH", "CORRAL_PROVIDER_NOTES", "CORRAL_BACKEND_NOTES", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
 		g := "providers:\n  env:\n    set:\n      - {name: " + name + ", value: x}\n"
 		if _, _, err := loadFrom(t, "/home/u", g, "", ""); err == nil {
 			t.Errorf("expected reserved env.set name %q to be rejected", name)

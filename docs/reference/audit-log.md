@@ -32,9 +32,8 @@ limits. Other values are replaced with their byte count.
   `plan`, and `message` instruction fields; and other free-text MCP arguments. A counted
   value appears as `"content_bytes": 2148`.
 
-The default log is inside the agent config directory, which is writable in the sandbox
-so corral can append decisions. Policy blocks agent tool calls that try to write,
-truncate, or delete the live log and its backups.
+[`policy.audit.path`](config.md#policyaudit) sets the log location. Policy blocks agent
+tool calls that try to write, truncate, or delete the live log and its backups.
 
 Before sharing an audit record, inspect every retained `command`, WebSearch `query`, and
 WebFetch `url`. These fields may contain an inline token.

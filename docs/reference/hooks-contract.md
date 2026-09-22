@@ -110,11 +110,11 @@ stdout must contain exactly one JSON object:
 - Each contributed environment name must match
   `^[A-Za-z_][A-Za-z0-9_]*$`. No value or note may contain a NUL byte, and the whole
   contribution's values and notes are capped at 64 KiB.
-- `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_AGENT`, `CORRAL_BIN`,
-  `CORRAL_PROVIDER_NOTES`, and `CORRAL_BACKEND_NOTES` are reserved. A hook that names
-  one fails because these variables control the in-sandbox policy process. The wider
-  reserved list for [`providers.env.set`](config.md#providersenv) is a separate config
-  rule.
+- `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_AUDIT_PATH`, `CORRAL_AGENT`,
+  `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, and `CORRAL_BACKEND_NOTES` are reserved. A
+  hook that names one fails because these variables control the in-sandbox policy
+  process. The wider reserved list for
+  [`providers.env.set`](config.md#providersenv) is a separate config rule.
 - A contribution cannot add mounts or path grants. It can contain only `env`,
   `agentNotes`, and `status`.
 

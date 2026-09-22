@@ -69,10 +69,11 @@ For a block:
 4. Start a new corral session and retry the original task.
 
 The default audit path is under the selected agent's config directory, unless
-`policy.audit.path` overrides it. Before sharing a record, inspect the Bash `command`,
-WebSearch `query`, and WebFetch `url`: those values are recorded verbatim and can contain
-an inline credential. Content bodies and most free-text values are byte-counted. See
-[audit-log.md](references/reference/audit-log.md).
+`policy.audit.path` overrides it. Inside an active session, `echo "$CORRAL_AUDIT_PATH"`
+prints the file this session logs to. Before sharing a record, inspect the Bash
+`command`, WebSearch `query`, and WebFetch `url`: those values are recorded verbatim
+and can contain an inline credential. Content bodies and most free-text values are
+byte-counted. See [audit-log.md](references/reference/audit-log.md).
 
 ## Apply the security model
 

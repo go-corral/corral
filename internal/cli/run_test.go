@@ -17,6 +17,7 @@ import (
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 // cleanupProvider is a Provider whose Contribution registers a cleanup closure, so
@@ -1159,6 +1160,86 @@ func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 		if !strings.Contains(out, "--bind-try "+rw) || !strings.Contains(out, "--ro-bind-try "+ro) {
 			t.Errorf("grant kinds not reflected (want --bind-try rw / --ro-bind-try ro):\n%s", out)
 		}
+	}
+}
+
+// TestRunDryRunPinsAuditPath: the launcher pins the audit-log path as CORRAL_AUDIT_PATH,
+// and a custom policy.audit.path gets its directory as a read-write grant.
+func TestRunDryRunPinsAuditPath(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(home, "state", "audit.jsonl")
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("policy:\n  audit:\n    path: "+audit+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	// The pin rides in the cleared env: bwrap --setenv, Seatbelt env -i VAR=…
+	wantEnv := "--setenv " + sandbox.AuditPathEnvVar + " " + audit
+	if runtime.GOOS == "darwin" {
+		wantEnv = sandbox.AuditPathEnvVar + "=" + audit
+	}
+	if !strings.Contains(out, wantEnv) {
+		t.Errorf("dry-run argv must set %s to the audit path:\n%s", sandbox.AuditPathEnvVar, out)
+	}
+	// Only bwrap shows the bind kind in argv.
+	if runtime.GOOS == "linux" && !strings.Contains(out, "--bind-try "+filepath.Dir(audit)) {
+		t.Errorf("the audit-log directory must be a read-write grant (--bind-try):\n%s", out)
+	}
+}
+
+// TestRunRefusesAuditPathUnderAlwaysBlocked: the audit-log directory is a read-write grant,
+// so the always-blocked guard refuses it before any provider mints.
+func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.Mkdir(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("policy:\n  audit:\n    path: ~/.ssh/audit.jsonl\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	// The refusal must fire before the Mint seam.
+	origResolve := resolveProviders
+	t.Cleanup(func() { resolveProviders = origResolve })
+	resolveProviders = func(context.Context, providers.Session, []providers.Active) (*providers.Resolved, error) {
+		t.Error("the audit-path refusal must fire before any provider mint")
+		return &providers.Resolved{}, nil
+	}
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdRun([]string{"--home", home, "--project", proj}, "dev")
+	})
+	if code == 0 {
+		t.Fatalf("run accepted an audit path under an always-blocked directory (exit 0)\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "policy.audit.path") {
+		t.Errorf("the refusal must name policy.audit.path:\n%s", stderr)
+	}
+
+	// validate refuses what run refuses.
+	stderr = captureStderr(t, func() {
+		captureStdout(t, func() { code = cmdValidate(nil) })
+	})
+	if code == 0 || !strings.Contains(stderr, "policy.audit.path") {
+		t.Errorf("validate must refuse the audit path, exit=%d:\n%s", code, stderr)
 	}
 }
 

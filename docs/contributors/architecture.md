@@ -472,13 +472,13 @@ distinction that remains is *when* and *how* each resolves:
   `Validate` rejects a passthrough naming a corral marker outright (config, which owns the
   agent registry, passes it the reserved sets). The **provider-side half** of that same fence
   lives in `Resolved.Apply`, which pre-claims corral's control markers (`CORRAL_SANDBOX`,
-  `CORRAL_GLOBAL_CONFIG`, `CORRAL_AGENT`, `CORRAL_BIN`) and both notes channels
-  UNCONDITIONALLY (not just when this launch happened to set them), so no provider `Env` can
-  plant one. It matters because the conditional ones (the global-config pin, `CORRAL_BIN`) are
-  absent on most launches, and because one provider's `Env` is authored outside corral's own
-  code: a session hook's stdout contribution (the hook executable is trust-hashed nowadays,
-  but the fence deliberately does not lean on that; approval is a human judgment, not a
-  content proof). The **hook never runs a provider**: it
+  `CORRAL_GLOBAL_CONFIG`, `CORRAL_AUDIT_PATH`, `CORRAL_AGENT`, `CORRAL_BIN`) and both notes
+  channels UNCONDITIONALLY (not just when this launch happened to set them), so no provider
+  `Env` can plant one. It matters because the conditional ones (the global-config pin,
+  `CORRAL_BIN`) are absent on most launches, and because one provider's `Env` is authored
+  outside corral's own code: a session hook's stdout contribution (the hook executable
+  is trust-hashed nowadays, but the fence deliberately does not lean on that; approval
+  is a human judgment, not a content proof). The **hook never runs a provider**: it
   re-derives block/aiignore from the same config accessors (and the same
   `aiignore.Discover`) on every tool call, which is also what keeps mid-session aiignore
   matches enforced; the launch-time mask is defense-in-depth, the hook is authoritative.
