@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
@@ -395,7 +396,7 @@ func TestConfirmProceedSkipsPromptWhenNotInteractive(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	for _, yes := range []bool{false, true} {
 		var out strings.Builder
-		if !confirmProceed(yes, f, &out, ansi{}) {
+		if !confirmProceed(yes, f, &out, report.Style{}) {
 			t.Errorf("confirmProceed(yes=%v, non-tty) = false, want true (proceed)", yes)
 		}
 		if out.Len() != 0 {
@@ -414,7 +415,7 @@ func TestConfirmProceedDevNullNonInteractive(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	for _, yes := range []bool{false, true} {
 		var out strings.Builder
-		if !confirmProceed(yes, f, &out, ansi{}) {
+		if !confirmProceed(yes, f, &out, report.Style{}) {
 			t.Errorf("confirmProceed(yes=%v, /dev/null) = false, want true (proceed)", yes)
 		}
 		if out.Len() != 0 {
@@ -440,7 +441,7 @@ func TestRunDeclinedLaunchDoesNotMint(t *testing.T) {
 
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return false } // decline
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return false } // decline
 
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })
@@ -485,7 +486,7 @@ func TestRunMintsOnlyAfterConfirmation(t *testing.T) {
 	confirmed := false
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { confirmed = true; return true } // proceed
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { confirmed = true; return true } // proceed
 
 	minted := false
 	origResolve := resolveProviders
@@ -535,7 +536,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return true } // past the gate
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true } // past the gate
 
 	const hookEra = "LIVE-HOOK-STDERR-MARKER"
 	const featureNote = "minted-feature-MARKER"
@@ -638,7 +639,7 @@ func TestRunPostMintAbortFiresTeardown(t *testing.T) {
 	stubUpdateCheck(t)
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return true }
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true }
 
 	cleaned := false
 	exit := providers.SessionExit{Started: true, Code: 99} // sentinel: overwritten iff the hook ran
@@ -699,7 +700,7 @@ func TestRunSessionHooksEndToEnd(t *testing.T) {
 		stubUpdateCheck(t)
 		origConfirm := confirmProceed
 		t.Cleanup(func() { confirmProceed = origConfirm })
-		confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return true }
+		confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true }
 
 		var code int
 		stderr := captureStderr(t, func() {
@@ -800,7 +801,7 @@ func TestRunWarningsGateWithUpdateNotice(t *testing.T) {
 
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return false } // decline
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return false } // decline
 
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })

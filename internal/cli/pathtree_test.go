@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
 func TestWritePathTree(t *testing.T) {
@@ -90,7 +92,7 @@ func TestWritePathTree(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			original := slices.Clone(tt.paths)
 			var out strings.Builder
-			count := writePathTree(&out, ansi{}, tt.paths, "/home/user", "  ")
+			count := writePathTree(&out, report.Style{}, tt.paths, "/home/user", "  ")
 			if out.String() != tt.want || count != tt.count {
 				t.Errorf("got (%d grants):\n%s\nwant (%d grants):\n%s", count, out.String(), tt.count, tt.want)
 			}
@@ -99,7 +101,7 @@ func TestWritePathTree(t *testing.T) {
 			}
 			slices.Reverse(original)
 			out.Reset()
-			writePathTree(&out, ansi{}, original, "/home/user", "  ")
+			writePathTree(&out, report.Style{}, original, "/home/user", "  ")
 			if out.String() != tt.want {
 				t.Errorf("output depends on input order:\n%s", out.String())
 			}

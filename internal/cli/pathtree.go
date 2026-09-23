@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/pathutil"
 )
 
@@ -30,7 +31,7 @@ func (n *grantNode) child(name string) *grantNode {
 
 // writePathTree groups absolute, config-expanded paths without inspecting the filesystem.
 // Grants carry a [grant] tag. Returns the number of distinct grants.
-func writePathTree(w io.Writer, c ansi, paths []string, home, indent string) int {
+func writePathTree(w io.Writer, c report.Style, paths []string, home, indent string) int {
 	displayHome := home
 	for _, p := range paths {
 		if pathutil.AtOrUnderClean(home, p) {
@@ -65,7 +66,7 @@ func writePathTree(w io.Writer, c ansi, paths []string, home, indent string) int
 	return count
 }
 
-func writeGrantNode(w io.Writer, c ansi, label string, n *grantNode, indent, branch, continuation string) {
+func writeGrantNode(w io.Writer, c report.Style, label string, n *grantNode, indent, branch, continuation string) {
 	// A grant may also be an ancestor of another grant; collapsing past it would hide access.
 	for !n.grant && len(n.children) == 1 {
 		for name, child := range n.children {
@@ -74,14 +75,14 @@ func writeGrantNode(w io.Writer, c ansi, label string, n *grantNode, indent, bra
 			break
 		}
 	}
-	tag, style := "", c.dim
+	tag, style := "", c.Dim
 	if n.grant {
-		style = c.bold
+		style = c.Bold
 		tag = "  [grant]"
 	} else if !strings.HasSuffix(label, "/") {
 		label += "/"
 	}
-	fmt.Fprintf(w, "%s%s%s%s%s%s\n", indent, branch, style, reportText(label), c.reset, tag)
+	fmt.Fprintf(w, "%s%s%s%s%s%s\n", indent, branch, style, reportText(label), c.Reset, tag)
 	keys := slices.Sorted(maps.Keys(n.children))
 	for i, name := range keys {
 		branch, next := "├── ", "│   "

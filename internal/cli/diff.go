@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
 // unifiedDiff renders a git-style unified diff between two texts with the given labels
 // and three lines of context per hunk. Returns "" when inputs are byte-identical.
-func unifiedDiff(before, after []byte, fromName, toName string, c ansi) string {
+func unifiedDiff(before, after []byte, fromName, toName string, c report.Style) string {
 	if string(before) == string(after) {
 		return ""
 	}
@@ -16,18 +18,18 @@ func unifiedDiff(before, after []byte, fromName, toName string, c ansi) string {
 	ops := diffOps(a, b)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s--- %s%s\n", c.dim, fromName, c.reset)
-	fmt.Fprintf(&sb, "%s+++ %s%s\n", c.dim, toName, c.reset)
+	fmt.Fprintf(&sb, "%s--- %s%s\n", c.Dim, fromName, c.Reset)
+	fmt.Fprintf(&sb, "%s+++ %s%s\n", c.Dim, toName, c.Reset)
 	for _, h := range hunks(ops, 3) {
-		fmt.Fprintf(&sb, "%s@@ -%d,%d +%d,%d @@%s\n", c.yellow, h.aStart, h.aCount, h.bStart, h.bCount, c.reset)
+		fmt.Fprintf(&sb, "%s@@ -%d,%d +%d,%d @@%s\n", c.Yellow, h.aStart, h.aCount, h.bStart, h.bCount, c.Reset)
 		for _, ln := range h.lines {
 			switch ln.kind {
 			case opEqual:
 				fmt.Fprintf(&sb, " %s\n", ln.text)
 			case opDel:
-				fmt.Fprintf(&sb, "%s-%s%s\n", c.red, ln.text, c.reset)
+				fmt.Fprintf(&sb, "%s-%s%s\n", c.Red, ln.text, c.Reset)
 			case opAdd:
-				fmt.Fprintf(&sb, "%s+%s%s\n", c.green, ln.text, c.reset)
+				fmt.Fprintf(&sb, "%s+%s%s\n", c.Green, ln.text, c.Reset)
 			}
 		}
 	}

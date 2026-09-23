@@ -5,23 +5,24 @@ import (
 	"io"
 	"strings"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/providers/hooks"
 )
 
 // bannerSessionHookPresenter builds the session-hooks provider's preStart output presenter.
-// Shows captured output via bannerLine with an attributed label and a dim gutter.
-func bannerSessionHookPresenter(w io.Writer, c ansi) hooks.Presenter {
+// Shows captured output as an attributed row with the output quoted below it.
+func bannerSessionHookPresenter(w io.Writer, c report.Style) hooks.Presenter {
 	return func(event, key, output string, truncated bool) {
 		lines := terminalLines(output)
 		if len(lines) == 0 && !truncated {
 			return
 		}
-		bannerLine(w, c, "hooks", []string{"setup output from " + event + "." + key})
+		c.Row(w, report.Row{Label: "hooks", Value: "setup output from " + event + "." + key})
 		for _, ln := range lines {
-			fmt.Fprintf(w, "%s%s│ %s%s\n", bannerCont(), c.dim, c.reset, ln)
+			c.Quote(w, ln)
 		}
 		if truncated {
-			fmt.Fprintf(w, "%s%s│ … output truncated%s\n", bannerCont(), c.dim, c.reset)
+			c.Quote(w, c.Dim+"(output truncated)"+c.Reset)
 		}
 		fmt.Fprintln(w)
 	}

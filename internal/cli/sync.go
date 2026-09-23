@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -37,7 +38,7 @@ func cmdSync(args []string) int {
 		if cerr != nil {
 			return fatalf(os.Stderr, "load config: %v", cerr)
 		}
-		if !checkRepoConfigTrust(sources, hookExecs{}, false, os.Stdin, os.Stderr, colors(colorTo(os.Stderr))) {
+		if !checkRepoConfigTrust(sources, hookExecs{}, false, os.Stdin, os.Stderr, report.StyleFor(os.Stderr)) {
 			return 1
 		}
 	}
@@ -68,7 +69,7 @@ func cmdSync(args []string) int {
 		warnBinaryUnreachable(os.Stderr, binaryPath, home, a.ConfigDir(home, envMap()))
 	}
 
-	report, err := a.Sync(agents.SyncInput{
+	res, err := a.Sync(agents.SyncInput{
 		Home:         home,
 		Host:         envMap(),
 		DryRun:       *dryRun,
@@ -79,11 +80,11 @@ func cmdSync(args []string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "sync %s: %v", a.Name(), err)
 	}
-	for _, m := range report.Messages {
+	for _, m := range res.Messages {
 		fmt.Printf("corral: %s\n", m)
 	}
-	if report.Diff != nil {
-		fmt.Print(unifiedDiff(report.Diff.Before, report.Diff.After, report.Diff.FromLabel, report.Diff.ToLabel, colors(colorTo(os.Stdout))))
+	if res.Diff != nil {
+		fmt.Print(unifiedDiff(res.Diff.Before, res.Diff.After, res.Diff.FromLabel, res.Diff.ToLabel, report.StyleFor(os.Stdout)))
 	}
 	return 0
 }

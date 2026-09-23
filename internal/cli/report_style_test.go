@@ -3,11 +3,13 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
 func TestWriteStyledGrantSection(t *testing.T) {
 	var out strings.Builder
-	writeGrantSection(&out, colors(true), "Extra read-only", []string{
+	writeGrantSection(&out, report.NewStyle(true, false), "Extra read-only", []string{
 		"/srv/projects", "/srv/projects/example", "/srv/reference/a\x1b[22m",
 	}, "/home/user")
 	want := "\n  Extra read-only · 3 grants · \x1b[2m[grant] marks configured paths\x1b[0m\n" +
@@ -22,7 +24,7 @@ func TestWriteStyledGrantSection(t *testing.T) {
 
 func TestWriteGrantSectionWithoutStyling(t *testing.T) {
 	var out strings.Builder
-	writeGrantSection(&out, colors(false), "Extra read-only", []string{
+	writeGrantSection(&out, report.NewStyle(false, false), "Extra read-only", []string{
 		"/srv/projects", "/srv/projects/example", "/srv/reference/handbook",
 	}, "/home/user")
 	want := "\n  Extra read-only · 3 grants · [grant] marks configured paths\n" +
@@ -44,7 +46,7 @@ func TestWriteReportHeading(t *testing.T) {
 		{false, "\nFilesystem\n"},
 	} {
 		var out strings.Builder
-		writeReportHeading(&out, colors(tt.styled), "Filesystem")
+		writeReportHeading(&out, report.NewStyle(tt.styled, false), "Filesystem")
 		if out.String() != tt.want {
 			t.Errorf("styled=%t: heading = %q, want %q", tt.styled, out.String(), tt.want)
 		}
@@ -52,7 +54,7 @@ func TestWriteReportHeading(t *testing.T) {
 }
 
 // Captured stdout is a pipe, so this exercises the redirected case only; the env switches are
-// covered by TestStyleDisabledByEnv.
+// covered by TestResolveColor in the report package.
 func TestValidatePlainOutputWhenRedirected(t *testing.T) {
 	trustRepo(t, "providers:\n  paths:\n    ro: [~/docs, ~/docs/reference, ~/code]\n")
 	t.Setenv("TERM", "xterm-256color")
@@ -63,24 +65,5 @@ func TestValidatePlainOutputWhenRedirected(t *testing.T) {
 	}
 	if strings.Count(out, "  [grant]\n") != 3 || !strings.Contains(out, "[grant] marks configured paths") {
 		t.Errorf("plain output lost grant attribution:\n%s", out)
-	}
-}
-
-func TestStyleDisabledByEnv(t *testing.T) {
-	for _, tt := range []struct {
-		name, term, noColor string
-		want                bool
-	}{
-		{"color terminal", "xterm-256color", "", false},
-		{"NO_COLOR", "xterm-256color", "1", true},
-		{"dumb terminal", "dumb", "", true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("TERM", tt.term)
-			t.Setenv("NO_COLOR", tt.noColor)
-			if got := styleDisabledByEnv(); got != tt.want {
-				t.Errorf("styleDisabledByEnv() = %t, want %t", got, tt.want)
-			}
-		})
 	}
 }

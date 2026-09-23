@@ -1,28 +1,32 @@
 package cli
 
 import (
-	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
-// The presenter's label row must adopt the banner's exact geometry + label styling: "hooks" in
-// the label column, "setup output from <event>.<key>" (the short key) in the value column —
-// byte-identical to a bannerLine row — with the hook's output as a "│ "-guttered quoted block
-// in the content column beneath it, closed by a blank line. The expected width is derived from
-// the banner's own constants, never a magic number, so a banner geometry change moves the
-// expectation with it.
+// The presenter's label row sits on the shared grid: "hooks" in the label column,
+// "setup output from <event>.<key>" (the short key) at the value column, with the hook's
+// output as a "│ "-guttered quoted block beneath it, closed by a blank line.
 func TestBannerSessionHookPresenterRegion(t *testing.T) {
-	var b strings.Builder
-	bannerSessionHookPresenter(&b, colors(false))("preStart", "10-hallo", "hi\nho\n", false)
-	// Same grid as bannerLine: indent + left-justified label (bannerLabelW) + value, then each
-	// output line guttered under the value column, then the closing blank line. colors(false)
-	// zeroes the dim/reset codes.
-	var want strings.Builder
-	bannerLine(&want, colors(false), "hooks", []string{"setup output from preStart.10-hallo"})
-	fmt.Fprintf(&want, "%s│ hi\n%s│ ho\n\n", bannerCont(), bannerCont())
-	if b.String() != want.String() {
-		t.Errorf("region = %q, want %q", b.String(), want.String())
+	for _, tt := range []struct {
+		style report.Style
+		want  string
+	}{
+		{report.NewStyle(false, false), "    hooks           setup output from preStart.10-hallo\n" +
+			"                    │ hi\n" +
+			"                    │ ho\n\n"},
+		{report.NewStyle(false, true), "     hooks          setup output from preStart.10-hallo\n" +
+			"                    | hi\n" +
+			"                    | ho\n\n"},
+	} {
+		var b strings.Builder
+		bannerSessionHookPresenter(&b, tt.style)("preStart", "10-hallo", "hi\nho\n", false)
+		if b.String() != tt.want {
+			t.Errorf("region = %q, want %q", b.String(), tt.want)
+		}
 	}
 }
 
@@ -31,9 +35,9 @@ func TestBannerSessionHookPresenterRegion(t *testing.T) {
 // glyph alone marks the block as relayed foreign output.
 func TestBannerSessionHookPresenterDimsGutterNotText(t *testing.T) {
 	var b strings.Builder
-	c := colors(true)
+	c := report.NewStyle(true, false)
 	bannerSessionHookPresenter(&b, c)("preStart", "10-hallo", "hi\n", false)
-	if want := bannerCont() + c.dim + "│ " + c.reset + "hi\n"; !strings.Contains(b.String(), want) {
+	if want := strings.Repeat(" ", report.ValueColumn-1) + c.Dim + "│ " + c.Reset + "hi\n"; !strings.Contains(b.String(), want) {
 		t.Errorf("want dim gutter + plain text %q, got %q", want, b.String())
 	}
 }
@@ -44,7 +48,7 @@ func TestBannerSessionHookPresenterDimsGutterNotText(t *testing.T) {
 func TestBannerSessionHookPresenterSkipsEmptyRenderings(t *testing.T) {
 	for _, output := range []string{"", "\n", "\r\n", "  \n\t\n"} {
 		var b strings.Builder
-		bannerSessionHookPresenter(&b, colors(false))("preStart", "10-hallo", output, false)
+		bannerSessionHookPresenter(&b, report.NewStyle(false, false))("preStart", "10-hallo", output, false)
 		if b.String() != "" {
 			t.Errorf("output %q must render nothing, got %q", output, b.String())
 		}
@@ -55,12 +59,12 @@ func TestBannerSessionHookPresenterSkipsEmptyRenderings(t *testing.T) {
 // when the renderable content is otherwise empty, so the cut is never silent.
 func TestBannerSessionHookPresenterTruncationMarker(t *testing.T) {
 	var b strings.Builder
-	bannerSessionHookPresenter(&b, colors(false))("preStart", "10-hallo", "partial\n", true)
-	if !strings.Contains(b.String(), "│ … output truncated") {
+	bannerSessionHookPresenter(&b, report.NewStyle(false, false))("preStart", "10-hallo", "partial\n", true)
+	if !strings.Contains(b.String(), "│ (output truncated)") {
 		t.Errorf("truncated output must carry the marker, got %q", b.String())
 	}
 	b.Reset()
-	bannerSessionHookPresenter(&b, colors(false))("preStart", "10-hallo", "\n", true)
+	bannerSessionHookPresenter(&b, report.NewStyle(false, false))("preStart", "10-hallo", "\n", true)
 	if !strings.Contains(b.String(), "setup output from preStart.10-hallo") ||
 		!strings.Contains(b.String(), "output truncated") {
 		t.Errorf("a truncation with no renderable content still needs the region + marker, got %q", b.String())
