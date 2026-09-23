@@ -8,6 +8,7 @@ package registry
 
 import (
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/aiignore"
 	"github.com/go-corral/corral/internal/providers/block"
@@ -43,7 +44,7 @@ type Registration struct {
 	Optional      func(cfg *config.Config) bool
 	Grants        func(cfg *config.Config) string
 	FailurePolicy func(cfg *config.Config) string
-	Warnings      func(cfg *config.Config) []string
+	Warnings      func(cfg *config.Config) []health.Check
 	Build         func(cfg *config.Config, d Deps) providers.Provider
 	Probe         func(d Deps) providers.Provider
 }
@@ -54,7 +55,7 @@ var registry = []Registration{
 		Enabled: func(c *config.Config) bool {
 			return len(c.Providers.Block.Directories)+len(c.Providers.Block.Files) > 0
 		},
-		Warnings: func(c *config.Config) []string { return c.Providers.Block.Warnings() },
+		Warnings: func(c *config.Config) []health.Check { return c.Providers.Block.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return block.New(c.ConfigBlockedDirs(d.Home), c.ConfigBlockedFiles(d.Home))
 		},
@@ -71,7 +72,7 @@ var registry = []Registration{
 		Enabled: func(c *config.Config) bool {
 			return len(c.Providers.Paths.RW)+len(c.Providers.Paths.RO) > 0
 		},
-		Warnings: func(c *config.Config) []string { return c.Providers.Paths.Warnings() },
+		Warnings: func(c *config.Config) []health.Check { return c.Providers.Paths.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return paths.New(c.Providers.Paths.RW, c.Providers.Paths.RO)
 		},
@@ -97,7 +98,7 @@ var registry = []Registration{
 		Enabled:  func(c *config.Config) bool { return c.Providers.Docker.Enabled },
 		Optional: func(c *config.Config) bool { return c.Providers.Docker.Optional },
 		Grants:   func(c *config.Config) string { return c.Providers.Docker.Grants() },
-		Warnings: func(c *config.Config) []string { return c.Providers.Docker.Warnings() },
+		Warnings: func(c *config.Config) []health.Check { return c.Providers.Docker.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return docker.New(d.Home)
 		},
@@ -128,7 +129,7 @@ var registry = []Registration{
 		Enabled:  func(c *config.Config) bool { return c.Providers.Kubernetes.Enabled },
 		Optional: func(c *config.Config) bool { return c.Providers.Kubernetes.Optional },
 		Grants:   func(c *config.Config) string { return c.Providers.Kubernetes.Grants() },
-		Warnings: func(c *config.Config) []string { return c.Providers.Kubernetes.Warnings() },
+		Warnings: func(c *config.Config) []health.Check { return c.Providers.Kubernetes.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return kubernetes.New(c.Providers.Kubernetes, d.Home)
 		},
@@ -231,8 +232,8 @@ func Views(cfg *config.Config) []View {
 
 // ConfigWarnings returns every provider's config-derived advisory lints in
 // canonical order.
-func ConfigWarnings(cfg *config.Config) []string {
-	var out []string
+func ConfigWarnings(cfg *config.Config) []health.Check {
+	var out []health.Check
 	for _, e := range registry {
 		if e.Warnings != nil {
 			out = append(out, e.Warnings(cfg)...)

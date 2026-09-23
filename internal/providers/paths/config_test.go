@@ -3,8 +3,11 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 // Validate owns the absolute-path and always-blocked overlap checks; config passes the
@@ -56,11 +59,12 @@ func TestWarnings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.cfg.Warnings()
 			if len(got) != tc.want {
-				t.Fatalf("Warnings() = %q, want %d warning(s)", got, tc.want)
+				t.Fatalf("Warnings() = %+v, want %d warning(s)", got, tc.want)
 			}
 			for _, w := range got {
-				if !strings.Contains(w, "has no effect") {
-					t.Errorf("Warnings() = %q, want the no-effect wording", w)
+				if w.State != health.Warn || w.Label != "paths.ro" || !strings.HasPrefix(w.Value, strconv.Quote(tc.cfg.RO[0])+" is covered by ") ||
+					w.Reason != "read-write grants win where they overlap, so this grant has no effect" {
+					t.Errorf("Warnings() = %+v, want the covered-by warning", w)
 				}
 			}
 		})

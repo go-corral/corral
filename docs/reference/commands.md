@@ -134,12 +134,44 @@ needs attention ─────────────────────�
 corral validate [flags]
 ```
 
-Reports config validity, followed by any advisory warnings and sections for configuration
-sources, sandbox settings including the resolved private home, the selected agent,
-filesystem access, environment passthrough, and enabled providers. Config files appear in
-low-to-high precedence order. Provider rows describe what they add to the sandbox and their
-setup-error behavior. This command only validates the config; use `corral doctor` to check
-system prerequisites.
+Reports config validity and the effective policy. It does not check the host; use
+`corral doctor` to check system prerequisites.
+
+The report starts with a verdict line that counts the config sources and the warnings.
+The rows below it show the sources in low-to-high precedence order with the approval
+state of repository config, the extra read-write and read-only grants, and the number of
+blocked paths:
+
+```text
+✓ config valid  ·  3 sources  ·  2 warnings
+
+sources     global, project approved, profile k8s
+writable    ~/work/cache
+read-only   /usr/share/doc /etc/ssl
+blocked     7 paths: 6 always blocked + 1 configured
+            list with corral validate --list --profile k8s
+```
+
+Sections follow:
+
+| Section         | Content                                                                                                                                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `warnings`      | Advisory warnings about the config, and repository config or session-hook executables that are not approved, changed since approval, or unreadable. Shown only when there are warnings.                                                                        |
+| `blocked paths` | Each effective blocked path, marked `always blocked` or `configured`. Shown only with `--list`.                                                                                                                                                                |
+| `settings`      | Each loaded config file with its approval state, the private home, network, hostname, agent settings, environment passthrough names, session-hook executables, and one row per enabled provider with what it adds to the sandbox and its setup-error behavior. |
+| `path grants`   | The working directory and each extra grant in one tree, with its access (`rw` or `ro`) and the config that grants it.                                                                                                                                          |
+
+```text
+path grants ──────────────────────────────────────────────────────
+    ~
+    ├── src/corral            rw   project
+    └── work/cache            rw   providers.paths.rw
+```
+
+Only the rows with an access token are grants. The other tree entries only group paths.
+A read-only grant under a read-write path stays writable, so it shows as `rw` with the
+source `providers.paths.ro (no effect)`. Run from `$HOME`, the project is a scratch
+directory, because `corral run` does not mount the home directory read-write.
 
 You can run `validate` on unapproved repository config before deciding whether to approve the files.
 

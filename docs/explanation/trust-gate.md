@@ -58,8 +58,9 @@ session.
 
 ## How can I inspect unapproved config?
 
-- `corral validate` lists config sources, summarizes selected effective settings, and
-  annotates repository config and session-hook executables with their approval state.
+- `corral validate` lists config sources with the approval state of repository config,
+  summarizes selected effective settings, and warns about repository config and
+  session-hook executables that are not approved or changed since approval.
 - `corral doctor` warns about repository config and session-hook executables that are
   not approved or changed since approval.
 - `corral run --dry-run` builds the sandbox preview without requiring approval and

@@ -1,9 +1,12 @@
 package kubernetes
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 func TestKubernetesPermissionValidationMatrix(t *testing.T) {
@@ -134,13 +137,10 @@ func TestEffectiveReadOnlyRoles(t *testing.T) {
 
 // --- Warnings: the RBAC write-access lint ---
 
-func warnContains(ss []string, sub string) bool {
-	for _, s := range ss {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+func warnContains(ws []health.Check, role string) bool {
+	want := health.Check{State: health.Warn, Label: "kubernetes", Value: `role "` + role + `" is not a known read-only role`,
+		Reason: "confirm it grants no write or delete access, or add it to providers.kubernetes.readOnlyRoles"}
+	return slices.Contains(ws, want)
 }
 
 func warnCfg(perms []Permission, readOnly []string) Config {
@@ -150,7 +150,7 @@ func warnCfg(perms []Permission, readOnly []string) Config {
 // A bound role that is not known-read-only warns (write access needs explicit approval).
 func TestWarningsWriteRole(t *testing.T) {
 	cfg := warnCfg([]Permission{{ClusterWide: true, ClusterRole: "edit"}}, nil)
-	if w := cfg.Warnings(); !warnContains(w, `bound role "edit"`) {
+	if w := cfg.Warnings(); !warnContains(w, "edit") {
 		t.Errorf("expected a warning for the write-capable role 'edit', got %v", w)
 	}
 }
@@ -179,7 +179,7 @@ func TestWarningsNamespacedRole(t *testing.T) {
 	cfg := warnCfg([]Permission{
 		{NamespaceSelector: &LabelSelector{}, Role: "admin"},
 	}, nil)
-	if w := cfg.Warnings(); !warnContains(w, `bound role "admin"`) {
+	if w := cfg.Warnings(); !warnContains(w, "admin") {
 		t.Errorf("a namespaced write Role must warn, got %v", w)
 	}
 }

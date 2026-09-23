@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/registry"
@@ -20,8 +21,8 @@ import (
 // sessionWarnings returns advisory notices about the effective config, shared by the `run`
 // banner and `corral validate`. roTargets is the resolved backend's read-only baseline targets,
 // supplied by the caller so the warning matches the backend that compiles the spec.
-func sessionWarnings(cfg *config.Config, roTargets []string) []string {
-	var w []string
+func sessionWarnings(cfg *config.Config, roTargets []string) []health.Check {
+	var w []health.Check
 
 	// Provider-owned lints: each provider Config authors its own advisories; the registry
 	// sweeps them in canonical order. Only the paths.rw overlap check stays here — it needs
@@ -42,8 +43,8 @@ func sessionWarnings(cfg *config.Config, roTargets []string) []string {
 		if ro, ok := firstOverlap(cands, roTargets); ok {
 			// Overlap in either direction re-exposes the read-only path as writable. The
 			// message shows the grant as the user wrote it, not the /private-folded form.
-			w = append(w, fmt.Sprintf("providers.paths.rw %q overlaps the baseline read-only system path %q and re-exposes it as writable, "+
-				"overriding corral's default protection", g, ro))
+			w = append(w, health.Check{State: health.Warn, Label: "paths.rw", Value: fmt.Sprintf("%q re-exposes %q as writable", g, ro),
+				Reason: "it overlaps a baseline read-only system path and overrides corral's default protection"})
 		}
 	}
 
@@ -129,14 +130,15 @@ type bannerInfo struct {
 
 // writeStartupBanner prints the launch banner to w. Split into header and body so the
 // real launch can slot its confirmation gate between them.
-func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, warnings []string, notices []providers.Notice, launchOnly []string) {
-	writeBannerHeader(w, c, cfg, b, warnings)
+func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, cfgWarnings []health.Check, warnings []string, notices []providers.Notice, launchOnly []string) {
+	writeBannerHeader(w, c, cfg, b, cfgWarnings, warnings)
 	writeBannerBody(w, c, b.home, notices, launchOnly)
 }
 
 // writeBannerHeader prints the mark with the version line and the roll-up of what the
-// session can reach, then the warnings. Everything here is known before providers mint.
-func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, warnings []string) {
+// session can reach, then the config warnings and the other warnings. Everything here is
+// known before providers mint.
+func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, cfgWarnings []health.Check, warnings []string) {
 	title := fmt.Sprintf("%scorral %s%s", c.Bold, bannerVersion(b.version), c.Reset)
 	if len(b.profiles) > 0 {
 		title += fmt.Sprintf("   %sprofile %s%s", c.Dim, strings.Join(b.profiles, ", "), c.Reset)
@@ -169,8 +171,9 @@ func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b banner
 	)
 	c.Header(w, title, verdict, rollup)
 
-	if len(warnings) > 0 {
+	if len(cfgWarnings)+len(warnings) > 0 {
 		fmt.Fprintln(w)
+		writeChecks(w, c, cfgWarnings, b.home)
 		writeWarnings(w, c, warnings)
 	}
 }
@@ -196,6 +199,16 @@ func writeBannerBody(w io.Writer, c report.Style, home string, notices []provide
 	}
 	for _, name := range launchOnly {
 		c.Row(w, report.Row{Glyph: report.Off, Label: name, Value: "acts only at launch (not expanded in this dry-run)"})
+	}
+}
+
+// writeChecks renders warning checks as detail rows, home-abbreviated, each with its fix.
+func writeChecks(w io.Writer, c report.Style, checks []health.Check, home string) {
+	for _, ch := range checks {
+		c.Row(w, report.Row{Glyph: report.Attention, Label: ch.Label, Value: abbrevText(ch.Value, home), Reason: abbrevText(ch.Reason, home)})
+		if ch.Fix != "" {
+			c.Cont(w, c.Glyph(report.Fix)+" "+ch.Fix)
+		}
 	}
 }
 

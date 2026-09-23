@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 )
 
@@ -45,15 +46,15 @@ func (c Config) Validate(floor []string) error {
 }
 
 // Warnings returns the lint results for the providers.block: entries that do not exist
-func (c Config) Warnings() []string {
-	var w []string
+func (c Config) Warnings() []health.Check {
+	var w []health.Check
 	for _, l := range []struct {
 		key   string
 		paths []string
 	}{{"directories", c.Directories}, {"files", c.Files}} {
 		for _, p := range l.paths {
 			if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
-				w = append(w, fmt.Sprintf("providers.block.%s %q does not exist", l.key, p))
+				w = append(w, health.Check{State: health.Warn, Label: "block." + l.key, Value: fmt.Sprintf("%q does not exist", p)})
 			}
 		}
 	}

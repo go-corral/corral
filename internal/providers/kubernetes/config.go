@@ -3,6 +3,8 @@ package kubernetes
 import (
 	"fmt"
 	"time"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 // Config configures the kubernetes credential-minter: corral provisions a per-session
@@ -119,13 +121,13 @@ func (k Config) EffectiveTokenLifetime() time.Duration {
 // Warnings returns the advisory RBAC write-access lint, shared by the `run` startup banner and
 // `corral validate`. Warn-and-allow: a write grant is legitimate when approved. preProvisioned
 // mode binds no role (the grants are the cluster admin's), so there is nothing to lint.
-func (k Config) Warnings() []string {
+func (k Config) Warnings() []health.Check {
 	if !k.Enabled || k.EffectiveMode() == ModePreProvisioned {
 		return nil
 	}
 	readOnly := k.EffectiveReadOnlyRoles()
 	warned := map[string]bool{}
-	var w []string
+	var w []health.Check
 	for _, p := range k.EffectivePermissions() {
 		role := p.ClusterRole
 		if role == "" {
@@ -135,7 +137,8 @@ func (k Config) Warnings() []string {
 			continue
 		}
 		warned[role] = true
-		w = append(w, fmt.Sprintf("kubernetes: bound role %q is not a known read-only role — confirm it grants no write/delete access (a write grant needs explicit approval), or add it to providers.kubernetes.readOnlyRoles to silence this", role))
+		w = append(w, health.Check{State: health.Warn, Label: "kubernetes", Value: fmt.Sprintf("role %q is not a known read-only role", role),
+			Reason: "confirm it grants no write or delete access, or add it to providers.kubernetes.readOnlyRoles"})
 	}
 	return w
 }

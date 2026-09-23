@@ -68,12 +68,12 @@ func TestValidateShowsEnabledProviders(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
 
-	if !strings.Contains(out, "\nProviders\n") {
-		t.Errorf("validate must list enabled providers:\n%s", out)
-	}
-	for _, want := range []string{"docker", "ssh", "On setup error  abort launch", "On setup error  skip provider"} {
+	for _, want := range []string{
+		"  ● docker          docker daemon socket + ~/.docker\n                    setup error: abort launch\n",
+		"  ● ssh ", "                    setup error: skip provider\n",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("validate providers section missing %q:\n%s", want, out)
 		}
@@ -89,8 +89,8 @@ func TestValidateShowsDefaultHomeProvider(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
-	if !strings.Contains(out, "\nProviders\n") || !strings.Contains(out, "home") {
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "  ● home            private $HOME") {
 		t.Errorf("default config should show the default-on home provider:\n%s", out)
 	}
 }
@@ -105,8 +105,8 @@ func TestValidateShowsPrivateHomePath(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
-	if !strings.Contains(out, "Home       ~/.cache/corral/home-") {
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "    home            ~/.cache/corral/home-") {
 		t.Errorf("validate should print the resolved private home under %s:\n%s", home, out)
 	}
 }
@@ -124,12 +124,12 @@ func TestValidateNoProvidersEnabled(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
-	if !strings.Contains(out, "Providers\n  none") {
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "    providers       none\n") || strings.Contains(out, "●") {
 		t.Errorf("all providers off should show none:\n%s", out)
 	}
-	if !strings.Contains(out, "Home       host home (private home disabled)") {
-		t.Errorf("home off should render the Home row as disabled:\n%s", out)
+	if !strings.Contains(out, "    home            host home (private home disabled)\n") {
+		t.Errorf("home off should render the home row as disabled:\n%s", out)
 	}
 }
 
@@ -142,11 +142,11 @@ func TestCmdValidateDefaults(t *testing.T) {
 	isolateConfigEnv(t, home, proj)
 
 	var code int
-	out := captureStdout(t, func() { code = cmdValidate(nil) })
+	out := captureStdout(t, func() { code = cmdValidate(nil, "test") })
 	if code != 0 {
 		t.Fatalf("validate exit=%d", code)
 	}
-	if !strings.Contains(out, "Configuration valid") {
+	if !strings.Contains(out, "✓ config valid") {
 		t.Errorf("validate output: %s", out)
 	}
 }
@@ -163,7 +163,7 @@ func TestCmdValidateInvalid(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	if code := cmdValidate(nil); code != 1 {
+	if code := cmdValidate(nil, "test"); code != 1 {
 		t.Errorf("invalid config should exit 1, got %d", code)
 	}
 }
@@ -181,12 +181,13 @@ func TestCmdValidateListsPaths(t *testing.T) {
 	isolateConfigEnv(t, home, proj)
 
 	var code int
-	out := captureStdout(t, func() { code = cmdValidate([]string{"--list"}) })
+	out := captureStdout(t, func() { code = cmdValidate([]string{"--list"}, "test") })
 	if code != 0 {
 		t.Fatalf("validate --list exit=%d", code)
 	}
 	for _, want := range []string{
-		"/data/vault  [configured]", "~/.ssh  [always blocked]", "/srv/work  [grant]", "Profiles   none",
+		"    /data/vault     configured\n", "    ~/.ssh          always blocked\n",
+		"    /srv/work                 rw   providers.paths.rw\n", "blocked     7 paths: 6 always blocked + 1 configured\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("validate --list missing %q in:\n%s", want, out)
@@ -195,8 +196,8 @@ func TestCmdValidateListsPaths(t *testing.T) {
 }
 
 // --profile is repeatable and -p is its shorthand, so both spellings stack in one command
-// line: the sources list gains a profile layer per selection and the active line joins them
-// in application order.
+// line: the sources roll-up gains a profile layer per selection and the title joins them in
+// application order.
 func TestCmdValidateStacksProfiles(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -212,15 +213,15 @@ func TestCmdValidateStacksProfiles(t *testing.T) {
 	isolateConfigEnv(t, home, proj)
 
 	var code int
-	out := captureStdout(t, func() { code = cmdValidate([]string{"--profile", "a", "-p", "b"}) })
+	out := captureStdout(t, func() { code = cmdValidate([]string{"--profile", "a", "-p", "b"}, "test") })
 	if code != 0 {
 		t.Fatalf("validate with stacked profiles exit=%d:\n%s", code, out)
 	}
 	for _, want := range []string{
-		"profile    a", "profile    b",
-		"Profiles   a, b",
-		"List with corral validate --list --profile a --profile b",
-		"/from-a  [grant]", "Hostname   b-host",
+		"sources     project approved, profile a, profile b\n",
+		"   profile a, b   agent claude\n",
+		"list with corral validate --list --profile a --profile b\n",
+		"    /from-a                   ro   providers.paths.ro\n", "    hostname        b-host\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("validate missing %q in:\n%s", want, out)
