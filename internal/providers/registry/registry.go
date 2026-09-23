@@ -188,7 +188,7 @@ func Features(cfg *config.Config, d Deps) []providers.Active {
 }
 
 // Known returns every host-probeable provider regardless of config, in canonical
-// order — doctor's "if I enabled this, would it work here?" set.
+// order. doctor probes the ones the config enables.
 func Known(d Deps) []providers.Provider {
 	var out []providers.Provider
 	for _, e := range registry {

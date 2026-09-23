@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -99,13 +100,12 @@ func pathsValue(c report.Style, paths []string, home string) string {
 	return v
 }
 
-// abbrevText replaces the home prefix with ~ anywhere in a free-text status line (the
-// per-path form is abbrevHome). home == "" is a no-op.
+// pathRun matches a run of characters that can form a path in free text.
+var pathRun = regexp.MustCompile(`(?:[A-Za-z0-9/._~+@%-]|[^\x00-\x7F])+`)
+
+// abbrevText applies abbrevHome to each path in a free-text status line.
 func abbrevText(s, home string) string {
-	if home == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, home, "~")
+	return pathRun.ReplaceAllStringFunc(s, func(p string) string { return abbrevHome(p, home) })
 }
 
 // bannerVersion renders the build version: prefix "v" only for digit-leading stamps.

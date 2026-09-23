@@ -68,14 +68,20 @@ func TestValidateAnnotatesHookExecs(t *testing.T) {
 	}
 }
 
-// doctor annotates the detected config layers with their approval state too.
+// doctor warns about a config layer that is not approved yet, with the file and when corral asks.
 func TestDoctorAnnotatesTrustState(t *testing.T) {
 	trustRepo(t, "hostname: ok\n") // chdir into an unapproved repo
 	t.Setenv("SSH_AUTH_SOCK", "")  // deterministic provider availability
 
 	out := captureStdout(t, func() { cmdDoctor(nil, "test") })
-	if !strings.Contains(out, "not approved") {
-		t.Errorf("doctor should annotate the unapproved config layer:\n%s", out)
+	for _, want := range []string{
+		"config      ! project not approved\n",
+		"  ! project         not approved\n",
+		"~/proj/.corral.yml; corral asks on the next run or sync\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor should warn about the unapproved config layer with %q:\n%s", want, out)
+		}
 	}
 }
 

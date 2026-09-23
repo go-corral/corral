@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents/claude/claudecfg"
 	"github.com/go-corral/corral/internal/agents/spec"
+	"github.com/go-corral/corral/internal/health"
 )
 
 type agent struct{}
@@ -84,35 +85,37 @@ func (agent) ReservedEnv() []string {
 }
 
 // Doctor reports whether corral's policy hook is registered in claude's settings.json.
-func (c agent) Doctor(in spec.StatusInput) spec.DoctorReport {
+func (c agent) Doctor(in spec.StatusInput) []health.Check {
 	path := filepath.Join(c.ConfigDir(in.Home, in.Host), "settings.json")
+	hooks := health.Check{State: health.Warn, Label: "hooks", Fix: "corral sync claude"}
 	data, err := os.ReadFile(path)
 	switch {
 	case err != nil && os.IsNotExist(err):
-		return settingsLine(path, "not present — run `corral sync`")
+		hooks.Value, hooks.Reason = "not registered", path+" not present"
+		return []health.Check{hooks}
 	case err != nil:
-		return settingsLine(path, fmt.Sprintf("unreadable (%v)", err))
+		return []health.Check{{State: health.Warn, Label: "hooks", Value: "unreadable", Reason: err.Error()}}
 	}
 	report := claudecfg.HookRegistration(data, in.Self)
 	switch {
 	case report.Registered():
-		return settingsLine(path, "corral's hooks registered for this binary")
+		return []health.Check{{Label: "hooks", Value: "registered for this binary"}}
 	case len(report.Current) == 0 && len(report.Stale) == 0:
-		return settingsLine(path, "corral's hooks NOT registered — run `corral sync` (this agent is ungated unless started via `corral run`)")
+		hooks.Value, hooks.Reason = "not registered", "claude runs unhooked unless started with corral run"
 	default:
 		var parts []string
 		if len(report.Stale) > 0 {
-			parts = append(parts, fmt.Sprintf("stale for %s (an older shape, or a different corral binary)", strings.Join(report.Stale, ", ")))
+			parts = append(parts, "stale for "+strings.Join(report.Stale, ", "))
 		}
 		if len(report.Missing) > 0 {
 			parts = append(parts, "missing for "+strings.Join(report.Missing, ", "))
 		}
-		return settingsLine(path, strings.Join(parts, "; ")+" — run `corral sync`")
+		hooks.Value, hooks.Reason = strings.Join(parts, "; "), path
+		if len(report.Stale) > 0 {
+			hooks.Reason = "an older shape, or a different corral binary"
+		}
 	}
-}
-
-func settingsLine(path, status string) spec.DoctorReport {
-	return spec.DoctorReport{Lines: []spec.DoctorLine{{Label: "settings", Status: path + " — " + status}}}
+	return []health.Check{hooks}
 }
 
 // Sync registers (or previews when in.DryRun) corral's policy hook in claude's settings.json.

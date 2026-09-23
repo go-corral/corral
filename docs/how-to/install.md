@@ -32,8 +32,9 @@ Claude Code is the default agent. To set up pi instead, see the
 
 1. Run `corral doctor`. Check that it finds the sandbox backend and `claude` binary.
 2. Run `corral sync` to register the policy hooks in `~/.claude/settings.json`.
-3. Run `corral doctor` again. Its Claude settings line should report that corral's hooks
-   are registered for this binary.
+3. Run `corral doctor` again. Check that **needs attention** has no `claude` entry. The
+   `agents` row reports the installed agents as ready, or it shows a warning for another
+   agent, such as pi before `corral sync pi`.
 4. Start a session with `corral run -- <claude args>`.
 
 To see what the sandbox will enforce before launching, run `corral validate`.

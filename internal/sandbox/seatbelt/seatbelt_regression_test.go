@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -53,19 +54,28 @@ func TestBackendUnavailableHint(t *testing.T) {
 	}
 }
 
-// TestBackendDoctor verifies Backend.Doctor(w) writes sandbox-exec tool info via
-// sandbox.ReportTool.
+// TestBackendDoctor verifies Backend.Doctor returns only the sandbox-exec tool check. Off
+// macOS, or without sandbox-exec on PATH, it fails with the macOS hint and no fix command.
 func TestBackendDoctor(t *testing.T) {
-	b := New("sandbox-exec", Config{})
-	var buf bytes.Buffer
-	b.Doctor(&buf)
-	output := buf.String()
-	// Doctor should write *something* via ReportTool (even if not found on this Linux machine)
-	if output == "" {
-		t.Error("Doctor must write output to w")
+	checks := New("sandbox-exec", Config{}).Doctor()
+	if len(checks) != 1 {
+		t.Fatalf("Doctor must return one check; got %+v", checks)
 	}
-	if !strings.Contains(output, "sandbox-exec") {
-		t.Errorf("Doctor output must mention sandbox-exec; got %q", output)
+	c := checks[0]
+	if c.Label != "sandbox-exec" || c.Fix != "" {
+		t.Errorf("Doctor check: got %+v", c)
+	}
+	switch c.State {
+	case health.OK:
+		if !filepath.IsAbs(c.Value) {
+			t.Errorf("a found tool reports its resolved path; got %+v", c)
+		}
+	case health.Fail:
+		if c.Value != "not found" || !strings.Contains(c.Reason, "macOS") {
+			t.Errorf("a missing tool fails with the macOS hint; got %+v", c)
+		}
+	default:
+		t.Errorf("the tool check is OK or Fail; got %+v", c)
 	}
 }
 

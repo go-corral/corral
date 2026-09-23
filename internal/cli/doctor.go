@@ -4,19 +4,32 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
+	"github.com/go-corral/corral/internal/trust"
 )
 
-// cmdDoctor reports environment readiness: the sandbox backend, agent availability,
-// config layers, provider host availability, and update state.
+// doctorArea is one roll-up row. summary is shown when every check passes, or dimmed when
+// the area has no checks.
+type doctorArea struct {
+	name    string
+	summary string
+	checks  []health.Check
+}
+
+// cmdDoctor reports host readiness: the sandbox backend, config, agents, enabled
+// providers, environment overrides, and update state.
 func cmdDoctor(args []string, version string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	backendFlag := fs.String("backend", "", "sandbox backend to check: bwrap or seatbelt (default: this OS's backend)")
@@ -28,109 +41,133 @@ func cmdDoctor(args []string, version string) int {
 		return code
 	}
 
-	out := os.Stdout
-	fmt.Fprintf(out, "corral %s  (%s/%s, %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
-
-	// Sandbox backend: ask the resolved backend for its own diagnostics.
-	fmt.Fprintln(out, "\nSandbox backend:")
-	if kind, err := sandbox.ResolveKind(*backendFlag); err != nil {
-		fmt.Fprintf(out, "  %v\n", err)
-	} else {
-		backend := newBackend(kind, "", config.Sandbox{})
-		fmt.Fprintf(out, "  backend: %s\n", backend.Name())
-		backend.Doctor(out)
+	c := report.StyleFor(os.Stdout)
+	home, homeErr := os.UserHomeDir()
+	cfg, sources, cfgErr := loadConfig(nil)
+	areas := []doctorArea{
+		sandboxArea(*backendFlag),
+		configArea(cfg, sources, cfgErr),
+		agentsArea(cfg, cfgErr, home, homeErr),
+		providersArea(cfg, cfgErr, home),
+		environmentArea(),
+		updateArea(c, cfg, cfgErr, version, home, homeErr),
 	}
-
-	// Agents: every supported agent's binary availability and enforcement-readiness report.
-	fmt.Fprintln(out, "\nAgents:")
-	reportAgents(out)
-
-	// The kill switch lives in the launching shell, not a corral file, so surface it here.
-	reportHookKillSwitch(out)
-
-	fmt.Fprintln(out, "\nConfig:")
-	reportConfig(out)
-
-	fmt.Fprintln(out, "\nProviders (host availability — enable under `providers.<name>`):")
-	reportProviders(out)
-
-	fmt.Fprintln(out, "\nUpdate:")
-	reportUpdate(out, version)
-
+	for _, a := range areas {
+		for i := range a.checks {
+			a.checks[i].Value = abbrevText(a.checks[i].Value, home)
+			a.checks[i].Reason = abbrevText(a.checks[i].Reason, home)
+		}
+	}
+	title := fmt.Sprintf("%scorral %s%s   %s%s/%s   %s%s",
+		c.Bold, bannerVersion(version), c.Reset, c.Dim, runtime.GOOS, runtime.GOARCH, runtime.Version(), c.Reset)
+	writeDoctor(os.Stdout, c, title, areas)
 	return 0
 }
 
-// reportHookKillSwitch reports CORRAL_DISABLE_HOOKS as seen in this shell.
-func reportHookKillSwitch(out *os.File) {
-	raw, set := os.LookupEnv(sandbox.DisableHooksEnvVar)
-	switch {
-	case !set || strings.TrimSpace(raw) == "":
-		return
-	case sandbox.EnvEnabled(sandbox.DisableHooksEnvVar):
-		fmt.Fprintf(out, "\n  ⚠ %s=%s in this shell: corral's hooks are disabled for any agent started from here\n",
-			sandbox.DisableHooksEnvVar, raw)
-		fmt.Fprintf(out, "    (a `corral run` session is unaffected — the sandbox marker overrides it)\n")
-	default:
-		fmt.Fprintf(out, "\n  note: %s=%s is set but not recognized, so hooks stay ACTIVE (only 1/true disable them)\n",
-			sandbox.DisableHooksEnvVar, raw)
+func sandboxArea(override string) doctorArea {
+	kind, err := sandbox.ResolveKind(override)
+	if err != nil {
+		return doctorArea{name: "sandbox", checks: []health.Check{{State: health.Fail, Label: "sandbox", Value: err.Error()}}}
 	}
+	backend := newBackend(kind, "", config.Sandbox{})
+	return doctorArea{name: "sandbox", summary: backend.Name(), checks: backend.Doctor()}
 }
 
-// reportUpdate shows the update source and the cached result of the last version check —
-// no network call.
-func reportUpdate(out *os.File, version string) {
-	cfg, _, err := loadConfig(nil)
+// configArea reports config validity and the approval state of repo layers and
+// session-hook executables.
+func configArea(cfg *config.Config, sources []config.Source, err error) doctorArea {
+	a := doctorArea{name: "config", summary: "valid"}
 	if err != nil {
-		fmt.Fprintf(out, "  status: unknown (config error: %v)\n", err)
-		return
+		a.checks = []health.Check{{State: health.Fail, Label: "config", Value: "invalid", Reason: err.Error(), Fix: "corral validate"}}
+		return a
 	}
-	if src, err := selfupdate.ResolveSource(); err == nil {
-		fmt.Fprintf(out, "  source: %s (%s/%s)\n", src.APIBase, src.Owner, src.Repo)
+	a.checks = []health.Check{{Label: "config", Value: "valid"}}
+	var kinds []string
+	notes := trustAnnotations(trustEntries(sources))
+	for _, s := range sources {
+		if s.Kind != "defaults" {
+			kinds = append(kinds, s.Kind)
+		}
+		if n, ok := notes[s.Path]; ok && n.state != trust.StateApproved {
+			a.checks = append(a.checks, trustCheck(s.Kind, s.Path, n.state, "run or sync"))
+		}
 	}
-	if !cfg.Update.CheckOnStart {
-		fmt.Fprintln(out, "  launch check: disabled (update.checkOnStart: false)")
+	if len(kinds) > 0 {
+		a.summary = strings.Join(kinds, " + ") + " valid"
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintln(out, "  status: unknown (cannot resolve home)")
-		return
+	wd, werr := os.Getwd()
+	if werr != nil {
+		return a
 	}
-	latest, when, ok := selfupdate.CachedCheck(selfupdate.StatePath(home))
-	switch {
-	case !ok:
-		fmt.Fprintln(out, "  status: not checked yet — run `corral update --check`")
-	case selfupdate.IsNewer(latest, version):
-		fmt.Fprintf(out, "  status: update available — %s → %s (run `corral update`)\n", version, latest)
-	case latest != "":
-		fmt.Fprintf(out, "  status: up to date as of last check (latest %s, checked %s)\n", latest, when.Format("2006-01-02 15:04"))
-	default:
-		fmt.Fprintf(out, "  status: last check (%s) could not reach the release server\n", when.Format("2006-01-02 15:04"))
+	execs := collectHookExecs(cfg, wd)
+	hookNotes := trustAnnotations(execs.entries)
+	for _, p := range execs.sortedAttrPaths() {
+		n, noted := hookNotes[p]
+		switch {
+		case execs.unreadable[p] != "":
+			a.checks = append(a.checks, health.Check{State: health.Warn, Label: "hook exec", Value: p,
+				Reason: execs.attr[p] + "; " + reportText(execs.unreadable[p]) + "; the launch fails or skips this hook"})
+		case noted && n.state != trust.StateApproved:
+			a.checks = append(a.checks, trustCheck("hook exec", p+" ("+execs.attr[p]+")", n.state, "run"))
+		}
 	}
+	return a
 }
 
-// reportAgents enumerates every supported agent: binary availability and enforcement-readiness.
-func reportAgents(out *os.File) {
-	home, homeErr := os.UserHomeDir()
+// trustCheck warns about a gated item that is not approved or changed since approval.
+// gate names the commands that ask for approval.
+func trustCheck(label, path string, state trust.State, gate string) health.Check {
+	if state == trust.StateChanged {
+		return health.Check{State: health.Warn, Label: label, Value: "changed since approval",
+			Reason: path + "; corral asks again on the next " + gate}
+	}
+	return health.Check{State: health.Warn, Label: label, Value: "not approved",
+		Reason: path + "; corral asks on the next " + gate}
+}
+
+// agentsArea reports each installed agent and its enforcement readiness. With a valid
+// config, the configured agent is reported when it is not installed.
+func agentsArea(cfg *config.Config, cfgErr error, home string, homeErr error) doctorArea {
+	a := doctorArea{name: "agents", summary: "none installed"}
 	host := envMap()
 	// This executable is the binary an agent's registration must name.
 	self, _ := os.Executable()
-	for _, name := range agents.Known() {
-		a, _ := agents.Lookup(name)
-		path, found := agentBinary(a)
-		if !found {
-			fmt.Fprintf(out, "  %-9s not installed (no %s on PATH)\n", name+":", strings.Join(a.Binaries(), "/"))
-			continue
-		}
-		fmt.Fprintf(out, "  %-9s available — %s%s\n", name+":", path, versionSuffix(path))
-		if homeErr != nil {
-			fmt.Fprintf(out, "    (cannot resolve home: %v — skipping enforcement detail)\n", homeErr)
-			continue
-		}
-		for _, line := range a.Doctor(agents.StatusInput{Home: home, Host: host, Self: self}).Lines {
-			fmt.Fprintf(out, "    %s: %s\n", line.Label, line.Status)
+	configured := ""
+	if cfgErr == nil {
+		configured = cfg.EffectiveAgent()
+		if _, ok := agents.Lookup(configured); !ok {
+			configured = agents.Default
 		}
 	}
+	var installed []string
+	for _, name := range agents.Known() {
+		ag, _ := agents.Lookup(name)
+		path, found := agentBinary(ag)
+		if !found {
+			if name == configured {
+				a.checks = append(a.checks, health.Check{State: health.Warn, Label: name,
+					Value: "not installed", Reason: "no " + strings.Join(ag.Binaries(), "/") + " on PATH"})
+			}
+			continue
+		}
+		installed = append(installed, name)
+		a.checks = append(a.checks, health.Check{Label: name, Value: path})
+		if homeErr != nil {
+			a.checks = append(a.checks, health.Check{State: health.Warn, Label: name,
+				Value: "cannot resolve home", Reason: homeErr.Error()})
+			continue
+		}
+		// The agent's own checks are listed under the agent's name.
+		for _, ch := range ag.Doctor(agents.StatusInput{Home: home, Host: host, Self: self}) {
+			ch.Label, ch.Value = name, ch.Label+" "+ch.Value
+			a.checks = append(a.checks, ch)
+		}
+	}
+	if len(installed) > 0 {
+		a.summary = strings.Join(installed, ", ") + " ready"
+	}
+	return a
 }
 
 // agentBinary resolves an agent's program on PATH, trying Binaries names in order.
@@ -141,18 +178,6 @@ func agentBinary(a agents.Agent) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// versionSuffix returns " (<version>)" from `--version`, or "" on failure.
-func versionSuffix(path string) string {
-	b, err := exec.Command(path, "--version").Output()
-	if err != nil {
-		return ""
-	}
-	if v := strings.TrimSpace(firstLine(string(b))); v != "" {
-		return " (" + v + ")"
-	}
-	return ""
 }
 
 // doctorAgent resolves the agent a `[agent]` positional names: the positional if given,
@@ -170,67 +195,183 @@ func doctorAgent(name string) agents.Agent {
 	return a
 }
 
-// reportConfig is a readiness signal: is the config valid and which layers are detected?
-func reportConfig(out *os.File) {
-	cfg, sources, err := loadConfig(nil)
-	if err != nil {
-		fmt.Fprintf(out, "  status: INVALID — %v\n", err)
-		fmt.Fprintln(out, "  (run `corral validate` to see the error in context)")
-		return
+// providersArea probes the host prerequisite of each enabled provider that has one.
+func providersArea(cfg *config.Config, cfgErr error, home string) doctorArea {
+	if cfgErr != nil {
+		return doctorArea{name: "providers", summary: "not checked (config invalid)"}
 	}
-	fmt.Fprintln(out, "  status: valid")
-	// Annotate repo-discovered layers with their trust-approval state.
-	trustAnn := trustAnnotations(trustEntries(sources))
-	for _, s := range sources {
-		if s.Path != "" {
-			line := fmt.Sprintf("  detected: %s (%s)", s.Path, s.Kind)
-			if a, ok := trustAnn[s.Path]; ok {
-				line += "  [" + a.label + "]"
-			}
-			fmt.Fprintln(out, line)
-		} else {
-			fmt.Fprintf(out, "  detected: %s\n", s.Kind)
+	a := doctorArea{name: "providers", summary: "none to check"}
+	optional := map[string]bool{}
+	for _, v := range enabledProviders(cfg) {
+		optional[v.Name] = v.Optional
+	}
+	var names []string
+	for _, p := range knownProviders(home, envMap()) {
+		opt, enabled := optional[p.Name()]
+		if !enabled {
+			continue
 		}
+		names = append(names, p.Name())
+		ch := health.Check{Label: p.Name(), Value: "available"}
+		switch {
+		case p.Available(context.Background()):
+		case opt:
+			ch = health.Check{State: health.Warn, Label: p.Name(), Value: "unavailable", Reason: "optional; the session warns and continues"}
+		default:
+			ch = health.Check{State: health.Fail, Label: p.Name(), Value: "unavailable", Reason: "required in config, so the launch stops here"}
+		}
+		a.checks = append(a.checks, ch)
 	}
-	// Session-hook executables ride the same gate.
-	if wd, werr := os.Getwd(); werr == nil {
-		if execs := collectHookExecs(cfg, wd); len(execs.attr) > 0 {
-			hookAnn := trustAnnotations(execs.entries)
-			for _, p := range execs.sortedAttrPaths() {
-				line := fmt.Sprintf("  hook exec: %s (%s)", p, execs.attr[p])
-				a, annotated := hookAnn[p]
-				switch {
-				case execs.unreadable[p] != "":
-					line += "  [unreadable — the launch will fail or skip this hook]"
-				case annotated:
-					line += "  [" + a.label + "]"
+	if len(names) > 0 {
+		a.summary = strings.Join(names, ", ") + " available"
+	}
+	return a
+}
+
+// environmentArea reports CORRAL_DISABLE_HOOKS as seen in this shell: it lives in the
+// launching shell, not a corral file.
+func environmentArea() doctorArea {
+	ch := health.Check{Label: "hooks", Value: sandbox.DisableHooksEnvVar + " not set"}
+	raw := os.Getenv(sandbox.DisableHooksEnvVar)
+	switch {
+	case strings.TrimSpace(raw) == "":
+	case sandbox.EnvEnabled(sandbox.DisableHooksEnvVar):
+		ch = health.Check{State: health.Warn, Label: "hooks", Value: sandbox.DisableHooksEnvVar + "=" + raw + " disables hooks",
+			Reason: "agents started from this shell run unhooked; a corral run session is unaffected",
+			Fix:    "unset " + sandbox.DisableHooksEnvVar}
+	default:
+		ch = health.Check{State: health.Warn, Label: "hooks", Value: sandbox.DisableHooksEnvVar + "=" + raw + " not recognized",
+			Reason: "hooks stay active; use 1 to disable them or unset it",
+			Fix:    "unset " + sandbox.DisableHooksEnvVar}
+	}
+	return doctorArea{name: "environment", summary: "no overrides", checks: []health.Check{ch}}
+}
+
+// updateArea reports the cached result of the last version check, with no network call.
+func updateArea(c report.Style, cfg *config.Config, cfgErr error, version, home string, homeErr error) doctorArea {
+	ch := health.Check{Label: "update"}
+	if homeErr != nil {
+		ch.State, ch.Value, ch.Reason = health.Warn, "unknown", "cannot resolve home"
+		return doctorArea{name: "update", summary: ch.Value, checks: []health.Check{ch}}
+	}
+	latest, when, ok := selfupdate.CachedCheck(selfupdate.StatePath(home))
+	switch {
+	case ok && selfupdate.IsNewer(latest, version):
+		ch = health.Check{State: health.Warn, Label: "corral",
+			Value: fmt.Sprintf("%s %s %s available", version, c.Glyph(report.Fix), latest), Fix: "corral update"}
+	case cfgErr == nil && !cfg.Update.CheckOnStart:
+		ch.State, ch.Value, ch.Reason, ch.Fix = health.Warn, "launch check disabled", "never checked", "corral update --check"
+		if ok {
+			ch.Reason = "last check " + when.Format("2006-01-02")
+		}
+	case !ok:
+		ch.Value = "not checked yet"
+	case latest != "":
+		ch.Value = "up to date as of " + when.Format("2006-01-02")
+	default:
+		ch.State, ch.Value = health.Warn, "release server unreachable at last check"
+		ch.Reason, ch.Fix = "checked "+when.Format("2006-01-02 15:04"), "corral update --check"
+	}
+	return doctorArea{name: "update", summary: ch.Value, checks: []health.Check{ch}}
+}
+
+// stateGlyph is the status glyph of a check state.
+func stateGlyph(s health.State) report.Glyph {
+	switch s {
+	case health.Fail:
+		return report.Blocked
+	case health.Warn:
+		return report.Attention
+	}
+	return report.Ready
+}
+
+// writeDoctor prints the header with the verdict and one roll-up row per area, then every
+// failed or warning check with its reason and fix, then a pointer to validate.
+func writeDoctor(w io.Writer, c report.Style, title string, areas []doctorArea) {
+	var failed, warned, passed int
+	var rollup []report.Row
+	for _, a := range areas {
+		var worst *health.Check
+		bad := 0
+		for i, ch := range a.checks {
+			switch ch.State {
+			case health.Fail:
+				failed++
+			case health.Warn:
+				warned++
+			default:
+				passed++
+				continue
+			}
+			bad++
+			if worst == nil || ch.State > worst.State {
+				worst = &a.checks[i]
+			}
+		}
+		rollup = append(rollup, report.Row{Label: a.name, Value: rollupValue(c, a, worst, bad)})
+	}
+
+	sep := "  " + c.Sep() + "  "
+	failedText := fmt.Sprintf("%d failed", failed)
+	if failed > 0 {
+		failedText = c.Red + failedText + c.Reset
+	}
+	warnText := fmt.Sprintf("%d warnings", warned)
+	if warned == 1 {
+		warnText = "1 warning"
+	}
+	if warned > 0 {
+		warnText = c.Yellow + warnText + c.Reset
+	}
+	verdict := failedText + sep + warnText + sep + fmt.Sprintf("%d passed", passed)
+	c.Header(w, title, []string{verdict}, rollup)
+
+	if failed+warned > 0 {
+		fmt.Fprintln(w)
+		c.Rule(w, "needs attention")
+		for _, a := range areas {
+			for _, ch := range a.checks {
+				if ch.State == health.OK {
+					continue
 				}
-				fmt.Fprintln(out, line)
+				c.Row(w, report.Row{Glyph: stateGlyph(ch.State), Label: ch.Label, Value: ch.Value, Reason: ch.Reason})
+				if ch.Fix != "" {
+					c.Cont(w, c.Glyph(report.Fix)+" "+ch.Fix)
+				}
 			}
 		}
 	}
-	fmt.Fprintln(out, "  (run `corral validate` for the effective policy: blocked paths, extra directories, env, providers)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, c.Dim+"Host only. Run corral validate for the effective policy."+c.Reset)
 }
 
-// reportProviders probes each known provider's host prerequisite, independent of config.
-func reportProviders(out *os.File) {
-	// doctor degrades rather than fails, but says so explicitly.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(out, "  (cannot resolve home: %v)\n", err)
-		return
+// rollupValue is an area's roll-up value: its worst check, clipped to the line, and a dim
+// count of the other failed or warning checks; else its summary.
+func rollupValue(c report.Style, a doctorArea, worst *health.Check, bad int) string {
+	switch {
+	case len(a.checks) == 0:
+		return c.Dim + c.Glyph(report.Off) + " " + a.summary + c.Reset
+	case worst == nil:
+		return c.Status(report.Ready) + " " + a.summary
 	}
-	host := envMap()
-	for _, p := range knownProviders(home, host) {
-		status := "unavailable"
-		if p.Available(context.Background()) {
-			status = "available"
-		}
-		fmt.Fprintf(out, "  %-11s %s\n", p.Name()+":", status)
+	g := stateGlyph(worst.State)
+	more := ""
+	if bad > 1 {
+		more = fmt.Sprintf(" +%d", bad-1)
 	}
+	room := rollupWidth - utf8.RuneCountInString(c.Glyph(g)+" "+more)
+	return c.Status(g) + " " + clip(c, worst.Label+" "+worst.Value, room) + c.Dim + more + c.Reset
 }
 
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
+// clip shortens s to n columns, marking the cut with an ellipsis.
+func clip(c report.Style, s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	dots := "…"
+	if c.ASCII {
+		dots = "..."
+	}
+	return string([]rune(s)[:max(n-utf8.RuneCountInString(dots), 0)]) + dots
 }

@@ -230,8 +230,8 @@ func TestClaudeSyncRemove(t *testing.T) {
 	// Doctor's reporting is unchanged by removal — it simply sees an unregistered file again,
 	// which is exactly the state `corral sync` fixes.
 	doc := claude.Doctor(spec.StatusInput{Home: home, Host: map[string]string{}, Self: bin})
-	if len(doc.Lines) == 0 || !strings.Contains(doc.Lines[0].Status, "NOT registered") {
-		t.Errorf("after a removal doctor should report NOT registered, got %+v", doc.Lines)
+	if len(doc) == 0 || doc[0].Value != "not registered" || doc[0].Fix != "corral sync claude" {
+		t.Errorf("after a removal doctor should report not registered, got %+v", doc)
 	}
 }
 

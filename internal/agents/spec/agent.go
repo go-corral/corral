@@ -1,9 +1,13 @@
 // Package spec is the agent contract: the Agent interface plus agent-neutral data types.
-// It imports no other corral package, so implementations and the registry can depend on it
-// without an import cycle.
+// It imports only the leaf package health, so implementations and the registry can depend on
+// it without an import cycle.
 package spec
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/go-corral/corral/internal/health"
+)
 
 // ConfigPath is a filesystem path the agent needs exposed outside its ConfigDir, folded into
 // the sandbox baseline.
@@ -78,15 +82,6 @@ type SyncDiff struct {
 	FromLabel, ToLabel string
 }
 
-type DoctorReport struct {
-	Lines []DoctorLine
-}
-
-type DoctorLine struct {
-	Label  string
-	Status string
-}
-
 type Agent interface {
 	Name() string
 	Binaries() []string
@@ -94,7 +89,7 @@ type Agent interface {
 	Launch() Launch
 	ConfigPaths() []ConfigPath
 	ReservedEnv() []string
-	Doctor(StatusInput) DoctorReport
+	Doctor(StatusInput) []health.Check
 	Sync(SyncInput) (SyncReport, error)
 	LaunchWarnings(StatusInput) []string
 	ProtectedPaths(configDir string) []string

@@ -3,44 +3,43 @@ package pi
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-corral/corral/internal/agents/spec"
+	"github.com/go-corral/corral/internal/health"
 )
 
-// doctorStatuses flattens a DoctorReport into "label: status" lines so containsLine can assert on
-// them.
-func doctorStatuses(rep spec.DoctorReport) []string {
-	out := make([]string, len(rep.Lines))
-	for i, l := range rep.Lines {
-		out[i] = l.Label + ": " + l.Status
-	}
-	return out
-}
-
-// TestPiDoctor exercises pi's readiness report: the policy bridge line (always present, since the
+// TestPiDoctor exercises pi's readiness report: the policy bridge check (always OK, since the
 // bridge is embedded) plus the presence backstop's three install states — not installed, out of
 // date, and installed.
 func TestPiDoctor(t *testing.T) {
 	pi := New()
-	report := func(home string) []string {
-		return doctorStatuses(pi.Doctor(spec.StatusInput{Home: home, Host: map[string]string{}}))
-	}
 	backstop := func(home string) string {
 		return filepath.Join(home, ".pi", "agent", "extensions", "corral-presence.ts")
 	}
+	checks := func(home string) []health.Check {
+		t.Helper()
+		got := pi.Doctor(spec.StatusInput{Home: home, Host: map[string]string{}})
+		if len(got) != 2 {
+			t.Fatalf("pi Doctor must return the bridge and backstop checks; got %+v", got)
+		}
+		bridge := got[0]
+		if bridge.State != health.OK || bridge.Label != "policy bridge" || !strings.HasPrefix(bridge.Value, "embedded (") || bridge.Fix != "" {
+			t.Errorf("pi Doctor: got %+v, want an embedded policy-bridge check", bridge)
+		}
+		return got
+	}
 
-	// Fresh home: bridge embedded, backstop not installed.
+	// Fresh home: backstop not installed.
 	fresh := t.TempDir()
-	got := report(fresh)
-	if !containsLine(got, "policy bridge") || !containsLine(got, "embedded") {
-		t.Errorf("pi Doctor: got %v, want an embedded policy-bridge line", got)
-	}
-	if !containsLine(got, "not installed") {
-		t.Errorf("pi Doctor (fresh): got %v, want backstop not-installed", got)
+	want := health.Check{State: health.Warn, Label: "presence backstop", Value: "not installed",
+		Reason: "it warns when pi runs without corral", Fix: "corral sync pi"}
+	if got := checks(fresh)[1]; got != want {
+		t.Errorf("pi Doctor (fresh): got %+v, want %+v", got, want)
 	}
 
-	// Stale backstop (wrong content) → "out of date".
+	// Stale backstop (wrong content) → out of date, naming the file.
 	stale := t.TempDir()
 	if err := os.MkdirAll(filepath.Dir(backstop(stale)), 0o755); err != nil {
 		t.Fatal(err)
@@ -48,16 +47,18 @@ func TestPiDoctor(t *testing.T) {
 	if err := os.WriteFile(backstop(stale), []byte("// outdated\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := report(stale); !containsLine(got, "out of date") {
-		t.Errorf("pi Doctor (stale): got %v, want backstop out-of-date", got)
+	want = health.Check{State: health.Warn, Label: "presence backstop", Value: "out of date", Reason: backstop(stale), Fix: "corral sync pi"}
+	if got := checks(stale)[1]; got != want {
+		t.Errorf("pi Doctor (stale): got %+v, want %+v", got, want)
 	}
 
-	// Installed via Sync → "installed".
+	// Installed via Sync → installed.
 	installed := t.TempDir()
 	if _, err := pi.Sync(spec.SyncInput{Home: installed, Host: map[string]string{}}); err != nil {
 		t.Fatalf("pi Sync: %v", err)
 	}
-	if got := report(installed); !containsLine(got, "installed (") {
-		t.Errorf("pi Doctor (synced): got %v, want backstop installed", got)
+	want = health.Check{Label: "presence backstop", Value: "installed"}
+	if got := checks(installed)[1]; got != want {
+		t.Errorf("pi Doctor (synced): got %+v, want %+v", got, want)
 	}
 }

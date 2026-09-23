@@ -270,6 +270,24 @@ func TestBannerUpdateVerdict(t *testing.T) {
 	}
 }
 
+func TestAbbrevText(t *testing.T) {
+	for _, tt := range []struct{ text, home, want string }{
+		{"/home/u/x and /home/u", "/home/u", "~/x and ~"},
+		{"at /home/u/x: denied", "/home/u/", "at ~/x: denied"},
+		{"PATH=/home/u/bin:/home/u/.local/bin", "/home/u", "PATH=~/bin:~/.local/bin"},
+		{`"/home/u/a b"`, "/home/u", `"~/a b"`},
+		{"/usr/bin/printf", "/", "/usr/bin/printf"},
+		{"/home/heinz/x", "/home/hein", "/home/heinz/x"},
+		{"/srv/home/u/x", "/home/u", "/srv/home/u/x"},
+		{"/home/u.bak/x", "/home/u", "/home/u.bak/x"},
+		{"/home/u/x", "", "/home/u/x"},
+	} {
+		if got := abbrevText(tt.text, tt.home); got != tt.want {
+			t.Errorf("abbrevText(%q, %q) = %q, want %q", tt.text, tt.home, got, tt.want)
+		}
+	}
+}
+
 func TestFitPaths(t *testing.T) {
 	for _, tt := range []struct {
 		paths  []string

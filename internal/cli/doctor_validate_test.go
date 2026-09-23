@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// doctor = host/integration readiness. It must show provider *host availability*
-// and must not re-print the effective policy (net / blocked paths / mounts) — that
+// doctor = host/integration readiness. It must show the host availability of the enabled
+// providers and must not re-print the effective policy (net / blocked paths / mounts) — that
 // belongs to validate. This pins the separation so the overlap can't creep back.
 func TestDoctorShowsAvailabilityNotPolicy(t *testing.T) {
 	home := t.TempDir()
@@ -16,8 +16,9 @@ func TestDoctorShowsAvailabilityNotPolicy(t *testing.T) {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A config with policy details doctor must not echo.
-	cfg := "providers:\n  block: {directories: [/data/vault]}\n  paths:\n    rw: [/srv/work]\n"
+	// A config with policy details doctor must not echo, and two enabled providers.
+	cfg := "providers:\n  block: {directories: [/data/vault]}\n  paths:\n    rw: [/srv/work]\n" +
+		"  docker: {enabled: true, optional: true}\n  ssh: {enabled: true}\n"
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -26,12 +27,20 @@ func TestDoctorShowsAvailabilityNotPolicy(t *testing.T) {
 
 	out := captureStdout(t, func() { cmdDoctor(nil, "test") })
 
-	if !strings.Contains(out, "Providers (host availability") {
-		t.Errorf("doctor must show provider host availability:\n%s", out)
+	// ssh is required and unavailable, so it is the providers area's worst check.
+	for _, want := range []string{
+		"providers   ✗ ssh unavailable",
+		"  ✗ ssh             unavailable\n",
+		"required in config, so the launch stops here\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor must show provider host availability %q:\n%s", want, out)
+		}
 	}
-	for _, name := range []string{"docker:", "ssh:"} {
-		if !strings.Contains(out, name) {
-			t.Errorf("doctor missing provider %q:\n%s", name, out)
+	// Only enabled providers are checked.
+	for _, name := range []string{"kubernetes", "gitlab"} {
+		if strings.Contains(out, name) {
+			t.Errorf("doctor checked the provider %q, which the config does not enable:\n%s", name, out)
 		}
 	}
 	// Policy details are validate's job — doctor must not re-print them.

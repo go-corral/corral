@@ -68,17 +68,61 @@ validation fails, sync writes nothing.
 corral doctor [flags]
 ```
 
-Checks whether the current host is ready to run corral. The report covers the sandbox
-backend, every supported agent binary and policy integration, provider prerequisites,
-config health, and approval state. `doctor` takes no agent positional; it reports every
-agent at once.
+Checks whether the current host is ready to run corral. `doctor` takes no agent
+positional; it reports every installed agent at once. It checks the host only; run
+`corral validate` for the effective policy.
 
-For Claude Code, the settings check prints one line. A healthy line reports that all
-hooks are registered for this binary. Otherwise it names stale events (an older bare
-registration or a different corral binary) and missing events, for example `stale for
-PreToolUse, PostToolUse; missing for SessionStart — run corral sync`. `doctor` also
-warns when `CORRAL_DISABLE_HOOKS` is set in the invoking shell and reports "set but not
-recognized" for an unrecognized value such as `0`.
+The report starts with a verdict line that counts failed, warning, and passed checks. One
+row per area follows. A row shows the worst check in its area, then `+N` for the other
+failed or warning checks in that area:
+
+```text
+1 failed  ·  2 warnings  ·  9 passed
+
+sandbox     ✓ bwrap
+config      ✓ global + project valid
+agents      ! pi presence backstop out of date
+providers   ✗ docker unavailable
+environment ! hooks CORRAL_DISABLE_HOOKS=0 not recognized
+update      ✓ up to date as of 2026-09-01
+```
+
+| Area          | Checks                                                                                   |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `sandbox`     | The backend binary. For bwrap, also the PID namespace and legacy TIOCSTI.                |
+| `config`      | Config validity, and approval of repository config and session-hook executables.        |
+| `agents`      | Each installed agent and its policy integration, and the configured agent if missing.    |
+| `providers`   | The host prerequisite of each enabled provider, such as a Docker socket or an SSH agent. |
+| `environment` | `CORRAL_DISABLE_HOOKS` in the shell that runs `doctor`.                                  |
+| `update`      | The cached result of the last update check, and the launch check setting. No network.   |
+
+When a check fails or warns, the **needs attention** section lists it with its reason.
+If a command fixes the problem, the line after the reason shows it:
+
+```text
+needs attention ──────────────────────────────────────────────────
+  ✗ docker          unavailable
+                    required in config, so the launch stops here
+  ! pi              presence backstop out of date
+                    ~/.pi/agent/extensions/corral-presence.ts
+                    → corral sync pi
+```
+
+- **Claude Code hooks:** a healthy check reports `registered for this binary`. Otherwise
+  it reports `not registered`, or it names stale events (an older registration or a
+  different corral binary) and missing events, for example
+  `stale for PreToolUse; missing for SessionStart`. Run `corral sync claude`.
+- **pi presence warning:** the `presence backstop` check reports a missing or outdated
+  extension. Run `corral sync pi`.
+- **Providers:** an unavailable provider fails when the config requires it and warns
+  when it is optional. With an invalid config, `doctor` does not check providers.
+- **Update check:** `update.checkOnStart: false` warns with the date of the last check.
+  Run `corral update --check`.
+- **`CORRAL_DISABLE_HOOKS`:** `1` or `true` warns that agents started from this shell
+  run without hooks. Other values, such as `0`, warn that hooks stay active. Run
+  `unset CORRAL_DISABLE_HOOKS`.
+- **Legacy TIOCSTI:** when the kernel allows it, run
+  `sudo sysctl -w dev.tty.legacy_tiocsti=0`.
 
 | Flag               | Effect                                                                |
 | ------------------ | --------------------------------------------------------------------- |

@@ -84,11 +84,12 @@ See [the presence warning](../explanation/threat-model.md#the-presence-warning).
 If calls that should be denied all proceed, check these causes in order:
 
 1. Run `corral doctor`. If `CORRAL_DISABLE_HOOKS` is `1` or `true`, corral is
-   disabled for agents launched outside its sandbox. Remove the variable and
-   restart the agent. Other values, including `0` and `false`, do not disable
-   hooks; `doctor` reports them as unrecognized.
-2. Check the event registrations in `corral doctor`. If any event is **stale** or
-   **missing**, run `corral sync`, then run `corral doctor` again.
+   disabled for agents launched outside its sandbox. Run
+   `unset CORRAL_DISABLE_HOOKS` and restart the agent. Other values, including `0`
+   and `false`, do not disable hooks; `doctor` reports them as not recognized.
+2. Check the `claude` entry under **needs attention** in `corral doctor`. If its
+   hooks are **not registered**, **stale**, or **missing**, run `corral sync claude`,
+   then run `corral doctor` again.
 3. If registrations look present but the registered corral binary was moved or
    deleted, install corral at that path or run `corral sync` from the current
    binary. Outside the sandbox, a missing registered binary is skipped silently.

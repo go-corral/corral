@@ -99,8 +99,8 @@ sandbox, cli, config, policy, and providers packages never name a specific agent
 
 - `internal/agents/spec`, the **contract**: the `Agent` interface, the `AgentConfig` interface,
   plus every agent-neutral carrier type (`Launch`, `ConfigPath`, `StatusInput`,
-  `SyncInput`/`SyncReport`, `DoctorReport`, …) and the shared `BinDir` helper. It is the **leaf**.
-  It imports no other corral package.
+  `SyncInput`/`SyncReport`, …) and the shared `BinDir` helper. It is the **leaf**.
+  It imports only `internal/health`, whose `health.Check` is the result type of `Doctor`.
 - `internal/agents/claude`, `internal/agents/pi`: one **implementation per agent**, each its
   own package depending only on `spec` (claude additionally imports the leaf `internal/agents/claude/claudecfg`
   for `settings.json` generation). Each exposes `New() spec.Agent` and asserts conformance with
@@ -195,8 +195,9 @@ it.
 (`DefaultKind`: linux→bwrap, darwin→seatbelt, **else an explicit "unsupported OS" error**
 so we fail early instead of guessing). An explicit `-backend bwrap|seatbelt` is honored
 on **any** OS (so `run --dry-run -backend bwrap` can inspect the bwrap argv on macOS; a
-real launch still gates on the backend's `Available()`). Each backend owns a `Doctor(w)`
-reporting only its own checks (bwrap: binary + PID namespace; seatbelt: `sandbox-exec`).
+real launch still gates on the backend's `Available()`). Each backend owns a `Doctor()`
+returning only its own `health.Check` results (bwrap: binary + PID namespace + legacy TIOCSTI;
+seatbelt: `sandbox-exec`).
 The two backend-intrinsic `runtime.GOOS` checks that remain are correct and stay: the
 Seatbelt backend's `Available()`, and the hook's `logicalSysPath` `/private`
 normalization (real-OS filesystem semantics, not launch-time dispatch).
@@ -729,6 +730,7 @@ corral/
   internal/selfupdate/  # launcher-side self-update: release fetch, checksum verify, in-place replace
   internal/sandbox/     # SandboxSpec + bwrap / seatbelt backends; embedded sandbox-permissions.json baseline
   internal/policy/      # hook enforcer: bash parser, secret scan, path-pattern gate, exit-2 fail-closed
+  internal/health/      # readiness check result type shared by the sandbox backends, agents, and doctor
   internal/pathutil/    # path containment helpers (AtOrUnder, …) shared by config + sandbox
   internal/audit/       # rotated JSON decision log
   internal/providers/   # provider seam: spec/ (Provider contract + shared helpers), one package per provider (block/ aiignore/ paths/ env/ hooks/ ssh/ docker/ home/ gitlab/ kubernetes/, each owning its Config type), registry/ (canonical ordered table all provider views derive from), facade w/ engine (Resolve/Apply/Cleanup)

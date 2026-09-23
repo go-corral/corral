@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/sandbox"
 )
@@ -50,8 +51,8 @@ func (b Backend) UnavailableHint() string {
 	return "sandbox-exec not found; the seatbelt backend requires macOS with sandbox-exec on PATH"
 }
 
-func (b Backend) Doctor(w io.Writer) {
-	sandbox.ReportTool(w, b.bin())
+func (b Backend) Doctor() []health.Check {
+	return []health.Check{sandbox.ToolCheck(b.bin(), "the seatbelt backend requires macOS with sandbox-exec on PATH")}
 }
 
 // ReadOnlyTargets returns the macOS baseline's read-only targets for spec's

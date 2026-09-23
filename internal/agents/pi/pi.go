@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-corral/corral/internal/agents/spec"
+	"github.com/go-corral/corral/internal/health"
 )
 
 type agent struct{}
@@ -81,15 +82,13 @@ func (agent) ReservedEnv() []string {
 	return []string{"PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"}
 }
 
-func (p agent) Doctor(in spec.StatusInput) spec.DoctorReport {
-	l := p.Launch()
-	var lines []spec.DoctorLine
-	if len(l.ExtensionAsset) == 0 {
-		lines = append(lines, spec.DoctorLine{Label: "policy bridge", Status: "MISSING — the embedded policy bridge is empty (corral build problem)"})
-	} else {
-		lines = append(lines, spec.DoctorLine{Label: "policy bridge", Status: fmt.Sprintf(
-			"embedded (%d bytes); bound read-only, activated via `%s %s <bridge>` at launch", len(l.ExtensionAsset), p.Binaries()[0], l.ExtensionFlag)})
+func (p agent) Doctor(in spec.StatusInput) []health.Check {
+	bridge := health.Check{Label: "policy bridge", Value: fmt.Sprintf("embedded (%d bytes)", len(p.Launch().ExtensionAsset))}
+	if len(p.Launch().ExtensionAsset) == 0 {
+		bridge = health.Check{State: health.Fail, Label: "policy bridge", Value: "missing",
+			Reason: "the embedded policy bridge is empty (corral build problem)"}
 	}
+	checks := []health.Check{bridge}
 
 	extDir := p.extensionsDir(in.Home, in.Host)
 	staleByPath := map[string]bool{}
@@ -98,18 +97,17 @@ func (p agent) Doctor(in spec.StatusInput) spec.DoctorReport {
 	}
 	for _, e := range p.globalExtensions() {
 		dst := filepath.Join(extDir, e.Name)
-		var status string
-		switch stale, pending := staleByPath[dst]; {
-		case !pending:
-			status = "installed (" + dst + ")"
-		case stale:
-			status = fmt.Sprintf("out of date — run `corral sync %s` (%s)", p.Name(), dst)
-		default:
-			status = fmt.Sprintf("not installed — run `corral sync %s` (warns when %s runs without corral)", p.Name(), p.Name())
+		c := health.Check{Label: "presence backstop", Value: "installed"}
+		if stale, pending := staleByPath[dst]; pending {
+			c.State, c.Fix = health.Warn, "corral sync "+p.Name()
+			c.Value, c.Reason = "not installed", fmt.Sprintf("it warns when %s runs without corral", p.Name())
+			if stale {
+				c.Value, c.Reason = "out of date", dst
+			}
 		}
-		lines = append(lines, spec.DoctorLine{Label: "presence backstop", Status: status})
+		checks = append(checks, c)
 	}
-	return spec.DoctorReport{Lines: lines}
+	return checks
 }
 
 type pendingExtension struct {
