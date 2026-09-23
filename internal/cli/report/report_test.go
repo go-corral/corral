@@ -122,7 +122,7 @@ func TestStyleForNonTerminals(t *testing.T) {
 func TestNewStyleWithoutColorHasNoCodes(t *testing.T) {
 	var out strings.Builder
 	s := NewStyle(false, false)
-	s.Header(&out, "corral v1", "verdict", []Row{{Glyph: Ready, Label: "a", Value: "b", Reason: "c"}})
+	s.Header(&out, "corral v1", []string{"verdict"}, []Row{{Label: "a", Value: "b", Reason: "c"}})
 	s.Rule(&out, "Providers")
 	if strings.Contains(out.String(), "\x1b") {
 		t.Errorf("uncolored output contains ANSI escapes:\n%q", out.String())
@@ -181,8 +181,12 @@ func TestSep(t *testing.T) {
 func TestRowStyledCodes(t *testing.T) {
 	var out strings.Builder
 	NewStyle(true, false).Row(&out, Row{Glyph: Attention, Label: "network", Value: "open", Reason: "why"})
-	want := "  \x1b[33m!\x1b[0m \x1b[2mnetwork         \x1b[0mopen\n" +
-		"                    \x1b[2mwhy\x1b[0m\n"
+	NewStyle(true, false).Row(&out, Row{Glyph: On, Label: "ssh", Value: "agent"})
+	NewStyle(true, false).Row(&out, Row{Glyph: Off, Label: "docker", Value: "off"})
+	want := "  \x1b[33m!\x1b[0m network         open\n" +
+		"                    \x1b[2mwhy\x1b[0m\n" +
+		"  ● ssh             agent\n" +
+		"  \x1b[2m○\x1b[0m \x1b[2mdocker          off\x1b[0m\n"
 	if out.String() != want {
 		t.Errorf("row = %q, want %q", out.String(), want)
 	}
@@ -226,25 +230,36 @@ func TestHeader(t *testing.T) {
 	for _, f := range forms {
 		t.Run(f.name, func(t *testing.T) {
 			var out strings.Builder
-			f.style.Header(&out, "corral v1.2.3", "1 failed", []Row{
-				{Label: "profile", Value: "offline"},
-				{Label: "network", Value: "none"},
+			f.style.Header(&out, "corral v1.2.3", []string{"1 failed"}, []Row{
+				{Label: "project", Value: "~/src/x"},
+				{Label: "home", Value: "private $HOME"},
+				{Label: "masked", Value: "~/.ssh"},
+				{Label: "policy", Value: "checked", Reason: "logged"},
+				{Value: "note"},
 			})
-			lines := strings.Split(visible(out.String()), "\n")
-			if len(lines) != 11 || lines[0] != "" || lines[7] != "" {
+			lines := strings.Split(strings.TrimSuffix(visible(out.String()), "\n"), "\n")
+			// Line 3 is the blank gap between the verdict and the roll-up: mark only.
+			if len(lines) != 10 || lines[0] != "" || utf8.RuneCountInString(lines[3]) > markIndent+markWidth {
 				t.Fatalf("header layout:\n%s", out.String())
 			}
-			for i, text := range map[int]string{3: "corral v1.2.3", 4: "1 failed"} {
-				if col := utf8.RuneCountInString(lines[i][:strings.Index(lines[i], text)]); col != 2+markWidth+2 {
-					t.Errorf("%q starts at offset %d, want %d", text, col, 2+markWidth+2)
+			// Text beside the mark and below it starts at one column.
+			for i, text := range map[int]string{1: "corral v1.2.3", 2: "1 failed", 4: "project", 7: "policy"} {
+				if col := utf8.RuneCountInString(lines[i][:strings.Index(lines[i], text)]); col != markIndent+markWidth+markGap {
+					t.Errorf("%q starts at offset %d, want %d", text, col, markIndent+markWidth+markGap)
 				}
 			}
-			for i, value := range map[int]string{8: "offline", 9: "none"} {
-				if col := utf8.RuneCountInString(lines[i][:strings.Index(lines[i], value)]) + 1; col != ValueColumn {
-					t.Errorf("roll-up value starts at column %d, want %d: %q", col, ValueColumn, lines[i])
+			for i, value := range map[int]string{4: "~/src/x", 5: "private $HOME", 6: "~/.ssh", 7: "checked", 8: "logged", 9: "note"} {
+				if col := utf8.RuneCountInString(lines[i][:strings.Index(lines[i], value)]) + 1; col != RollupValueColumn {
+					t.Errorf("roll-up value starts at column %d, want %d: %q", col, RollupValueColumn, lines[i])
 				}
 			}
 		})
+	}
+}
+
+func TestRollupGrid(t *testing.T) {
+	if RollupLabelWidth != 12 || RollupValueColumn != 29 || LineMax != 80 {
+		t.Errorf("roll-up grid = %d/%d/%d, want 12/29/80", RollupLabelWidth, RollupValueColumn, LineMax)
 	}
 }
 
@@ -262,8 +277,8 @@ func TestRule(t *testing.T) {
 		lead  string
 		fill  string
 	}{
-		{NewStyle(true, false), "  ── Providers ", "─"},
-		{NewStyle(false, true), "  -- Providers ", "-"},
+		{NewStyle(true, false), "Providers ", "─"},
+		{NewStyle(false, true), "Providers ", "-"},
 	} {
 		var out strings.Builder
 		tt.style.Rule(&out, "Providers")

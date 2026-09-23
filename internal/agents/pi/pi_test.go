@@ -87,12 +87,6 @@ func TestPiSandboxEnv(t *testing.T) {
 	}
 }
 
-func TestPiBannerFields(t *testing.T) {
-	if f := (Config{}).BannerFields(); len(f) != 0 {
-		t.Errorf("pi BannerFields = %+v, want none", f)
-	}
-}
-
 // TestPiTempEnvAliases pins that pi declares no private temp var, so a temp-isolating backend no
 // longer hardcodes a claude-specific var for every agent.
 func TestPiTempEnvAliases(t *testing.T) {

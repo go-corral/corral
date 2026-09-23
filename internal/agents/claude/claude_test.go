@@ -171,56 +171,6 @@ func TestClaudeConfigPaths(t *testing.T) {
 	}
 }
 
-// fieldValue returns the Value of the banner field with the given label, or "" (with ok=false)
-// when no such field is present.
-func fieldValue(fields []spec.BannerField, label string) (string, bool) {
-	for _, f := range fields {
-		if f.Label == label {
-			return f.Value, true
-		}
-	}
-	return "", false
-}
-
-// TestClaudeBannerFields pins the launch banner's compact fields: connectors, one phone-home
-// summary that names the enabled metrics knobs, and attribution only when disabled.
-func TestClaudeBannerFields(t *testing.T) {
-	// Hardened default (zero value): connectors off, phone-home off, attribution off (shown
-	// because the raw zero value disables it; the config default is true, tested elsewhere).
-	hardened := (Config{}).BannerFields()
-	if v, _ := fieldValue(hardened, "connectors"); v != "off" {
-		t.Errorf("hardened connectors = %q, want off", v)
-	}
-	if v, _ := fieldValue(hardened, "phone-home"); v != "off" {
-		t.Errorf("hardened phone-home = %q, want off", v)
-	}
-
-	// Everything opted on: connectors on, phone-home on, and no attribution field (its default
-	// is on, so it is not surfaced).
-	on := Config{
-		ClaudeaiConnectors: true,
-		Telemetry:          true,
-		ErrorReporting:     true,
-		FeedbackSurvey:     true,
-		AttributionHeader:  true,
-	}.BannerFields()
-	if v, _ := fieldValue(on, "connectors"); v != "on" {
-		t.Errorf("enabled connectors = %q, want on", v)
-	}
-	if v, _ := fieldValue(on, "phone-home"); v != "on" {
-		t.Errorf("enabled phone-home = %q, want on", v)
-	}
-	if v, ok := fieldValue(on, "attribution"); ok {
-		t.Errorf("attribution field must be omitted when enabled, got %q", v)
-	}
-
-	// A mix surfaces "partial (...)" naming the still-enabled metrics knobs.
-	partial := Config{Telemetry: true, AttributionHeader: true}.BannerFields()
-	if v, _ := fieldValue(partial, "phone-home"); v != "partial (telemetry)" {
-		t.Errorf("partial phone-home = %q, want \"partial (telemetry)\"", v)
-	}
-}
-
 // TestClaudeFootprint pins claude's static enforcement footprint the hook self-protects: the
 // ".claude" marker, the three merged settings kill-switch files (built from settingsFiles), and the
 // hooks/ subtree. The reason strings are load-bearing — they must stay byte-identical to what

@@ -18,6 +18,15 @@ const (
 	RuleStop    = 66
 )
 
+// The header roll-up sits beside the mark with its labels in a RollupLabelWidth column, so
+// its values start at RollupValueColumn (1-based). LineMax is the target line width: data
+// that corral cannot shorten, such as a single long path, may pass it.
+const (
+	RollupLabelWidth  = 12
+	RollupValueColumn = markIndent + markWidth + markGap + RollupLabelWidth + 1
+	LineMax           = 80
+)
+
 // Glyph is one mark of the fixed glyph set.
 type Glyph int
 
@@ -48,8 +57,8 @@ const asciiSlot = 4
 // Style holds the color codes and the character set for one output stream. When color is
 // off every code is empty, so call sites wrap text unconditionally.
 type Style struct {
-	Reset, Bold, Dim, Green, Yellow, Red, Brand string
-	ASCII                                       bool
+	Reset, Bold, Dim, Green, Yellow, Red, Blue, Brand string
+	ASCII                                             bool
 }
 
 // NewStyle returns a Style with color codes when color is true, and the plain-ASCII
@@ -63,6 +72,7 @@ func NewStyle(color, ascii bool) Style {
 		s.Green = "\x1b[32m"
 		s.Yellow = "\x1b[33m"
 		s.Red = "\x1b[31m"
+		s.Blue = "\x1b[34m"
 		// corral's mark color #E2552B as a 24-bit truecolor SGR.
 		s.Brand = "\x1b[38;2;226;85;43m"
 	}
@@ -124,7 +134,7 @@ func (s Style) Glyph(g Glyph) string {
 
 func (s Style) glyphColor(g Glyph) string {
 	switch g {
-	case Ready, On:
+	case Ready:
 		return s.Green
 	case Attention:
 		return s.Yellow
@@ -149,16 +159,24 @@ func (s Style) slot(g Glyph) (string, int) {
 	if s.ASCII {
 		return fmt.Sprintf("%-*s ", asciiSlot, s.Glyph(g)), asciiSlot + 1
 	}
-	return "  " + s.glyphColor(g) + s.Glyph(g) + s.Reset + " ", 4
+	glyph := s.Glyph(g)
+	if color := s.glyphColor(g); color != "" {
+		glyph = color + glyph + s.Reset
+	}
+	return "  " + glyph + " ", 4
 }
 
 // Row writes r on the detail grid. A label longer than 14 characters, the most that fits
 // beside the wider ASCII status column, keeps one space before the value and moves only its
-// own value right.
+// own value right. An Off row is dimmed whole.
 func (s Style) Row(w io.Writer, r Row) {
 	lead, n := s.slot(r.Glyph)
 	pad := strings.Repeat(" ", max(ValueColumn-1-n-utf8.RuneCountInString(r.Label), 1))
-	fmt.Fprintf(w, "%s%s%s%s%s%s\n", lead, s.Dim, r.Label, pad, s.Reset, r.Value)
+	line := r.Label + pad + r.Value
+	if r.Glyph == Off {
+		line = s.Dim + line + s.Reset
+	}
+	fmt.Fprintf(w, "%s%s\n", lead, line)
 	if r.Reason != "" {
 		s.Cont(w, s.Dim+r.Reason+s.Reset)
 	}
@@ -194,46 +212,57 @@ var markArt = []string{
 	"████████████",
 }
 
-// markWidth is the mark's column width; ragged open-gate rows are padded to it.
-const markWidth = 12
+// markWidth is the mark's column width; ragged open-gate rows are padded to it. The mark
+// sits markIndent columns in, and text beside it follows a markGap gutter.
+const (
+	markWidth  = 12
+	markIndent = 2
+	markGap    = 2
+)
 
-// mark writes the corral mark with beside[i] next to row i. Rows without text skip the
-// padding and gutter.
+// mark writes the corral mark with beside[i] next to row i, top-aligned. Text past the
+// mark's last row keeps the same column.
 func (s Style) mark(w io.Writer, beside []string) {
-	for i, art := range markArt {
-		if s.ASCII {
-			art = strings.ReplaceAll(art, "█", "#")
+	for i := range max(len(markArt), len(beside)) {
+		row := strings.Repeat(" ", markIndent+markWidth)
+		if i < len(markArt) {
+			art := markArt[i]
+			if s.ASCII {
+				art = strings.ReplaceAll(art, "█", "#")
+			}
+			row = strings.Repeat(" ", markIndent) + s.Brand + art + s.Reset + strings.Repeat(" ", markWidth-utf8.RuneCountInString(art))
 		}
-		row := "  " + s.Brand + art + s.Reset
 		if i < len(beside) && beside[i] != "" {
-			row += strings.Repeat(" ", markWidth-utf8.RuneCountInString(art)) + "  " + beside[i]
+			row += strings.Repeat(" ", markGap) + beside[i]
 		}
-		fmt.Fprintln(w, row)
+		fmt.Fprintln(w, strings.TrimRight(row, " "))
 	}
 }
 
-// Header writes a blank line, the mark with the version line and an optional verdict
-// beside its middle rows, a blank line, and the roll-up rows.
-func (s Style) Header(w io.Writer, version, verdict string, rollup []Row) {
+// Header writes a blank line and the mark with text beside it: the version line, the
+// verdict lines, a blank line, and the roll-up rows. Roll-up rows carry no glyph; a Reason
+// is printed dimmed under its value.
+func (s Style) Header(w io.Writer, version string, verdict []string, rollup []Row) {
 	fmt.Fprintln(w)
-	beside := make([]string, len(markArt))
-	beside[2], beside[3] = version, verdict
-	s.mark(w, beside)
-	fmt.Fprintln(w)
+	beside := append(append([]string{version}, verdict...), "")
 	for _, r := range rollup {
-		s.Row(w, r)
+		pad := strings.Repeat(" ", max(RollupLabelWidth-utf8.RuneCountInString(r.Label), 1))
+		beside = append(beside, r.Label+pad+r.Value)
+		if r.Reason != "" {
+			beside = append(beside, strings.Repeat(" ", RollupLabelWidth)+s.Dim+r.Reason+s.Reset)
+		}
 	}
+	s.mark(w, beside)
 }
 
-// Rule writes a section rule with title that ends at RuleStop.
+// Rule writes a section rule: the title, then a line that ends at RuleStop.
 func (s Style) Rule(w io.Writer, title string) {
 	line := "─"
 	if s.ASCII {
 		line = "-"
 	}
-	lead := "  " + line + line + " "
-	fill := max(RuleStop-utf8.RuneCountInString(lead)-utf8.RuneCountInString(title)-1, 0)
-	fmt.Fprintf(w, "%s%s%s%s%s%s %s%s%s\n", s.Dim, lead, s.Reset, s.Bold, title, s.Reset, s.Dim, strings.Repeat(line, fill), s.Reset)
+	fill := max(RuleStop-utf8.RuneCountInString(title)-1, 0)
+	fmt.Fprintf(w, "%s%s%s %s%s%s\n", s.Bold, title, s.Reset, s.Dim, strings.Repeat(line, fill), s.Reset)
 }
 
 // Node is one tree entry. Text is written as given.

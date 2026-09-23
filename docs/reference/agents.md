@@ -68,7 +68,7 @@ elsewhere are unaffected.
 | `agents.claude.feedbackSurvey` | `false` | Disables session-quality surveys. |
 | `agents.claude.attributionHeader` | `true` | Keeps Claude Code's system-prompt attribution block. Set `false` for a local model or gateway that should omit it. |
 
-The startup banner reports the connector, telemetry, error-reporting, and survey
+`corral validate` reports the connector, telemetry, error-reporting, and survey
 settings. See
 [`agents.claude`](config.md#agentsclaudeclaudeaiconnectors) for the environment
 variables corral sets.

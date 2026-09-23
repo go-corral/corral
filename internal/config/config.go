@@ -107,10 +107,6 @@ func (c *Config) AgentEnv() map[string]string {
 	return c.agentConfig().SandboxEnv()
 }
 
-func (c *Config) AgentBannerFields() []agents.BannerField {
-	return c.agentConfig().BannerFields()
-}
-
 func (c *Config) AgentValidationFields() []agents.BannerField {
 	return c.agentConfig().ValidationFields()
 }

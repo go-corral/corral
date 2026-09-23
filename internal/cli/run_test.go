@@ -557,7 +557,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 	}
 	iWarn := strings.Index(stderr, "root-equivalent") // header warning, above the gate
 	iHook := strings.Index(stderr, hookEra)           // phase-B mint output
-	iBody := strings.Index(stderr, "workdir")         // banner body (config summary)
+	iBody := strings.Index(stderr, "\nproviders ")    // banner body (providers section)
 	iNote := strings.Index(stderr, featureNote)       // feature-provider notice (tree tail)
 	if iWarn < 0 || iHook < 0 || iBody < 0 || iNote < 0 {
 		t.Fatalf("a region is missing: warn=%d hook=%d body=%d note=%d\n%s", iWarn, iHook, iBody, iNote, stderr)
@@ -767,7 +767,7 @@ func TestRunPrintsUpdateNotice(t *testing.T) {
 	orig := checkUpdateOnStart
 	t.Cleanup(func() { checkUpdateOnStart = orig })
 	checkUpdateOnStart = func(context.Context, *config.Config, string, string) string {
-		return "a newer corral is available: 0.3.0 → 0.4.0 — run 'corral update'"
+		return "0.4.0"
 	}
 	// Stop the launch right after the banner/notice so the test needs no real backend.
 	origResolve := resolveProviders
@@ -777,7 +777,7 @@ func TestRunPrintsUpdateNotice(t *testing.T) {
 	}
 
 	stderr := captureStderr(t, func() { cmdRun([]string{"--home", home, "--project", proj}, "0.3.0") })
-	if !strings.Contains(stderr, "newer corral is available") {
+	if !strings.Contains(stderr, "0.3.0 → 0.4.0 available") {
 		t.Errorf("launch banner did not show the update notice:\n%s", stderr)
 	}
 }
@@ -796,7 +796,7 @@ func TestRunWarningsGateWithUpdateNotice(t *testing.T) {
 	origCheck := checkUpdateOnStart
 	t.Cleanup(func() { checkUpdateOnStart = origCheck })
 	checkUpdateOnStart = func(context.Context, *config.Config, string, string) string {
-		return "a newer corral is available: 0.3.0 → 0.4.0 — run 'corral update'"
+		return "0.4.0"
 	}
 
 	origConfirm := confirmProceed
@@ -815,7 +815,7 @@ func TestRunWarningsGateWithUpdateNotice(t *testing.T) {
 	if code == 0 {
 		t.Errorf("a declined launch must abort with a non-zero code, got %d", code)
 	}
-	if !strings.Contains(stderr, "newer corral is available") {
+	if !strings.Contains(stderr, "0.3.0 → 0.4.0 available") {
 		t.Errorf("the update notice must be shown before the gate:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "launch aborted") {
