@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/providers"
 )
 
@@ -78,5 +79,60 @@ func TestRunGCConfirmationGates(t *testing.T) {
 				t.Errorf("reaped %d, want %d (output: %q)", r.reaped, c.wantReap, out.String())
 			}
 		})
+	}
+}
+
+func TestRunGCLayout(t *testing.T) {
+	orphans := []providers.Orphan{
+		{Provider: "kubernetes", ID: "sa1", Describe: "ServiceAccount corral/corral-alice-s1"},
+		{Provider: "kubernetes", ID: "sa2", Describe: "ServiceAccount corral/corral-bob-s2"},
+	}
+	for _, tt := range []struct {
+		name    string
+		style   report.Style
+		orphans []providers.Orphan
+		opts    gcOptions
+		want    string
+	}{
+		{"none", report.NewStyle(false, false), nil, gcOptions{}, "corral gc\n" +
+			"  ✓ no orphaned resources\n"},
+		{"dry-run", report.NewStyle(false, false), orphans, gcOptions{DryRun: true}, "corral gc   2 orphaned resources\n" +
+			"  ● kubernetes      ServiceAccount corral/corral-alice-s1\n" +
+			"  ● kubernetes      ServiceAccount corral/corral-bob-s2\n" +
+			"    dry-run: nothing deleted\n"},
+		{"reaped", report.NewStyle(false, false), orphans[:1], gcOptions{Yes: true}, "corral gc   1 orphaned resource\n" +
+			"  ● kubernetes      ServiceAccount corral/corral-alice-s1\n" +
+			"  ✓ reaped 1 resource\n"},
+		{"ascii dry-run", report.NewStyle(false, true), orphans[:1], gcOptions{DryRun: true}, "corral gc   1 orphaned resource\n" +
+			"[on] kubernetes     ServiceAccount corral/corral-alice-s1\n" +
+			"     dry-run: nothing deleted\n"},
+		{"ascii reaped", report.NewStyle(false, true), orphans, gcOptions{Yes: true}, "corral gc   2 orphaned resources\n" +
+			"[on] kubernetes     ServiceAccount corral/corral-alice-s1\n" +
+			"[on] kubernetes     ServiceAccount corral/corral-bob-s2\n" +
+			"[ok] reaped 2 resources\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &cliFakeReaper{name: "kubernetes", orphans: tt.orphans}
+			opts := tt.opts
+			opts.Title, opts.Colors = true, tt.style
+			var out strings.Builder
+			if code := runGC(context.Background(), []providers.Reaper{r}, opts, strings.NewReader(""), &out); code != 0 {
+				t.Errorf("exit = %d, want 0", code)
+			}
+			if out.String() != tt.want {
+				t.Errorf("output:\n%s\nwant:\n%s", out.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestRunGCDeclined(t *testing.T) {
+	r := &cliFakeReaper{name: "kubernetes", orphans: []providers.Orphan{{Provider: "kubernetes", ID: "sa1", Describe: "SA sa1"}}}
+	var out strings.Builder
+	runGC(context.Background(), []providers.Reaper{r}, gcOptions{Colors: report.NewStyle(false, false)}, strings.NewReader("n\n"), &out)
+	want := "  ● kubernetes      SA sa1\n" +
+		"Reap these 1 resource(s)? [y/N]     nothing deleted\n"
+	if out.String() != want {
+		t.Errorf("output = %q, want %q", out.String(), want)
 	}
 }

@@ -321,6 +321,6 @@ func (e *statusError) Error() string {
 
 func logf(w io.Writer, format string, a ...any) {
 	if w != nil {
-		fmt.Fprintf(w, "corral: "+format+"\n", a...)
+		fmt.Fprintf(w, format+"\n", a...)
 	}
 }

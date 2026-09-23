@@ -113,7 +113,7 @@ func (b Backend) Prepare(spec *sandbox.SandboxSpec, w io.Writer) (sandbox.Launch
 
 	d, err := os.MkdirTemp("/tmp", fmt.Sprintf("corral-%d-", os.Getuid()))
 	if err != nil {
-		fmt.Fprintf(w, "corral: warning: could not create a session temp dir under /tmp (%v); "+
+		fmt.Fprintf(w, "could not create a session temp dir under /tmp (%v); "+
 			"temp file operations may fail inside the sandbox\n", err)
 		return prep, nil
 	}

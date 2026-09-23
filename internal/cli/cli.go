@@ -9,31 +9,41 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
-const usage = `corral — sandbox a coding agent (claude, pi) and enforce policy on its tool calls.
+// commands is the help text's command list. note, when set, is printed dimmed below.
+var commands = []struct{ name, desc, note string }{
+	{"run", "Launch the configured agent inside the sandbox", ""},
+	{"hook", "Hook enforcer (invoked by Claude Code; reads JSON on stdin)", ""},
+	{"sync", "Register corral's hooks with an agent; --remove undoes it", ""},
+	{"gc", "Preview and reap provider resources of crashed sessions", ""},
+	{"validate", "Check the config and show the policy the sandbox enforces", ""},
+	{"doctor", "Check that this host can run corral and is wired up", ""},
+	{"update", "Check for and install a newer corral release in place", ""},
+	{"uninstall", "Show corral's on-system footprint; --apply removes it", "binary and config stay"},
+	{"version", "Print the version", ""},
+}
 
-Usage:
-  corral <command> [flags]
-
-Commands:
-  run        Launch the configured agent inside the sandbox
-  hook       Hook enforcer (invoked by Claude Code; reads JSON on stdin)
-  sync       Register corral's enforcement hooks (settings.json / extensions); --remove de-registers
-  gc         Reap orphaned provider resources from crashed sessions (with preview)
-  validate   Check config validity + show the effective policy (what the sandbox enforces)
-  doctor     Check host & integration readiness (can corral run here, and is it wired up?)
-  update     Check for and install a newer corral release in place
-  uninstall  Show corral's on-system footprint; --apply removes it (binary and config stay)
-  version    Print the version
-
-Run "corral <command> -h" for command-specific flags.
-`
+// writeUsage prints the help text.
+func writeUsage(w io.Writer, c report.Style) {
+	writeTitle(w, c, "corral", "sandbox claude or pi and enforce policy on their tool calls")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Usage: corral <command> [flags]")
+	fmt.Fprintln(w)
+	c.Rule(w, "commands")
+	for _, cmd := range commands {
+		c.Row(w, report.Row{Label: cmd.name, Value: cmd.desc, Reason: cmd.note})
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, c.Dim+`Run "corral <command> -h" for command-specific flags.`+c.Reset)
+}
 
 // Main is the entry point. It returns the process exit code.
 func Main(args []string, version string) int {
 	if len(args) == 0 {
-		fmt.Fprint(os.Stdout, usage)
+		writeUsage(os.Stdout, report.StyleFor(os.Stdout))
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
@@ -58,17 +68,19 @@ func Main(args []string, version string) int {
 		fmt.Fprintln(os.Stdout, "corral", version)
 		return 0
 	case "help", "--help", "-h":
-		fmt.Fprint(os.Stdout, usage)
+		writeUsage(os.Stdout, report.StyleFor(os.Stdout))
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "corral: unknown command %q\n\n%s", cmd, usage)
+		fatalf(os.Stderr, "unknown command %q", cmd)
+		fmt.Fprintln(os.Stderr)
+		writeUsage(os.Stderr, report.StyleFor(os.Stderr))
 		return 2
 	}
 }
 
-// fatalf prints to stderr and returns exit code 1.
+// fatalf prints an error line to w and returns exit code 1.
 func fatalf(w io.Writer, format string, a ...any) int {
-	fmt.Fprintf(w, "corral: "+format+"\n", a...)
+	report.StyleOf(w).Message(w, report.Blocked, fmt.Sprintf(format, a...))
 	return 1
 }
 

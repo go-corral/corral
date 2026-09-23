@@ -375,3 +375,14 @@ func TestAbbrevHome(t *testing.T) {
 		}
 	}
 }
+
+// In the ASCII form a fix command keeps its user data: only corral's own text is transliterated.
+func TestWriteChecksFixVerbatim(t *testing.T) {
+	var b strings.Builder
+	writeChecks(&b, report.NewStyle(false, true), []health.Check{{State: health.Warn, Label: "config", Value: "a — b", Fix: "rm '/home/u/a — b'"}}, "/home/u")
+	want := "[!]  config         a - b\n" +
+		"                    -> rm '/home/u/a — b'\n"
+	if b.String() != want {
+		t.Errorf("checks = %q, want %q", b.String(), want)
+	}
+}

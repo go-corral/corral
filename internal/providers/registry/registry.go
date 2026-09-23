@@ -7,6 +7,8 @@
 package registry
 
 import (
+	"io"
+
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers"
@@ -31,6 +33,8 @@ type Deps struct {
 	HomeDir string
 	// SessionHookPresenter optionally renders preStart output in the launch UI.
 	SessionHookPresenter hooks.Presenter
+	// SessionHookLog receives the session-hooks provider's attribution lines.
+	SessionHookLog io.Writer
 }
 
 // Registration describes one provider to every derived view. A nil optional func
@@ -90,7 +94,7 @@ var registry = []Registration{
 		Grants:        func(c *config.Config) string { return c.Providers.Hooks.Grants() },
 		FailurePolicy: func(c *config.Config) string { return c.Providers.Hooks.FailurePolicy() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
-			return hooks.New(c.Providers.Hooks, c.EffectiveAgent(), d.SessionHookPresenter)
+			return hooks.New(c.Providers.Hooks, c.EffectiveAgent(), d.SessionHookPresenter, d.SessionHookLog)
 		},
 	},
 	{

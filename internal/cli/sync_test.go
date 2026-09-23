@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
 // TestSyncWarnsBinaryUnreachable: when --binary lives outside every baseline mount,
@@ -61,11 +64,26 @@ func TestWarnBinaryUnreachableUsesConfigDirParam(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // decoy: must be ignored in favor of the configDir param
 	binary := filepath.Join(configDir, "bin", "corral")
 
-	stderr := captureStderr(t, func() {
-		warnBinaryUnreachable(os.Stderr, binary, home, configDir)
-	})
-	if strings.Contains(stderr, "outside every directory the sandbox mounts") {
-		t.Errorf("a binary under the supplied config dir must be reachable, got:\n%s", stderr)
+	var out strings.Builder
+	warnBinaryUnreachable(&out, report.NewStyle(false, false), binary, home, configDir)
+	if out.Len() != 0 {
+		t.Errorf("a binary under the supplied config dir must be reachable, got:\n%s", out.String())
+	}
+}
+
+func TestWarnBinaryUnreachableRow(t *testing.T) {
+	home := t.TempDir()
+	binary := filepath.Join(home, "projects", "corral")
+	var out strings.Builder
+	warnBinaryUnreachable(&out, report.NewStyle(false, false), binary, home, filepath.Join(home, ".claude"))
+	want := "  ! hook binary     ~/projects/corral\n" +
+		"                    outside every directory the sandbox mounts: the PreToolUse\n" +
+		"                    hook will not run inside the sandbox. Install corral under a\n" +
+		"                    baseline-mounted directory such as /usr/local/bin or\n" +
+		"                    ~/.local/bin and re-run `corral sync --binary <that path>`.\n" +
+		"                    A binary inside the project works when corral starts there.\n"
+	if out.String() != want {
+		t.Errorf("warning =\n%s\nwant\n%s", out.String(), want)
 	}
 }
 
@@ -374,5 +392,30 @@ func TestRunBridgeAgentWarnsMissingBackstop(t *testing.T) {
 	_ = captureStdout(t, func() { cmdSync([]string{"pi"}) })
 	if got := runErr(); strings.Contains(got, "presence backstop") {
 		t.Errorf("run pi must NOT warn once the presence backstop is installed:\n%s", got)
+	}
+}
+
+func TestWriteSyncReport(t *testing.T) {
+	res := agents.SyncReport{Messages: []string{"~/.claude/settings.json would change (dry-run, not written) — updated hooks: PreToolUse:"}}
+	for _, tt := range []struct {
+		style  report.Style
+		dryRun bool
+		want   string
+	}{
+		{report.NewStyle(false, false), false, "corral sync   claude\n" +
+			"  ✓ ~/.claude/settings.json would change (dry-run, not written) — updated hooks: PreToolUse:\n"},
+		{report.NewStyle(false, false), true, "corral sync   claude\n" +
+			"    ~/.claude/settings.json would change (dry-run, not written) — updated hooks: PreToolUse:\n"},
+		{report.NewStyle(false, true), false, "corral sync   claude\n" +
+			"[ok] ~/.claude/settings.json would change (dry-run, not written) - updated hooks: PreToolUse:\n"},
+		{report.NewStyle(false, true), true, "corral sync   claude\n" +
+			"     ~/.claude/settings.json would change (dry-run, not written) - updated hooks: PreToolUse:\n"},
+	} {
+		var out strings.Builder
+		writeTitle(&out, tt.style, "corral sync", "claude")
+		writeSyncReport(&out, tt.style, res, tt.dryRun)
+		if out.String() != tt.want {
+			t.Errorf("ascii=%t dry-run=%t:\n%q\nwant\n%q", tt.style.ASCII, tt.dryRun, out.String(), tt.want)
+		}
 	}
 }

@@ -58,31 +58,31 @@ func TestClaudeLaunchWarningsSyncState(t *testing.T) {
 	settings := filepath.Join(home, ".claude", "settings.json")
 	bin := "/usr/local/bin/corral"
 	warns := func(self string) []string {
-		return claude.LaunchWarnings(spec.StatusInput{Home: home, Host: map[string]string{}, Self: self})
+		return checkValues(claude.LaunchWarnings(spec.StatusInput{Home: home, Host: map[string]string{}, Self: self}))
 	}
 
 	// Missing settings.json → unregistered.
-	if !containsLine(warns(bin), "does not register corral's hooks") {
+	if !containsLine(warns(bin), "not registered for this binary") {
 		t.Error("missing settings.json should warn (hooks not registered)")
 	}
 	// Seed a fully-synced file → silent.
 	if _, _, err := claudecfg.Sync(claudecfg.SyncOptions{SettingsPath: settings, BinaryPath: bin}); err != nil {
 		t.Fatalf("seed sync: %v", err)
 	}
-	if containsLine(warns(bin), "does not register corral's hooks") {
+	if containsLine(warns(bin), "not registered for this binary") {
 		t.Error("a synced settings.json must not warn about registration")
 	}
 	// A pure reformat (whitespace/key order) is no policy change → still silent.
 	reindent(t, settings)
-	if containsLine(warns(bin), "does not register corral's hooks") {
+	if containsLine(warns(bin), "not registered for this binary") {
 		t.Error("a reformat-only difference must not warn about registration")
 	}
 	// A registration naming a different corral is stale → warn again.
-	if !containsLine(warns("/some/other/path/corral"), "does not register corral's hooks") {
+	if !containsLine(warns("/some/other/path/corral"), "not registered for this binary") {
 		t.Error("a re-pointed hook binary should warn (stale registration)")
 	}
 	// Best-effort: an empty Self omits the check (no binary to compare against).
-	if containsLine(warns(""), "does not register corral's hooks") {
+	if containsLine(warns(""), "not registered for this binary") {
 		t.Error("empty Self must yield no registration warning")
 	}
 }

@@ -169,15 +169,6 @@ func TestRowLabelBoundary(t *testing.T) {
 	}
 }
 
-func TestSep(t *testing.T) {
-	if got := NewStyle(false, false).Sep(); got != "·" {
-		t.Errorf("Sep = %q, want ·", got)
-	}
-	if got := NewStyle(false, true).Sep(); got != "|" {
-		t.Errorf("ASCII Sep = %q, want |", got)
-	}
-}
-
 func TestRowStyledCodes(t *testing.T) {
 	var out strings.Builder
 	NewStyle(true, false).Row(&out, Row{Glyph: Attention, Label: "network", Value: "open", Reason: "why"})
@@ -222,6 +213,40 @@ func TestContQuoteMessage(t *testing.T) {
 		tt.style.Message(&out, Attention, "heads up")
 		if out.String() != tt.want {
 			t.Errorf("lines = %q, want %q", out.String(), tt.want)
+		}
+	}
+}
+
+// A fix command is written verbatim: the ASCII form changes only the glyph.
+func TestFix(t *testing.T) {
+	for _, tt := range []struct {
+		style Style
+		want  string
+	}{
+		{NewStyle(false, false), "                    → rm '/tmp/a — b'\n"},
+		{NewStyle(false, true), "                    -> rm '/tmp/a — b'\n"},
+	} {
+		var out strings.Builder
+		tt.style.Fix(&out, "rm '/tmp/a — b'")
+		if out.String() != tt.want {
+			t.Errorf("fix = %q, want %q", out.String(), tt.want)
+		}
+	}
+}
+
+// Later lines of a multi-line message, such as a joined error, start under its text.
+func TestMessageMultiLine(t *testing.T) {
+	for _, tt := range []struct {
+		style Style
+		want  string
+	}{
+		{NewStyle(false, false), "  ✗ load config: bad\n    line 2: mapping\n"},
+		{NewStyle(false, true), "[x]  load config: bad\n     line 2: mapping\n"},
+	} {
+		var out strings.Builder
+		tt.style.Message(&out, Blocked, "load config: bad\nline 2: mapping")
+		if out.String() != tt.want {
+			t.Errorf("message = %q, want %q", out.String(), tt.want)
 		}
 	}
 }
@@ -315,5 +340,71 @@ func TestTree(t *testing.T) {
 		if out.String() != tt.want {
 			t.Errorf("tree = %q, want %q", out.String(), tt.want)
 		}
+	}
+}
+
+func TestText(t *testing.T) {
+	for in, want := range map[string]string{
+		"a — b": "a - b",
+		"a → b": "a -> b",
+		"wait…": "wait...",
+		"a · b": "a | b",
+		"──":    "--",
+		"│ ├ └": "| | `",
+	} {
+		if got := NewStyle(false, true).Text(in); got != want {
+			t.Errorf("ASCII Text(%q) = %q, want %q", in, got, want)
+		}
+		if got := NewStyle(false, false).Text(in); got != in {
+			t.Errorf("Text(%q) = %q, want it unchanged", in, got)
+		}
+	}
+}
+
+// writeAll prints text through every primitive that writes text.
+func writeAll(s Style, text string) string {
+	var out strings.Builder
+	s.Row(&out, Row{Glyph: Ready, Label: text, Value: text, Reason: text})
+	s.Cont(&out, text)
+	s.Quote(&out, text)
+	s.Message(&out, Attention, text)
+	s.Header(&out, text, []string{text}, []Row{{Label: text, Value: text, Reason: text}})
+	s.Rule(&out, text)
+	s.Tree(&out, "", Node{Text: text, Children: []Node{{Text: text}}})
+	return out.String()
+}
+
+func TestPrimitivesApplyText(t *testing.T) {
+	const text = "a — b → c"
+	if got := writeAll(NewStyle(false, false), text); strings.Count(got, text) != 14 {
+		t.Errorf("Unicode output changed the text:\n%s", got)
+	}
+	got := writeAll(NewStyle(false, true), text)
+	if strings.Contains(got, "—") || strings.Count(got, "a - b -> c") != 14 {
+		t.Errorf("ASCII output kept Unicode text:\n%s", got)
+	}
+}
+
+func TestASCIIOutputIsASCII(t *testing.T) {
+	got := writeAll(NewStyle(false, true), "plain text")
+	for i, r := range got {
+		if r > 0x7f {
+			t.Fatalf("non-ASCII %q at byte %d:\n%s", r, i, got)
+		}
+	}
+}
+
+func TestStyleOf(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
+	if s := StyleOf(&strings.Builder{}); !s.ASCII || s.Reset != "" {
+		t.Errorf("StyleOf(builder) = %+v, want ASCII without color", s)
+	}
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if s := StyleOf(f); s != StyleFor(f) {
+		t.Errorf("StyleOf(file) = %+v, want StyleFor(file)", s)
 	}
 }

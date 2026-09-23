@@ -40,7 +40,7 @@ type hooks struct {
 	run func(*exec.Cmd) error
 	// present is the launcher-injected preStart presenter (see Presenter).
 	present Presenter
-	// log receives corral's attribution lines. Defaults to os.Stderr; a seam for tests.
+	// log receives corral's attribution lines, one per line.
 	log io.Writer
 }
 
@@ -50,9 +50,13 @@ type hooks struct {
 type Presenter func(event, key, output string, truncated bool)
 
 // New builds the session-hooks provider. agent is exported to scripts as CORRAL_AGENT; present is
-// the preStart presenter (see Presenter), nil for the plain default.
-func New(cfg Config, agent string, present Presenter) spec.Provider {
-	return &hooks{cfg: cfg, agent: agent, present: present, run: func(cmd *exec.Cmd) error { return cmd.Run() }, log: os.Stderr}
+// the preStart presenter (see Presenter), nil for the plain default; log receives corral's
+// attribution lines, os.Stderr when nil.
+func New(cfg Config, agent string, present Presenter, log io.Writer) spec.Provider {
+	if log == nil {
+		log = os.Stderr
+	}
+	return &hooks{cfg: cfg, agent: agent, present: present, run: func(cmd *exec.Cmd) error { return cmd.Run() }, log: log}
 }
 
 func (h *hooks) Name() string { return "hooks" }
@@ -272,7 +276,7 @@ func (h *hooks) postSession(sess spec.Session) func(context.Context, spec.Sessio
 				errs = append(errs, fmt.Errorf("%s: skipped — %s changed during the session; the next launch will re-prompt to approve the new content", label, path))
 				continue
 			}
-			fmt.Fprintf(h.log, "corral: running post-end session hook %s\n", label)
+			fmt.Fprintf(h.log, "running post-end session hook %s\n", label)
 			cmd := h.command(ctx, sess, "postEnd", hk, os.Stdout, os.Stderr, "CORRAL_AGENT_EXIT="+exitVal)
 			if err := describeRunError(h.run(cmd)); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", label, err))
@@ -295,9 +299,9 @@ func (h *hooks) surfacePreStart(key, label string, out *cappedBuffer) {
 	if !strings.HasSuffix(output, "\n") {
 		sep = "\n"
 	}
-	fmt.Fprintf(h.log, "corral: output from pre-start session hook %s:\n%s%s", label, output, sep)
+	fmt.Fprintf(h.log, "output from pre-start session hook %s:\n%s%s", label, output, sep)
 	if out.overflow {
-		fmt.Fprintf(h.log, "corral: … output truncated at %d bytes\n", maxStderrBytes)
+		fmt.Fprintf(h.log, "… output truncated at %d bytes\n", maxStderrBytes)
 	}
 }
 

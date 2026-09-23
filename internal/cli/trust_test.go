@@ -381,7 +381,7 @@ func TestRunBlocksUnapprovedHookExec(t *testing.T) {
 	if !strings.Contains(stderr, "unapproved session-hook executable") {
 		t.Errorf("expected the hook-executable pending header:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "(providers.hooks.preStart.10-up)") {
+	if !strings.Contains(stderr, "\n                    providers.hooks.preStart.10-up\n") {
 		t.Errorf("the pending executable must be attributed to its config path:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "unapproved repo config") {
@@ -456,7 +456,7 @@ func TestRunGlobalConfigHookExecGated(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("a global-config hook's unapproved executable must fail closed")
 	}
-	if !strings.Contains(stderr, "(providers.hooks.postEnd.report)") {
+	if !strings.Contains(stderr, "\n                    providers.hooks.postEnd.report\n") {
 		t.Errorf("expected the attributed pending executable:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "unapproved repo config") {

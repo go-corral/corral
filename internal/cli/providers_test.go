@@ -18,7 +18,7 @@ func TestActiveProvidersDeclarationOrder(t *testing.T) {
 	got := activeProviders(cfg, "/home/u", map[string]string{
 		"SSH_AUTH_SOCK": "/run/agent.sock",
 		"GITLAB_TOKEN":  "glpat-x",
-	}, "", nil)
+	}, "", nil, nil)
 	want := []string{"docker", "ssh", "home", "kubernetes", "gitlab"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d active providers, got %d", len(want), len(got))
@@ -34,7 +34,7 @@ func TestActiveProvidersDeclarationOrder(t *testing.T) {
 func TestActiveProvidersOnlyEnabled(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Providers.SSH.Enabled = true // docker disabled
-	got := activeProviders(cfg, "/home/u", map[string]string{"SSH_AUTH_SOCK": "/run/agent.sock"}, "", nil)
+	got := activeProviders(cfg, "/home/u", map[string]string{"SSH_AUTH_SOCK": "/run/agent.sock"}, "", nil, nil)
 	if len(got) != 1 || got[0].Provider.Name() != "ssh" {
 		t.Errorf("expected only ssh, got %v", got)
 	}

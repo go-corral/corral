@@ -69,8 +69,8 @@ func TestFullscreenBannerWarning(t *testing.T) {
 			if len(w) != 1 {
 				t.Fatalf("expected exactly one warning, got %v", w)
 			}
-			if w[0] == "" {
-				t.Error("warning text must be non-empty")
+			if w[0].Value == "" || w[0].Fix != "" {
+				t.Errorf("warning must have text and no fix command, got %+v", w[0])
 			}
 		})
 	}

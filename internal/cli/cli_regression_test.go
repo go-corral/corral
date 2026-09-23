@@ -4,6 +4,8 @@ import (
 	"flag"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
 // An unknown command prints usage to stderr and returns exit code 2.
@@ -15,7 +17,7 @@ func TestMainDispatchUnknownCommand(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(errOut, "unknown command") || !strings.Contains(errOut, "badcmd") {
+	if !strings.Contains(errOut, `✗ unknown command "badcmd"`) {
 		t.Errorf("stderr must contain 'unknown command' and command name, got: %q", errOut)
 	}
 	if !strings.Contains(errOut, "Usage:") {
@@ -79,5 +81,56 @@ func TestParseFlagsValidArgs(t *testing.T) {
 	code, ok := parseFlags(fs, []string{"-foo", "bar"})
 	if code != 0 || !ok {
 		t.Errorf("valid args: got (%d, %v), want (0, true)", code, ok)
+	}
+}
+
+func TestWriteUsage(t *testing.T) {
+	var unicode, ascii strings.Builder
+	writeUsage(&unicode, report.NewStyle(false, false))
+	writeUsage(&ascii, report.NewStyle(false, true))
+	want := "corral   sandbox claude or pi and enforce policy on their tool calls\n" +
+		"\n" +
+		"Usage: corral <command> [flags]\n" +
+		"\n" +
+		"commands ─────────────────────────────────────────────────────────\n" +
+		"    run             Launch the configured agent inside the sandbox\n" +
+		"    hook            Hook enforcer (invoked by Claude Code; reads JSON on stdin)\n" +
+		"    sync            Register corral's hooks with an agent; --remove undoes it\n" +
+		"    gc              Preview and reap provider resources of crashed sessions\n" +
+		"    validate        Check the config and show the policy the sandbox enforces\n" +
+		"    doctor          Check that this host can run corral and is wired up\n" +
+		"    update          Check for and install a newer corral release in place\n" +
+		"    uninstall       Show corral's on-system footprint; --apply removes it\n" +
+		"                    binary and config stay\n" +
+		"    version         Print the version\n" +
+		"\n" +
+		"Run \"corral <command> -h\" for command-specific flags.\n"
+	if unicode.String() != want {
+		t.Errorf("usage:\n%s\nwant:\n%s", unicode.String(), want)
+	}
+	wantASCII := "corral   sandbox claude or pi and enforce policy on their tool calls\n" +
+		"\n" +
+		"Usage: corral <command> [flags]\n" +
+		"\n" +
+		"commands ---------------------------------------------------------\n" +
+		"     run            Launch the configured agent inside the sandbox\n" +
+		"     hook           Hook enforcer (invoked by Claude Code; reads JSON on stdin)\n" +
+		"     sync           Register corral's hooks with an agent; --remove undoes it\n" +
+		"     gc             Preview and reap provider resources of crashed sessions\n" +
+		"     validate       Check the config and show the policy the sandbox enforces\n" +
+		"     doctor         Check that this host can run corral and is wired up\n" +
+		"     update         Check for and install a newer corral release in place\n" +
+		"     uninstall      Show corral's on-system footprint; --apply removes it\n" +
+		"                    binary and config stay\n" +
+		"     version        Print the version\n" +
+		"\n" +
+		"Run \"corral <command> -h\" for command-specific flags.\n"
+	if ascii.String() != wantASCII {
+		t.Errorf("ASCII usage:\n%s\nwant:\n%s", ascii.String(), wantASCII)
+	}
+	for _, ln := range strings.Split(unicode.String(), "\n") {
+		if n := len([]rune(ln)); n > report.LineMax {
+			t.Errorf("line is %d columns, want at most %d: %q", n, report.LineMax, ln)
+		}
 	}
 }

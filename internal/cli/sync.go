@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -48,6 +49,8 @@ func cmdSync(args []string) int {
 		return fatalf(os.Stderr, "cannot resolve home: %v", err)
 	}
 	a := doctorAgent(agentName)
+	c := report.StyleFor(os.Stdout)
+	writeTitle(os.Stdout, c, "corral sync", a.Name())
 
 	// The corral binary an agent registers as its hook command. A user-given --binary is
 	// absolutized: the registered command must name the same binary from any cwd.
@@ -66,7 +69,7 @@ func cmdSync(args []string) int {
 	// that binary lives outside every baseline-mounted directory enforcement silently never
 	// fires — warn. Bridge agents and --remove skip the check.
 	if len(a.Launch().ExtensionAsset) == 0 && !*remove {
-		warnBinaryUnreachable(os.Stderr, binaryPath, home, a.ConfigDir(home, envMap()))
+		warnBinaryUnreachable(os.Stderr, report.StyleFor(os.Stderr), binaryPath, home, a.ConfigDir(home, envMap()))
 	}
 
 	res, err := a.Sync(agents.SyncInput{
@@ -80,18 +83,27 @@ func cmdSync(args []string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "sync %s: %v", a.Name(), err)
 	}
+	writeSyncReport(os.Stdout, c, res, *dryRun)
+	return 0
+}
+
+// writeSyncReport prints the sync messages, then the settings diff.
+func writeSyncReport(w io.Writer, c report.Style, res agents.SyncReport, dryRun bool) {
+	g := report.Ready
+	if dryRun {
+		g = report.None
+	}
 	for _, m := range res.Messages {
-		fmt.Printf("corral: %s\n", m)
+		c.Message(w, g, m)
 	}
 	if res.Diff != nil {
-		fmt.Print(unifiedDiff(res.Diff.Before, res.Diff.After, res.Diff.FromLabel, res.Diff.ToLabel, report.StyleFor(os.Stdout)))
+		fmt.Fprint(w, unifiedDiff(res.Diff.Before, res.Diff.After, res.Diff.FromLabel, res.Diff.ToLabel, c))
 	}
-	return 0
 }
 
 // warnBinaryUnreachable prints a heads-up when the hook binary lives outside every directory
 // the sandbox baseline mounts. configDir is the agent-resolved config dir.
-func warnBinaryUnreachable(w *os.File, binary, home, configDir string) {
+func warnBinaryUnreachable(w io.Writer, c report.Style, binary, home, configDir string) {
 	resolved := binary
 	if abs, err := filepath.Abs(resolved); err == nil {
 		resolved = abs
@@ -105,10 +117,14 @@ func warnBinaryUnreachable(w *os.File, binary, home, configDir string) {
 	if sandbox.PathReachableInCorral(resolved, tokens, runtime.GOOS) {
 		return
 	}
-	fmt.Fprintf(w, "corral: warning: hook binary %s is outside every directory the sandbox mounts.\n", resolved)
-	fmt.Fprintln(w, "  A globally-registered hook there cannot be exec'd inside the sandbox, so the")
-	fmt.Fprintln(w, "  PreToolUse policy hook will silently not run. Install corral under a baseline-")
-	fmt.Fprintln(w, "  mounted directory (e.g. /usr/local/bin or ~/.local/bin) and re-run")
-	fmt.Fprintln(w, "  `corral sync --binary <that path>`. (A binary inside your project still works")
-	fmt.Fprintln(w, "  when you launch corral from that project — the working directory is mounted.)")
+	c.Row(w, report.Row{Glyph: report.Attention, Label: "hook binary", Value: abbrevHome(resolved, home),
+		Reason: "outside every directory the sandbox mounts: the PreToolUse"})
+	for _, ln := range []string{
+		"hook will not run inside the sandbox. Install corral under a",
+		"baseline-mounted directory such as /usr/local/bin or",
+		"~/.local/bin and re-run `corral sync --binary <that path>`.",
+		"A binary inside the project works when corral starts there.",
+	} {
+		c.Cont(w, c.Dim+ln+c.Reset)
+	}
 }

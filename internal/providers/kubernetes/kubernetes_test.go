@@ -3,7 +3,6 @@ package kubernetes
 import (
 	"context"
 	"errors"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -132,29 +131,6 @@ func stampSecretUID(t *testing.T, cs *fake.Clientset, uid string) {
 		}
 		return true, s, nil
 	})
-}
-
-// captureStderr runs fn while capturing what it writes to os.Stderr — the channel the
-// provider's mid-Mint warn-and-allow notices use (there is no Contribution yet).
-func captureStderr(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := os.Stderr
-	os.Stderr = w
-	done := make(chan string, 1)
-	go func() {
-		b, _ := io.ReadAll(r)
-		done <- string(b)
-	}()
-	fn()
-	os.Stderr = old
-	_ = w.Close()
-	out := <-done
-	_ = r.Close()
-	return out
 }
 
 // rbacActions reports the RBAC/namespace-mutating API calls recorded on cs — the calls
@@ -412,21 +388,35 @@ func TestKubernetesMintPreProvisionedNamespaceForbidden(t *testing.T) {
 	})
 	stampSecretUID(t, cs, "secret-uid-1")
 
-	var c *spec.Contribution
-	stderr := captureStderr(t, func() {
-		var err error
-		if c, err = k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false); err != nil {
-			t.Errorf("a forbidden namespace read must warn and proceed, got %v", err)
-		}
-	})
-	if c == nil {
-		t.FailNow()
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatalf("a forbidden namespace read must warn and proceed, got %v", err)
 	}
-	if !strings.Contains(stderr, "forbidden") || !strings.Contains(stderr, "corral-team-a") {
-		t.Errorf("the warn-and-allow notice must name the namespace: %q", stderr)
+	if warn := strings.Join(c.Warnings, "\n"); !strings.Contains(warn, "forbidden") || !strings.Contains(warn, "corral-team-a") {
+		t.Errorf("the warn-and-allow notice must name the namespace: %q", warn)
 	}
 	if _, err := cs.CoreV1().ServiceAccounts("corral-team-a").Get(context.Background(), "corral-alice-s1", metav1.GetOptions{}); err != nil {
 		t.Errorf("Mint must proceed to create the SA: %v", err)
+	}
+}
+
+// A failed Mint keeps the warnings gathered before the failure in its error.
+func TestKubernetesMintFailureKeepsWarnings(t *testing.T) {
+	cfg := Config{Mode: ModePreProvisioned, ServiceAccountNamespace: "corral-team-a"}
+	k, cs := fakeK8s(t, cfg)
+	cs.PrependReactor("get", "namespaces", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "corral-team-a", errors.New("no get on namespaces"))
+	})
+	cs.PrependReactor("create", "serviceaccounts", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "serviceaccounts"}, "x", errors.New("no create"))
+	})
+
+	_, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err == nil {
+		t.Fatal("Mint must fail when the ServiceAccount cannot be created")
+	}
+	if !strings.Contains(err.Error(), "create service account") || !strings.Contains(err.Error(), "\nwarning: kubernetes cannot read namespace \"corral-team-a\" (forbidden)") {
+		t.Errorf("the error must carry the failure and the pending warning: %q", err)
 	}
 }
 
@@ -535,39 +525,30 @@ func TestKubernetesTokenExpiryFromServer(t *testing.T) {
 	cfg := Config{ServiceAccountNamespace: "corral", TokenLifetime: "8h"}
 	k, cs := fakeK8s(t, cfg, ns("corral"))
 	serveExpiry(cs, time.Hour)
-	var c *spec.Contribution
-	stderr := captureStderr(t, func() {
-		var err error
-		if c, err = k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false); err != nil {
-			t.Errorf("Mint: %v", err)
-		}
-	})
-	if c == nil {
-		t.FailNow()
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
 	}
 	for _, got := range []string{c.Status[0], c.AgentNotes[0], c.CleanupHint} {
 		if !strings.Contains(got, "1h0m0s") || strings.Contains(got, "8h") {
 			t.Errorf("the server's expiry must replace the requested lifetime, got %q", got)
 		}
 	}
-	if !strings.Contains(stderr, "1h0m0s") || !strings.Contains(stderr, "8h") {
-		t.Errorf("a shortened lifetime must warn with both durations, got %q", stderr)
+	if warn := strings.Join(c.Warnings, "\n"); !strings.Contains(warn, "1h0m0s") || !strings.Contains(warn, "8h") {
+		t.Errorf("a shortened lifetime must warn with both durations, got %q", warn)
 	}
 
 	// Server honored the request: same output as before, and no warning.
 	k2, cs2 := fakeK8s(t, cfg, ns("corral"))
 	serveExpiry(cs2, 8*time.Hour)
-	stderr = captureStderr(t, func() {
-		var err error
-		if c, err = k2.Mint(context.Background(), spec.Session{User: "alice", ID: "s2"}, false); err != nil {
-			t.Errorf("Mint: %v", err)
-		}
-	})
+	if c, err = k2.Mint(context.Background(), spec.Session{User: "alice", ID: "s2"}, false); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
 	if !strings.Contains(c.Status[0], "8h0m0s") {
 		t.Errorf("an honored request must report the full lifetime, got %q", c.Status[0])
 	}
-	if strings.Contains(stderr, "shortened") {
-		t.Errorf("an honored request must not warn, got %q", stderr)
+	if len(c.Warnings) != 0 {
+		t.Errorf("an honored request must not warn, got %q", c.Warnings)
 	}
 }
 

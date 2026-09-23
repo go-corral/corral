@@ -121,13 +121,13 @@ func TestPiLaunchWarningsBackstop(t *testing.T) {
 	pi := New()
 	in := spec.StatusInput{Home: home, Host: map[string]string{}}
 
-	if w := pi.LaunchWarnings(in); !containsLine(w, "presence backstop") || !containsLine(w, "is not installed") {
+	if w := pi.LaunchWarnings(in); len(w) != 1 || w[0].Value != "presence backstop not installed" || w[0].Fix != "corral sync pi" {
 		t.Errorf("pi LaunchWarnings (no backstop) = %v, want a not-installed warning", w)
 	}
 	if _, err := pi.Sync(spec.SyncInput{Home: home, Host: map[string]string{}}); err != nil {
 		t.Fatalf("pi Sync: %v", err)
 	}
-	if w := pi.LaunchWarnings(in); containsLine(w, "presence backstop") {
+	if w := pi.LaunchWarnings(in); len(w) != 0 {
 		t.Errorf("pi LaunchWarnings must fall silent once installed, got %v", w)
 	}
 }
