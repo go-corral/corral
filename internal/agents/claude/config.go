@@ -1,8 +1,6 @@
 package claude
 
 import (
-	"strings"
-
 	"github.com/go-corral/corral/internal/agents/spec"
 )
 
@@ -41,14 +39,6 @@ func (c Config) SandboxEnv() map[string]string {
 	return env
 }
 
-func (c Config) BannerFields() []spec.BannerField {
-	fields := []spec.BannerField{c.connectorsField(), c.phoneHomeField()}
-	if !c.AttributionHeader {
-		fields = append(fields, spec.BannerField{Label: "attribution", Value: "off"})
-	}
-	return fields
-}
-
 func (c Config) ValidationFields() []spec.BannerField {
 	toggle := func(label string, enabled bool) spec.BannerField {
 		value := "off"
@@ -67,32 +57,4 @@ func (c Config) ValidationFields() []spec.BannerField {
 		fields = append(fields, toggle("Attribution header", false))
 	}
 	return fields
-}
-
-func (c Config) connectorsField() spec.BannerField {
-	if c.ClaudeaiConnectors {
-		return spec.BannerField{Label: "connectors", Value: "on"}
-	}
-	return spec.BannerField{Label: "connectors", Value: "off"}
-}
-
-func (c Config) phoneHomeField() spec.BannerField {
-	var enabled []string
-	if c.Telemetry {
-		enabled = append(enabled, "telemetry")
-	}
-	if c.ErrorReporting {
-		enabled = append(enabled, "errors")
-	}
-	if c.FeedbackSurvey {
-		enabled = append(enabled, "survey")
-	}
-	switch len(enabled) {
-	case 0:
-		return spec.BannerField{Label: "phone-home", Value: "off"}
-	case 3:
-		return spec.BannerField{Label: "phone-home", Value: "on"}
-	default:
-		return spec.BannerField{Label: "phone-home", Value: "partial (" + strings.Join(enabled, ", ") + ")"}
-	}
 }

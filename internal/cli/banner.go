@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
@@ -60,17 +62,41 @@ func firstOverlap(grantCands, roTargets []string) (string, bool) {
 	return "", false
 }
 
-// writePathRows prints one row per path under a single label, home-abbreviated. No paths
-// renders "(none)".
-func writePathRows(w io.Writer, c report.Style, label string, paths []string, home string) {
-	if len(paths) == 0 {
-		c.Row(w, report.Row{Label: label, Value: "(none)"})
-		return
+// rollupWidth is the room a roll-up value has before LineMax.
+const rollupWidth = report.LineMax - report.RollupValueColumn + 1
+
+// fitPaths joins paths, home-abbreviated, so that the line and a " +N" count of the paths
+// left out fit in width columns. The first path is always shown. A path with a space is
+// quoted, because the paths are joined with spaces.
+func fitPaths(paths []string, home string, width int) (line string, hidden int) {
+	for i, p := range paths {
+		text := abbrevHome(p, home)
+		if strings.Contains(text, " ") {
+			text = strconv.Quote(text)
+		} else {
+			text = reportText(text)
+		}
+		next := strings.TrimPrefix(line+" "+text, " ")
+		more := ""
+		if rest := len(paths) - i - 1; rest > 0 {
+			more = fmt.Sprintf(" +%d", rest)
+		}
+		if i > 0 && utf8.RuneCountInString(next+more) > width {
+			return line, len(paths) - i
+		}
+		line = next
 	}
-	c.Row(w, report.Row{Label: label, Value: abbrevHome(paths[0], home)})
-	for _, p := range paths[1:] {
-		c.Cont(w, abbrevHome(p, home))
+	return line, 0
+}
+
+// pathsValue renders paths as a roll-up value: the paths that fit, then a dim "+N".
+func pathsValue(c report.Style, paths []string, home string) string {
+	line, hidden := fitPaths(paths, home, rollupWidth)
+	v := c.Blue + line + c.Reset
+	if hidden > 0 {
+		v += fmt.Sprintf(" %s+%d%s", c.Dim, hidden, c.Reset)
 	}
+	return v
 }
 
 // abbrevText replaces the home prefix with ~ anywhere in a free-text status line (the
@@ -82,31 +108,6 @@ func abbrevText(s, home string) string {
 	return strings.ReplaceAll(s, home, "~")
 }
 
-// blockedSummary builds the one-line "blocked" value: the always-blocked paths (tagged),
-// then config-added paths after a "+" — home-abbreviated and deduped. aiignore masks are
-// not part of it: they surface as the aiignore provider's status line in the providers tree.
-func blockedSummary(c report.Style, cfg *config.Config, home string) string {
-	floor := config.AlwaysBlockedExpanded(home)
-	shown := make(map[string]bool, len(floor))
-	abbrevFloor := make([]string, len(floor))
-	for i, p := range floor {
-		shown[p] = true
-		abbrevFloor[i] = abbrevHome(p, home)
-	}
-	var added []string
-	for _, p := range cfg.EffectiveBlockedPaths(home) {
-		if !shown[p] {
-			shown[p] = true
-			added = append(added, abbrevHome(p, home))
-		}
-	}
-	s := fmt.Sprintf("%s %s(always blocked)%s", strings.Join(abbrevFloor, " "), c.Dim, c.Reset)
-	if len(added) > 0 {
-		s += " + " + strings.Join(added, " ")
-	}
-	return s
-}
-
 // bannerVersion renders the build version: prefix "v" only for digit-leading stamps.
 func bannerVersion(version string) string {
 	if version != "" && version[0] >= '0' && version[0] <= '9' {
@@ -115,82 +116,88 @@ func bannerVersion(version string) string {
 	return version
 }
 
+// bannerInfo is the session state the run header shows.
+type bannerInfo struct {
+	version       string
+	home, workdir string
+	auditLog      string
+	// latest is set when it is newer than version.
+	latest string
+	// profiles are in application order (rightmost wins).
+	profiles []string
+}
+
 // writeStartupBanner prints the launch banner to w. Split into header and body so the
 // real launch can slot its confirmation gate between them.
-func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, version, versionWarn, home string, profiles []string, workdir string, warnings []string, notices []providers.Notice) {
-	writeBannerHeader(w, c, version, versionWarn, warnings)
-	writeBannerBody(w, c, cfg, home, profiles, workdir, notices)
+func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, warnings []string, notices []providers.Notice, launchOnly []string) {
+	writeBannerHeader(w, c, cfg, b, warnings)
+	writeBannerBody(w, c, b.home, notices, launchOnly)
 }
 
-// writeBannerHeader prints the top of the banner: the logo with title+version and warnings.
-func writeBannerHeader(w io.Writer, c report.Style, version, versionWarn string, warnings []string) {
-	verdict := ""
-	if versionWarn != "" {
-		verdict = fmt.Sprintf("%s%s%s %s", c.Yellow, c.Glyph(report.Attention), c.Reset, versionWarn)
+// writeBannerHeader prints the mark with the version line and the roll-up of what the
+// session can reach, then the warnings. Everything here is known before providers mint.
+func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, warnings []string) {
+	title := fmt.Sprintf("%scorral %s%s", c.Bold, bannerVersion(b.version), c.Reset)
+	if len(b.profiles) > 0 {
+		title += fmt.Sprintf("   %sprofile %s%s", c.Dim, strings.Join(b.profiles, ", "), c.Reset)
 	}
-	c.Header(w, fmt.Sprintf("%s%scorral%s %s%s %s sandbox active%s", c.Bold, c.Green, c.Reset, c.Dim, bannerVersion(version), c.Sep(), c.Reset), verdict, nil)
+	var verdict []string
+	if b.latest != "" {
+		glyph := c.Glyph(report.Attention)
+		verdict = append(verdict,
+			fmt.Sprintf("%s%s%s %s %s %s available", c.Yellow, glyph, c.Reset, b.version, c.Glyph(report.Fix), b.latest),
+			fmt.Sprintf("%s%s corral update", strings.Repeat(" ", utf8.RuneCountInString(glyph)+1), c.Glyph(report.Fix)))
+	}
+	blue := func(s string) string { return c.Blue + s + c.Reset }
 
-	// Warnings sit on top of the config info.
+	rollup := []report.Row{{Label: "project", Value: blue(abbrevHome(b.workdir, b.home)) + "   " + c.Green + "rw" + c.Reset}}
+	if rw := cfg.Providers.Paths.RW; len(rw) > 0 {
+		rollup = append(rollup, report.Row{Label: "writable", Value: pathsValue(c, rw, b.home)})
+	}
+	if ro := cfg.Providers.Paths.RO; len(ro) > 0 {
+		rollup = append(rollup, report.Row{Label: "read-only", Value: pathsValue(c, ro, b.home)})
+	}
+	home := blue("host $HOME")
+	if cfg.Providers.Home.Enabled {
+		home = blue("private $HOME") + "   " + c.Dim + "kept between sessions" + c.Reset
+	}
+	rollup = append(rollup,
+		report.Row{Label: "home", Value: home},
+		report.Row{Label: "policy", Value: "audit events in " + blue(abbrevHome(b.auditLog, b.home))},
+		// "!" bash-mode runs outside every hook, so neither its command nor its output is seen.
+		report.Row{Value: c.Dim + "! bash-mode is not checked or secret-scanned" + c.Reset},
+	)
+	c.Header(w, title, verdict, rollup)
+
 	if len(warnings) > 0 {
-		writeWarnings(w, c, warnings)
 		fmt.Fprintln(w)
+		writeWarnings(w, c, warnings)
 	}
 }
 
-// writeBannerBody prints the config summary: session, workdir, access block, and providers.
-func writeBannerBody(w io.Writer, c report.Style, cfg *config.Config, home string, profiles []string, workdir string, notices []providers.Notice) {
-	// Stacked profiles render in application order (rightmost wins).
-	prof := strings.Join(profiles, ", ")
-	if prof == "" {
-		prof = "(none)"
-	}
-	// session: low-cardinality knobs on one line.
-	field := func(k, v string) string { return fmt.Sprintf("%s%s%s %s", c.Dim, k, c.Reset, v) }
-	sep := fmt.Sprintf(" %s%s%s ", c.Dim, c.Sep(), c.Reset)
-	sessionFields := []string{
-		field("profile", prof),
-		field("network", fmt.Sprint(cfg.Net)),
-	}
-	// Agent-specific knobs come from the config bridge.
-	for _, f := range cfg.AgentBannerFields() {
-		sessionFields = append(sessionFields, field(f.Label, f.Value))
-	}
-	c.Row(w, report.Row{Label: "session", Value: strings.Join(sessionFields, sep)})
-	c.Row(w, report.Row{Label: "workdir", Value: abbrevHome(workdir, home)})
-
+// writeBannerBody prints the providers section: one row per provider status line
+// (secret-free), recording what happened at launch. The provider name prints once per
+// consecutive run. launchOnly names the dry-run providers that act only at launch.
+func writeBannerBody(w io.Writer, c report.Style, home string, notices []providers.Notice, launchOnly []string) {
 	fmt.Fprintln(w)
-
-	writePathRows(w, c, "read-only", cfg.Providers.Paths.RO, home)
-	writePathRows(w, c, "read-write", cfg.Providers.Paths.RW, home)
-	c.Row(w, report.Row{Label: "blocked", Value: blockedSummary(c, cfg, home)})
-	// "!" bash-mode runs outside every hook, so its output is unscanned.
-	c.Row(w, report.Row{Label: "note", Value: "! bash-mode output is not secret-scanned; don't use ! to read secrets in"})
-
-	fmt.Fprintln(w)
-
-	// Per-provider status rows (secret-free). Dynamic-only: a row records what happened at
-	// launch, never static config the rows above show. The provider name prints once per
-	// consecutive run.
-	if len(notices) == 0 {
-		c.Row(w, report.Row{Label: "providers", Value: "(none)"})
+	c.Rule(w, "providers")
+	if len(notices)+len(launchOnly) == 0 {
+		c.Message(w, report.None, "(none)")
 	}
 	prev := ""
-	for i, n := range notices {
-		name := ""
-		if n.Provider != prev {
-			name, prev = n.Provider, n.Provider
+	for _, n := range notices {
+		text := abbrevText(n.Text, home)
+		if n.Provider == prev {
+			c.Cont(w, text)
+			continue
 		}
-		v := fmt.Sprintf("%s%-*s%s%s%s%s", c.Dim, provNameW, name, c.Reset, c.Green, abbrevText(n.Text, home), c.Reset)
-		if i == 0 {
-			c.Row(w, report.Row{Label: "providers", Value: v})
-		} else {
-			c.Cont(w, v)
-		}
+		prev = n.Provider
+		c.Row(w, report.Row{Glyph: report.On, Label: n.Provider, Value: text})
+	}
+	for _, name := range launchOnly {
+		c.Row(w, report.Row{Glyph: report.Off, Label: name, Value: "acts only at launch (not expanded in this dry-run)"})
 	}
 }
-
-// provNameW is the width of the provider-name column inside the providers value.
-const provNameW = 11
 
 // writeWarnings renders advisory warning lines.
 func writeWarnings(w io.Writer, c report.Style, warnings []string) {

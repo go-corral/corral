@@ -244,6 +244,14 @@ func cmdRun(args []string, version string) int {
 		warnings = append(warnings, shadows...)
 	}
 
+	banner := bannerInfo{
+		version:  version,
+		home:     *home,
+		workdir:  spec.WorkDir,
+		auditLog: effectiveAuditPath(cfg, cfg.AgentConfigDir(*home, host)),
+		profiles: []string(*profiles),
+	}
+
 	if *dryRun {
 		if err := preview.Apply(&spec, resBuiltin); err != nil {
 			return fatalf(os.Stderr, "providers: %v", err)
@@ -252,12 +260,9 @@ func cmdRun(args []string, version string) int {
 		// mutate spec, so the printed profile is unaffected.
 		warnings = append(warnings, preview.Warnings...)
 		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
-		// so it gets a synthetic row.
+		// so it gets a launch-only row.
 		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
-		for _, name := range previewOnly {
-			notices = append(notices, providers.Notice{Provider: name, Text: "acts only at launch (not expanded in this dry-run)"})
-		}
-		writeStartupBanner(os.Stderr, c, cfg, version, "", *home, []string(*profiles), spec.WorkDir, warnings, notices)
+		writeStartupBanner(os.Stderr, c, cfg, banner, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
 		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc))
 		prep, err := backend.Prepare(&spec, os.Stderr)
@@ -283,16 +288,12 @@ func cmdRun(args []string, version string) int {
 
 	// Startup banner + confirmation gate, before minting. The gate fires only when warnings
 	// exist and stdin is interactive: --yes skips it.
-	versionWarn := checkUpdateOnStart(ctx, cfg, *home, version)
-	// Print the banner around the gate and phase-B output, so the providers tree renders as one
-	// contiguous block.
-	writeBannerHeader(os.Stderr, c, version, versionWarn, warnings)
-	if len(warnings) > 0 {
-		if !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
-			return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
-		}
-		// A blank line separates the answered prompt from what follows.
-		fmt.Fprintln(os.Stderr)
+	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
+	// Print the banner around the gate and phase-B output, so the providers section renders as
+	// one contiguous block.
+	writeBannerHeader(os.Stderr, c, cfg, banner, warnings)
+	if len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
+		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
 	}
 
 	// Confirmed (or nothing to confirm): now Mint. A Mint error on a non-optional provider
@@ -334,9 +335,9 @@ func cmdRun(args []string, version string) int {
 		lateShadows = slices.DeleteFunc(late, func(s string) bool { return slices.Contains(shadows, s) })
 	}
 
-	// The config-summary body prints after the gate and phase-B mint.
+	// The providers section prints after the gate and phase-B mint.
 	notices := append(append([]providers.Notice{}, resBuiltin.Notices...), res.Notices...)
-	writeBannerBody(os.Stderr, c, cfg, *home, []string(*profiles), spec.WorkDir, notices)
+	writeBannerBody(os.Stderr, c, *home, notices, nil)
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
 
@@ -519,7 +520,8 @@ func shellQuote(argv []string) string {
 	return b.String()
 }
 
-// checkUpdateOnStart runs the throttled, best-effort launch-time update check. Package var for tests.
+// checkUpdateOnStart runs the throttled, best-effort launch-time update check. It returns
+// the latest version when a newer release exists. Package var for tests.
 var checkUpdateOnStart = func(ctx context.Context, cfg *config.Config, home, version string) string {
 	if !cfg.Update.CheckOnStart {
 		return ""

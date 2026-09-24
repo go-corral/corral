@@ -58,10 +58,11 @@ writes the hook registrations into Claude's own `settings.json`. Named **profile
 (e.g. `k8s-admin`, `offline`) select variants; `--profile`/`-p` is repeatable to stack several
 as successive layers, later one winning on scalars.
 
-**Startup banner & advisory warnings.** Every `corral run` prints a short
-`corral enabled` banner to **stderr** showing the *effective* (layered + profile)
-config (net, profile, providers, extra rw/ro grants, blocked-path count), so it is
-obvious the sandbox is active and what the session grants. Advisory **warnings**
+**Startup banner & advisory warnings.** Every `corral run` prints a banner to
+**stderr** that shows what the session can reach under the *effective* (layered +
+profile) config. Beside the mark it shows the version and profiles, then a roll-up:
+the project dir, extra rw/ro grants, the `$HOME` mode, and the audit log. Below it, one
+ruled section lists the provider status rows. Advisory **warnings**
 (highlighted on a tty, suppressed under `NO_COLOR`/`TERM=dumb`) flag footguns that work
 but deserve a second look: docker enabled (root-equivalent host access), a
 `providers.paths.rw` grant that overrides a baseline read-only system path, and a
@@ -104,7 +105,7 @@ sandbox, cli, config, policy, and providers packages never name a specific agent
   own package depending only on `spec` (claude additionally imports the leaf `internal/agents/claude/claudecfg`
   for `settings.json` generation). Each exposes `New() spec.Agent` and asserts conformance with
   `var _ spec.Agent = agent{}`, **and owns its yaml-tagged config type** (`claude.Config`,
-  `pi.Config`) implementing `spec.AgentConfig` (the config-derived sandbox env and banner fields):
+  `pi.Config`) implementing `spec.AgentConfig` (the config-derived sandbox env and `validate` fields):
   `internal/config` embeds those agent-owned types into its `Agents` struct and dispatches to the
   selected agent's config, so the config surface and the code that consumes it live in the same
   package (mirroring how the provider packages own their `Config` types). `Launch()` carries only
@@ -401,7 +402,7 @@ policy bypasses:
   hooked `Read` tool (the older inline-slurp bypass that motivated #38 is gone), so they inherit
   the path-pattern and content scans. There is no settings surface to disable or reroute `!`
   today; closing it is an **upstream feature request**, not a corral-side fix. The runtime
-  surfaces the gap as a `note` line in the startup banner, plus the security doc.
+  surfaces the gap as a line under the `policy` row of the startup banner, plus the security doc.
 
 ## Providers
 
@@ -556,9 +557,8 @@ cleanups unwind **LIFO** before the launch aborts.
 **Two narrations, two audiences.** Both channels carry provider attribution: the engine
 pairs every line with its provider (`providers.Notice`), so no consumer has to guess which
 provider said what. `Status` speaks to the **operator**: the launcher's startup banner
-renders the lines as name-labeled rows under `providers` (what was minted, scope,
-lifetime), the built-ins at banner time and the feature providers post-mint, aligned as
-one section. `AgentNotes` speaks to the **model**: `Resolved.Apply` newline-joins the
+renders the lines as name-labeled rows in the ruled `providers` section (what was minted,
+scope, lifetime), the built-ins and the feature providers together after the mint. `AgentNotes` speaks to the **model**: `Resolved.Apply` newline-joins the
 active providers' lines as `- <provider>: <note>` markdown bullets (paths backtick-quoted
 by `spec.SummarizeQuoted`; self-delimiting even when a human echoes the var unquoted) into
 the reserved `CORRAL_PROVIDER_NOTES` env var (`sandbox.ProviderNotesEnvVar`), appending

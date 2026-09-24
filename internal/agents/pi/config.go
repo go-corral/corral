@@ -15,5 +15,4 @@ func (Config) SandboxEnv() map[string]string {
 	return map[string]string{"PI_OFFLINE": "1"}
 }
 
-func (Config) BannerFields() []spec.BannerField     { return nil }
 func (Config) ValidationFields() []spec.BannerField { return nil }

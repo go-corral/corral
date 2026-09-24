@@ -27,7 +27,6 @@ type BannerField struct {
 
 type AgentConfig interface {
 	SandboxEnv() map[string]string
-	BannerFields() []BannerField
 	ValidationFields() []BannerField
 }
 

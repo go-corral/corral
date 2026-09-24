@@ -489,7 +489,7 @@ func TestRunLateShadowPrintsAfterBody(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("the seatbelt backend is unavailable off macOS; the launch must abort non-zero, got %d\n%s", code, stderr)
 	}
-	iBody, iShadow := strings.Index(stderr, "workdir"), strings.Index(stderr, gitconfigShadow)
+	iBody, iShadow := strings.Index(stderr, "\nproviders "), strings.Index(stderr, gitconfigShadow)
 	if iBody < 0 || iShadow < 0 || iShadow < iBody {
 		t.Errorf("a late shadow must print after the banner body (body=%d shadow=%d):\n%s", iBody, iShadow, stderr)
 	}

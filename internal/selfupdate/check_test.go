@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -23,9 +22,8 @@ func TestCheckOnStartNoticeWhenNewer(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "update-check.json")
 	now := time.Unix(1_700_000_000, 0)
 
-	notice := CheckOnStart(context.Background(), u, state, DefaultInterval, now)
-	if !strings.Contains(notice, "0.3.0 → 0.4.0") || !strings.Contains(notice, "corral update") {
-		t.Errorf("notice = %q, want it to mention 0.3.0 → 0.4.0 and `corral update`", notice)
+	if latest := CheckOnStart(context.Background(), u, state, DefaultInterval, now); latest != "0.4.0" {
+		t.Errorf("CheckOnStart = %q, want 0.4.0", latest)
 	}
 	latest, when, ok := CachedCheck(state)
 	if !ok || latest != "0.4.0" || !when.Equal(now) {
@@ -36,8 +34,8 @@ func TestCheckOnStartNoticeWhenNewer(t *testing.T) {
 func TestCheckOnStartNoNoticeWhenCurrent(t *testing.T) {
 	u := fakeRelease(t, "0.3.0", "0.3.0", buildArchive(t, "x"), nil, true)
 	state := filepath.Join(t.TempDir(), "update-check.json")
-	if n := CheckOnStart(context.Background(), u, state, DefaultInterval, time.Unix(1_700_000_000, 0)); n != "" {
-		t.Errorf("notice = %q, want empty (up to date)", n)
+	if latest := CheckOnStart(context.Background(), u, state, DefaultInterval, time.Unix(1_700_000_000, 0)); latest != "" {
+		t.Errorf("CheckOnStart = %q, want empty (up to date)", latest)
 	}
 }
 
@@ -51,9 +49,8 @@ func TestCheckOnStartThrottledUsesCache(t *testing.T) {
 		Client:  &http.Client{Transport: errTransport{t}},
 		Current: "0.3.0",
 	}
-	notice := CheckOnStart(context.Background(), u, state, DefaultInterval, base.Add(time.Hour))
-	if !strings.Contains(notice, "0.3.0 → 0.9.0") {
-		t.Errorf("notice = %q, want it from cache (0.3.0 → 0.9.0) with no network", notice)
+	if latest := CheckOnStart(context.Background(), u, state, DefaultInterval, base.Add(time.Hour)); latest != "0.9.0" {
+		t.Errorf("CheckOnStart = %q, want 0.9.0 from cache with no network", latest)
 	}
 }
 
@@ -65,8 +62,8 @@ func TestCheckOnStartFailureStampsTimeNoNotice(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	if n := CheckOnStart(ctx, u, state, DefaultInterval, now); n != "" {
-		t.Errorf("notice = %q, want empty on a failed probe", n)
+	if latest := CheckOnStart(ctx, u, state, DefaultInterval, now); latest != "" {
+		t.Errorf("CheckOnStart = %q, want empty on a failed probe", latest)
 	}
 	_, when, ok := CachedCheck(state)
 	if !ok || !when.Equal(now) {
