@@ -2,7 +2,7 @@
   "name": "corral-helper",
   "displayName": "corral helper",
   "description": "Helps new users install, configure, run, and troubleshoot corral — the sandbox that wraps Claude Code and enforces security policy on its tool calls.",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "author": {
     "name": "Mathias Merscher, Nicolai Rybnikar"
   },
