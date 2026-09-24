@@ -64,8 +64,8 @@ skill is therefore self-contained.
   exercise an install request, a blocked-path diagnosis, a minimal config edit with
   multiple source layers, and the audit-sharing warning. Confirm the helper inspects the
   listed source files instead of claiming `corral validate` reports per-field provenance.
-  Include nested path grants in the config-edit check: the helper must use `[grant]` rather
-  than grouping branches and keep validity separate from host readiness. From an active
+  Include nested path grants in the config-edit check: the helper must use the access
+  token of each grant rather than grouping branches and keep validity separate from host readiness. From an active
   sandbox, confirm it asks for host-side `validate` output before using paths to guide a change.
   For audit questions, confirm the helper uses `echo "$CORRAL_AUDIT_PATH"` to name the file
   the current session logs to.

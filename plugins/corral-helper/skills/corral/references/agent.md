@@ -47,10 +47,11 @@ corral run pi -- <pi args>
 ```
 
 The second `doctor` confirms the Claude Code hooks or pi presence-warning extension.
-`validate` summarizes selected effective policy before launch. Read warnings first, then
-check approval notices under **Configuration** and grants under **Filesystem**. Successful
-approvals are silent. `[grant]` identifies grants; terminal output also renders them bold.
-Other tree branches only group paths. `--list` shows blocked paths.
+`validate` summarizes selected effective policy before launch. Read the **warnings**
+section first, then check the approval state in the `sources` row and the grants under
+**path grants**. Only tree rows with an `rw` or `ro` access token are grants; terminal
+output also renders them bold. Other tree branches only group paths. `--list` shows
+blocked paths.
 Repository config or session-hook executable approval requires an interactive terminal;
 do not substitute `--yes` for that review.
 

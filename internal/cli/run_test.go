@@ -432,7 +432,7 @@ func TestRunDeclinedLaunchDoesNotMint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// kubernetes bound to a write-capable role (`edit`, not a known read-only role) → the
-	// static "bound role" advisory. A real launch would mint a SA + RBAC + token for it.
+	// static role advisory. A real launch would mint a SA + RBAC + token for it.
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
 		[]byte("providers:\n  kubernetes:\n    enabled: true\n    permissions:\n      - clusterWide: true\n        clusterRole: edit\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -459,7 +459,7 @@ func TestRunDeclinedLaunchDoesNotMint(t *testing.T) {
 		t.Errorf("a declined launch must abort with a non-zero code, got %d", code)
 	}
 	// The advisory the operator declined was shown before the gate, and the launch aborted.
-	if !strings.Contains(stderr, `bound role "edit"`) {
+	if !strings.Contains(stderr, `role "edit" is not a known read-only role`) {
 		t.Errorf("the kubernetes write-role warning must be shown before the gate:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "launch aborted") {
@@ -1237,7 +1237,7 @@ func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {
 
 	// validate refuses what run refuses.
 	stderr = captureStderr(t, func() {
-		captureStdout(t, func() { code = cmdValidate(nil) })
+		captureStdout(t, func() { code = cmdValidate(nil, "test") })
 	})
 	if code == 0 || !strings.Contains(stderr, "policy.audit.path") {
 		t.Errorf("validate must refuse the audit path, exit=%d:\n%s", code, stderr)

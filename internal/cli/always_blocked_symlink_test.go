@@ -40,7 +40,7 @@ func TestValidateRefusesSymlinkedGrantIntoAlwaysBlocked(t *testing.T) {
 
 	var code int
 	stderr := captureStderr(t, func() {
-		captureStdout(t, func() { code = cmdValidate(nil) })
+		captureStdout(t, func() { code = cmdValidate(nil, "test") })
 	})
 	if code == 0 {
 		t.Fatalf("validate green-lit a grant that resolves into an always-blocked path\n%s", stderr)
@@ -124,11 +124,11 @@ func TestRunMasksResolvedPathWhenAlwaysBlockedDirIsSymlink(t *testing.T) {
 	// name it explicitly — otherwise a path carved out of the operator's own grant appears
 	// in no diagnostic at all.
 	vOut := captureStdout(t, func() {
-		if c := cmdValidate(nil); c != 0 {
+		if c := cmdValidate(nil, "test"); c != 0 {
 			t.Fatalf("validate exit=%d", c)
 		}
 	})
-	if !strings.Contains(vOut, abbrevHome(wantMasked, home)+"  [always blocked → resolved]") {
+	if !strings.Contains(vOut, "    also masked     "+abbrevHome(wantMasked, home)+"\n") {
 		t.Errorf("validate did not surface the resolved always-blocked mask %q:\n%s", wantMasked, vOut)
 	}
 }

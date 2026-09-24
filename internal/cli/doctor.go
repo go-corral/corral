@@ -17,7 +17,6 @@ import (
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
-	"github.com/go-corral/corral/internal/trust"
 )
 
 // doctorArea is one roll-up row. summary is shown when every check passes, or dimmed when
@@ -83,47 +82,16 @@ func configArea(cfg *config.Config, sources []config.Source, err error) doctorAr
 	}
 	a.checks = []health.Check{{Label: "config", Value: "valid"}}
 	var kinds []string
-	notes := trustAnnotations(trustEntries(sources))
 	for _, s := range sources {
 		if s.Kind != "defaults" {
 			kinds = append(kinds, s.Kind)
-		}
-		if n, ok := notes[s.Path]; ok && n.state != trust.StateApproved {
-			a.checks = append(a.checks, trustCheck(s.Kind, s.Path, n.state, "run or sync"))
 		}
 	}
 	if len(kinds) > 0 {
 		a.summary = strings.Join(kinds, " + ") + " valid"
 	}
-
-	wd, werr := os.Getwd()
-	if werr != nil {
-		return a
-	}
-	execs := collectHookExecs(cfg, wd)
-	hookNotes := trustAnnotations(execs.entries)
-	for _, p := range execs.sortedAttrPaths() {
-		n, noted := hookNotes[p]
-		switch {
-		case execs.unreadable[p] != "":
-			a.checks = append(a.checks, health.Check{State: health.Warn, Label: "hook exec", Value: p,
-				Reason: execs.attr[p] + "; " + reportText(execs.unreadable[p]) + "; the launch fails or skips this hook"})
-		case noted && n.state != trust.StateApproved:
-			a.checks = append(a.checks, trustCheck("hook exec", p+" ("+execs.attr[p]+")", n.state, "run"))
-		}
-	}
+	a.checks = append(a.checks, trustWarnings(cfg, sources)...)
 	return a
-}
-
-// trustCheck warns about a gated item that is not approved or changed since approval.
-// gate names the commands that ask for approval.
-func trustCheck(label, path string, state trust.State, gate string) health.Check {
-	if state == trust.StateChanged {
-		return health.Check{State: health.Warn, Label: label, Value: "changed since approval",
-			Reason: path + "; corral asks again on the next " + gate}
-	}
-	return health.Check{State: health.Warn, Label: label, Value: "not approved",
-		Reason: path + "; corral asks on the next " + gate}
 }
 
 // agentsArea reports each installed agent and its enforcement readiness. With a valid

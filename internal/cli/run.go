@@ -203,8 +203,8 @@ func cmdRun(args []string, version string) int {
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
 	c := report.StyleFor(os.Stderr)
-	warnings := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
-	warnings = append(warnings, resBuiltin.Warnings...)
+	cfgWarnings := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
+	warnings := slices.Clone(resBuiltin.Warnings)
 	// Startup readiness advisory: each agent reports its own set.
 	if hostHome, herr := os.UserHomeDir(); herr == nil {
 		if a, ok := agents.Lookup(cfg.EffectiveAgent()); ok {
@@ -262,7 +262,7 @@ func cmdRun(args []string, version string) int {
 		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
 		// so it gets a launch-only row.
 		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
-		writeStartupBanner(os.Stderr, c, cfg, banner, warnings, notices, previewOnly)
+		writeStartupBanner(os.Stderr, c, cfg, banner, cfgWarnings, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
 		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc))
 		prep, err := backend.Prepare(&spec, os.Stderr)
@@ -291,8 +291,8 @@ func cmdRun(args []string, version string) int {
 	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
 	// Print the banner around the gate and phase-B output, so the providers section renders as
 	// one contiguous block.
-	writeBannerHeader(os.Stderr, c, cfg, banner, warnings)
-	if len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
+	writeBannerHeader(os.Stderr, c, cfg, banner, cfgWarnings, warnings)
+	if len(cfgWarnings)+len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
 		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
 	}
 

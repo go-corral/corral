@@ -3,8 +3,12 @@ package block
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 // Validate owns the absolute-path and always-blocked-interaction checks; config passes the
@@ -53,26 +57,24 @@ func TestWarnings(t *testing.T) {
 	missingDir := filepath.Join(root, "missing-dir")
 	missingFile := filepath.Join(root, "missing.env")
 
+	missing := func(key, p string) health.Check {
+		return health.Check{State: health.Warn, Label: "block." + key, Value: strconv.Quote(p) + " does not exist"}
+	}
 	for _, tc := range []struct {
 		name string
 		cfg  Config
-		want []string
+		want []health.Check
 	}{
 		{"existing entries", Config{Directories: []string{dir}, Files: []string{file, link}}, nil},
-		{"missing directory", Config{Directories: []string{missingDir}}, []string{`providers.block.directories "` + missingDir + `"`}},
-		{"missing file", Config{Files: []string{missingFile}}, []string{`providers.block.files "` + missingFile + `"`}},
-		{"one warning per missing entry", Config{Directories: []string{dir, missingDir}, Files: []string{missingFile}}, []string{missingDir, missingFile}},
+		{"missing directory", Config{Directories: []string{missingDir}}, []health.Check{missing("directories", missingDir)}},
+		{"missing file", Config{Files: []string{missingFile}}, []health.Check{missing("files", missingFile)}},
+		{"one warning per missing entry", Config{Directories: []string{dir, missingDir}, Files: []string{missingFile}},
+			[]health.Check{missing("directories", missingDir), missing("files", missingFile)}},
 		{"empty", Config{}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.cfg.Warnings()
-			if len(got) != len(tc.want) {
-				t.Fatalf("Warnings() = %q, want %d warning(s)", got, len(tc.want))
-			}
-			for i, w := range got {
-				if !strings.Contains(w, tc.want[i]) {
-					t.Errorf("Warnings()[%d] = %q, want it to name %q", i, w, tc.want[i])
-				}
+			if got := tc.cfg.Warnings(); !slices.Equal(got, tc.want) {
+				t.Errorf("Warnings() = %+v, want %+v", got, tc.want)
 			}
 		})
 	}

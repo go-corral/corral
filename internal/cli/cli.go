@@ -47,7 +47,7 @@ func Main(args []string, version string) int {
 	case "gc":
 		return cmdGC(rest)
 	case "validate":
-		return cmdValidate(rest)
+		return cmdValidate(rest, version)
 	case "doctor":
 		return cmdDoctor(rest, version)
 	case "update":

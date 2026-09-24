@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"strconv"
@@ -14,9 +12,12 @@ import (
 	"github.com/go-corral/corral/internal/pathutil"
 )
 
+// grant is one path the sandbox reaches, with its access (rw or ro) and the config that sets it.
+type grant struct{ path, access, source string }
+
 type grantNode struct {
-	grant    bool
-	children map[string]*grantNode
+	access, source string
+	children       map[string]*grantNode
 }
 
 func (n *grantNode) child(name string) *grantNode {
@@ -29,21 +30,27 @@ func (n *grantNode) child(name string) *grantNode {
 	return n.children[name]
 }
 
-// writePathTree groups absolute, config-expanded paths without inspecting the filesystem.
-// Grants carry a [grant] tag. Returns the number of distinct grants.
-func writePathTree(w io.Writer, c report.Style, paths []string, home, indent string) int {
+// grantIndent is the indent of the grant trees; grantAccessColumn is the 1-based column of
+// the access token.
+const (
+	grantIndent       = "    "
+	grantAccessColumn = 31
+)
+
+// grantTrees groups absolute, config-expanded grants into one tree per root without
+// inspecting the filesystem. The first grant of a path wins.
+func grantTrees(c report.Style, grants []grant, home string) []report.Node {
 	displayHome := home
-	for _, p := range paths {
-		if pathutil.AtOrUnderClean(home, p) {
+	for _, g := range grants {
+		if pathutil.AtOrUnderClean(home, g.path) {
 			displayHome = ""
 			break
 		}
 	}
 
 	roots := &grantNode{}
-	count := 0
-	for _, p := range paths {
-		p = abbrevHome(p, displayHome)
+	for _, g := range grants {
+		p := abbrevHome(g.path, displayHome)
 		root := "/"
 		if p == "~" || strings.HasPrefix(p, "~/") {
 			root = "~"
@@ -55,42 +62,36 @@ func writePathTree(w io.Writer, c report.Style, paths []string, home, indent str
 				n = n.child(part)
 			}
 		}
-		if !n.grant {
-			count++
+		if n.access == "" {
+			n.access, n.source = g.access, g.source
 		}
-		n.grant = true
 	}
+	var out []report.Node
 	for _, root := range slices.Sorted(maps.Keys(roots.children)) {
-		writeGrantNode(w, c, root, roots.children[root], indent, "", "")
+		out = append(out, grantTree(c, root, roots.children[root], 0))
 	}
-	return count
+	return out
 }
 
-func writeGrantNode(w io.Writer, c report.Style, label string, n *grantNode, indent, branch, continuation string) {
+// grantTree renders n at depth, padding a grant's name so its access token lines up.
+func grantTree(c report.Style, label string, n *grantNode, depth int) report.Node {
 	// A grant may also be an ancestor of another grant; collapsing past it would hide access.
-	for !n.grant && len(n.children) == 1 {
+	for n.access == "" && len(n.children) == 1 {
 		for name, child := range n.children {
 			label = strings.TrimSuffix(label, "/") + "/" + name
 			n = child
-			break
 		}
 	}
-	tag, style := "", c.Dim
-	if n.grant {
-		style = c.Bold
-		tag = "  [grant]"
-	} else if !strings.HasSuffix(label, "/") {
-		label += "/"
+	label = reportText(label)
+	node := report.Node{Text: c.Dim + label + c.Reset}
+	if n.access != "" {
+		pad := max(grantAccessColumn-1-len(grantIndent)-4*depth-utf8.RuneCountInString(label), 1)
+		node.Text = c.Bold + label + c.Reset + strings.Repeat(" ", pad) + n.access + "   " + c.Dim + n.source + c.Reset
 	}
-	fmt.Fprintf(w, "%s%s%s%s%s%s\n", indent, branch, style, reportText(label), c.Reset, tag)
-	keys := slices.Sorted(maps.Keys(n.children))
-	for i, name := range keys {
-		branch, next := "├── ", "│   "
-		if i == len(keys)-1 {
-			branch, next = "└── ", "    "
-		}
-		writeGrantNode(w, c, name, n.children[name], indent+continuation, branch, next)
+	for _, name := range slices.Sorted(maps.Keys(n.children)) {
+		node.Children = append(node.Children, grantTree(c, name, n.children[name], depth+1))
 	}
+	return node
 }
 
 // reportText quotes control characters and delimiter-like text so data cannot forge report rows.
