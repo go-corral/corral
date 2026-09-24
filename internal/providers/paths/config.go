@@ -3,6 +3,7 @@ package paths
 import (
 	"fmt"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 )
 
@@ -43,12 +44,13 @@ func (c Config) Validate(floor []string) error {
 
 // Warnings returns the advisory lints for providers.paths. A read-only entry at
 // or under a read-write entry grants nothing: read-write wins where they overlap.
-func (c Config) Warnings() []string {
-	var w []string
+func (c Config) Warnings() []health.Check {
+	var w []health.Check
 	for _, ro := range c.RO {
 		for _, rw := range c.RW {
 			if pathutil.AtOrUnder(ro, rw) {
-				w = append(w, fmt.Sprintf("providers.paths.ro %q is covered by providers.paths.rw %q and has no effect: read-write grants win where they overlap", ro, rw))
+				w = append(w, health.Check{State: health.Warn, Label: "paths.ro", Value: fmt.Sprintf("%q is covered by %q", ro, rw),
+					Reason: "read-write grants win where they overlap, so this grant has no effect"})
 				break
 			}
 		}

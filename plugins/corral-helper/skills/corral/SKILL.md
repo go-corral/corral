@@ -45,13 +45,13 @@ Use these interfaces before proposing a fix:
 | Interface                              | Use it for                                                                                                                                                                                                                             |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `corral doctor`                        | Host readiness per area: backend, config and approval, agent integration, enabled providers, `CORRAL_DISABLE_HOOKS`, and update state. Lists each failed or warning check with its fix command.                                        |
-| `corral validate`                      | Sectioned config report: sources and approval notices, sandbox settings including the private home, agent settings, path grants, environment names, and enabled providers. It does not show per-field provenance or host availability. |
+| `corral validate`                      | Config report: sources with approval state, warnings, settings including the private home, agent settings, environment names, and providers, and a tree of path grants. It does not show per-field provenance or host availability.    |
 | `corral run --dry-run -- <agent args>` | The sandbox command that would launch, without running session hooks or creating temporary credentials.                                                                                                                                |
 | The audit record's `rule` and `reason` | The policy decision behind a blocked tool call.                                                                                                                                                                                        |
 
-Validation path trees identify configured grants with `[grant]`; terminal styling also makes
-them bold. Do not infer access from grouping branches. `--list` expands blocked paths, not
-directory contents.
+In the validation path tree, only rows with an `rw` or `ro` access token are grants; terminal
+styling also makes them bold. Do not infer access from grouping branches. `--list` expands
+blocked paths, not directory contents.
 
 Run `corral validate` on the host when its paths will guide a diagnosis or config change.
 Inside an active corral session, `$HOME` is sandbox-private, so an in-session report is not

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 type mcpServerEntry struct {
@@ -18,7 +20,7 @@ type mcpServerEntry struct {
 // mcpTransportWarnings reads MCP server registrations and warns on plaintext transport
 // (http:// or ws://) to a non-loopback host. HTTPS/WSS, stdio, and loopback are exempt.
 // workDir is empty outside a launch (doctor/sync): the project-scope file is skipped then.
-func mcpTransportWarnings(home, workDir string) []string {
+func mcpTransportWarnings(home, workDir string) []health.Check {
 	var files []string
 	if workDir != "" {
 		files = append(files, filepath.Join(workDir, ".mcp.json"))
@@ -36,10 +38,11 @@ func mcpTransportWarnings(home, workDir string) []string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	var w []string
+	var w []health.Check
 	for _, name := range names {
 		if msg, ok := insecureMCPTransport(name, servers[name]); ok {
-			w = append(w, msg)
+			w = append(w, health.Check{State: health.Warn, Label: "mcp", Value: msg,
+				Reason: "a remote server needs HTTPS or WSS; stdio or loopback http is fine for local dev"})
 		}
 	}
 	return w
@@ -78,7 +81,7 @@ func insecureMCPTransport(name string, e mcpServerEntry) (string, bool) {
 	if scheme == "ws" {
 		proto = "WebSocket"
 	}
-	return fmt.Sprintf("MCP server %q uses plaintext %s across a network boundary (%s) — HTTPS/WSS is required for a remote server (stdio or loopback http is fine for local dev)", name, proto, u.Host), true
+	return fmt.Sprintf("server %q uses plaintext %s to %s", name, proto, u.Host), true
 }
 
 func isLoopbackHost(host string) bool {

@@ -205,21 +205,21 @@ func (p agent) removeSync(in spec.SyncInput) (spec.SyncReport, error) {
 		"a bare `%s` outside corral is no longer flagged as unsandboxed; run `corral sync %s` to reinstall.", p.Name(), p.Name())), Changed: true}, nil
 }
 
-func (p agent) LaunchWarnings(in spec.StatusInput) []string {
+func (p agent) LaunchWarnings(in spec.StatusInput) []health.Check {
 	pending := pendingExtensions(p.globalExtensions(), p.extensionsDir(in.Home, in.Host))
 	if len(pending) == 0 {
 		return nil
 	}
-	desc := "is out of date"
+	desc := "presence backstop out of date"
 	for _, pe := range pending {
 		if !pe.stale {
-			desc = "is not installed"
+			desc = "presence backstop not installed"
 			break
 		}
 	}
-	return []string{fmt.Sprintf(
-		"%s's presence backstop %s — a bare `%s` started outside corral won't be flagged as unsandboxed; run `corral sync %s` to fix (this corral session is already protected by the bridge)",
-		p.Name(), desc, p.Name(), p.Name())}
+	return []health.Check{{State: health.Warn, Label: p.Name(), Value: desc,
+		Reason: fmt.Sprintf("a bare %s outside corral is not flagged as unsandboxed; this session is protected", p.Name()),
+		Fix:    "corral sync " + p.Name()}}
 }
 
 func verbInstall(stale bool) string {

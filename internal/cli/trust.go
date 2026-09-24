@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers/hooks"
 	"github.com/go-corral/corral/internal/trust"
 )
@@ -110,12 +111,12 @@ func trustStore() (*trust.Store, error) {
 // share the exact wording. Both cover the gate's whole surface — repo config and
 // session-hook executables ride the same approval.
 const (
-	trustNonInteractiveMsg = "corral: approving repo config or session-hook executables requires one interactive run " +
+	trustNonInteractiveMsg = "approving repo config or session-hook executables requires one interactive run " +
 		"in a terminal — run `corral run`/`corral sync` there to review and approve them, after which " +
 		"non-interactive runs proceed."
-	trustYesRefusalMsg = "corral: --yes means \"proceed past warnings\", not \"approve new repo-supplied code\" — " +
+	trustYesRefusalMsg = "--yes means \"proceed past warnings\", not \"approve new repo-supplied code\" — " +
 		"approve it once in an interactive terminal first."
-	trustDeclinedMsg = "corral: not approved — aborted."
+	trustDeclinedMsg = "not approved — aborted."
 )
 
 // promptTrustApproval asks the operator to approve what writeTrustPending just listed — the
@@ -140,7 +141,7 @@ func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in
 	}
 	store, err := trustStore()
 	if err != nil {
-		fmt.Fprintf(out, "corral: %v\n", err)
+		c.Message(out, report.Blocked, err.Error())
 		return false
 	}
 	pending := store.Pending(all)
@@ -160,34 +161,28 @@ func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in
 	writeTrustPending(out, c, cfgPending, execPending, execs.attr)
 
 	if yes {
-		fmt.Fprintln(out, trustYesRefusalMsg)
+		c.Message(out, report.Blocked, trustYesRefusalMsg)
 		return false
 	}
 	answered, approved := promptTrustApproval(in, out, c)
 	switch {
 	case !answered:
-		fmt.Fprintln(out, trustNonInteractiveMsg)
+		c.Message(out, report.Blocked, trustNonInteractiveMsg)
 		return false
 	case !approved:
-		fmt.Fprintln(out, trustDeclinedMsg)
+		c.Message(out, report.Blocked, trustDeclinedMsg)
 		return false
 	}
 	// Persist all covered entries (not just pending): re-approval is idempotent.
 	if err := store.Approve(all); err != nil {
-		fmt.Fprintf(out, "corral: could not record config approval: %v\n", err)
+		c.Message(out, report.Blocked, fmt.Sprintf("could not record config approval: %v", err))
 		return false
 	}
 	return true
 }
 
-// trustNote is one gated item's approval state and label.
-type trustNote struct {
-	state trust.State
-	label string
-}
-
-// trustAnnotations returns the approval state and label for each trust entry. Best-effort.
-func trustAnnotations(entries []trust.Entry) map[string]trustNote {
+// trustStates returns the approval state of each trust entry. Best-effort.
+func trustStates(entries []trust.Entry) map[string]trust.State {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -195,23 +190,52 @@ func trustAnnotations(entries []trust.Entry) map[string]trustNote {
 	if err != nil {
 		return nil
 	}
-	out := make(map[string]trustNote, len(entries))
+	out := make(map[string]trust.State, len(entries))
 	for _, r := range store.Check(entries) {
-		var label string
-		switch r.State {
-		case trust.StateApproved:
-			label = "approved"
-			if !r.ApprovedAt.IsZero() {
-				label += " " + r.ApprovedAt.Local().Format("2006-01-02")
-			}
-		case trust.StateChanged:
-			label = "changed since approval — re-approval required on next run/sync"
-		default:
-			label = "not approved — will prompt on next run/sync"
-		}
-		out[r.Path] = trustNote{state: r.State, label: label}
+		out[r.Path] = r.State
 	}
 	return out
+}
+
+// trustWarnings warns about each repo config layer and session-hook executable that is not
+// approved or changed since approval, and about each hook executable corral cannot read.
+func trustWarnings(cfg *config.Config, sources []config.Source) []health.Check {
+	var out []health.Check
+	states := trustStates(trustEntries(sources))
+	for _, s := range sources {
+		if st, ok := states[s.Path]; ok && st != trust.StateApproved {
+			out = append(out, trustCheck(s.Kind, reportText(s.Path), st, "run or sync"))
+		}
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return out
+	}
+	execs := collectHookExecs(cfg, wd)
+	hookStates := trustStates(execs.entries)
+	for _, p := range execs.sortedAttrPaths() {
+		st, noted := hookStates[p]
+		switch {
+		case execs.unreadable[p] != "":
+			out = append(out, health.Check{State: health.Warn, Label: "hook exec", Value: reportText(p),
+				Reason: reportText(execs.attr[p]) + "; " + reportText(execs.unreadable[p]) + "; the launch fails or skips this hook"})
+		case noted && st != trust.StateApproved:
+			out = append(out, trustCheck("hook exec", reportText(p)+" ("+reportText(execs.attr[p])+")", st, "run"))
+		}
+	}
+	return out
+}
+
+// trustCheck warns about a gated item that is not approved or changed since approval.
+// gate names the commands that ask for approval.
+func trustCheck(label, path string, state trust.State, gate string) health.Check {
+	if state == trust.StateChanged {
+		return health.Check{State: health.Warn, Label: label, Value: "changed since approval",
+			Reason: path + "; corral asks again on the next " + gate}
+	}
+	return health.Check{State: health.Warn, Label: label, Value: "not approved",
+		Reason: path + "; corral asks on the next " + gate}
 }
 
 // writeTrustDryRunNote annotates a --dry-run preview with the approval state. Silent when
@@ -229,10 +253,8 @@ func writeTrustDryRunNote(out io.Writer, c report.Style, sources []config.Source
 	if len(pending) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "%scorral: note: not yet approved — a real run would prompt to approve:%s\n", c.Yellow, c.Reset)
-	for _, p := range pending {
-		fmt.Fprintf(out, "  - %-7s %s%s\n", pendingState(p), p.Path, attrSuffix(execs.attr, p.Path))
-	}
+	c.Message(out, report.Attention, "not yet approved — a real run would prompt to approve:")
+	writePendingRows(out, c, pending, execs.attr)
 }
 
 // pendingState renders a trust.Result's state for the pending lists.
@@ -243,13 +265,12 @@ func pendingState(p trust.Result) string {
 	return "new"
 }
 
-// attrSuffix appends the config-path attribution for a hook executable ("" for a config
-// file, which needs none — its path is the config path).
-func attrSuffix(attr map[string]string, path string) string {
-	if a := attr[path]; a != "" {
-		return "   (" + a + ")"
+// writePendingRows lists pending entries, each hook executable with the config paths that
+// name it.
+func writePendingRows(out io.Writer, c report.Style, pending []trust.Result, attr map[string]string) {
+	for _, p := range pending {
+		c.Row(out, report.Row{Label: pendingState(p), Value: p.Path, Reason: attr[p.Path]})
 	}
-	return ""
 }
 
 // writeTrustPending lists what the gate is stopping on.
@@ -265,11 +286,7 @@ func writeTrustPending(out io.Writer, c report.Style, cfgPending, execPending []
 		}
 		subjects = append(subjects, s)
 	}
-	fmt.Fprintf(out, "%scorral: unapproved %s — review, then approve:%s\n", c.Bold, strings.Join(subjects, " and "), c.Reset)
-	for _, p := range cfgPending {
-		fmt.Fprintf(out, "  - %-7s %s\n", pendingState(p), p.Path)
-	}
-	for _, p := range execPending {
-		fmt.Fprintf(out, "  - %-7s %s%s\n", pendingState(p), p.Path, attrSuffix(attr, p.Path))
-	}
+	c.Message(out, report.Attention, "unapproved "+strings.Join(subjects, " and ")+" — review, then approve:")
+	writePendingRows(out, c, cfgPending, attr)
+	writePendingRows(out, c, execPending, attr)
 }

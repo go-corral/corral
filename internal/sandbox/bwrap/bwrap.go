@@ -105,7 +105,7 @@ func (b Backend) Prepare(spec *sandbox.SandboxSpec, w io.Writer) (sandbox.Launch
 	if len(spec.BlockedFiles) > 0 {
 		stub, err := ensureMaskStub(spec.Tokens["HOME"])
 		if err != nil {
-			fmt.Fprintf(w, "corral: warning: could not create the file-mask stub (%v); "+
+			fmt.Fprintf(w, "could not create the file-mask stub (%v); "+
 				"providers.block.files stay hook-enforced but are not filesystem-masked\n", err)
 		} else {
 			for _, f := range spec.BlockedFiles {

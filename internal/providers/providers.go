@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -49,9 +48,11 @@ type Resolved struct {
 	Warnings     []string
 	Notices      []Notice
 	AgentNotes   []Notice
-	LogWriter    io.Writer
-	mountOwners  map[string]string
-	envOwners    map[string]string
+	// OnTeardown, when set, is called after each provider teardown with the teardown
+	// error and, for a failure, the residual-credential risk and remedy.
+	OnTeardown  func(provider string, err error, hint string)
+	mountOwners map[string]string
+	envOwners   map[string]string
 }
 
 type resolvedItem struct {
@@ -152,6 +153,7 @@ func Resolve(ctx context.Context, sess Session, active []Active) (res *Resolved,
 		res.items = append(res.items, newResolvedItem(p.Name(), c))
 		res.Notices = append(res.Notices, noticesFor(p.Name(), c.Status)...)
 		res.AgentNotes = append(res.AgentNotes, noticesFor(p.Name(), c.AgentNotes)...)
+		res.Warnings = append(res.Warnings, c.Warnings...)
 		if c.Cleanup != nil {
 			res.cleanups = append(res.cleanups, namedCleanup{provider: p.Name(), fn: c.Cleanup, hint: c.CleanupHint})
 		}
@@ -189,6 +191,7 @@ func ResolvePreview(ctx context.Context, sess Session, active []Active) (res *Re
 		res.items = append(res.items, newResolvedItem(p.Name(), c))
 		res.Notices = append(res.Notices, noticesFor(p.Name(), c.Status)...)
 		res.AgentNotes = append(res.AgentNotes, noticesFor(p.Name(), c.AgentNotes)...)
+		res.Warnings = append(res.Warnings, c.Warnings...)
 	}
 	return res, notExpanded, nil
 }
@@ -361,9 +364,8 @@ func appendUnique(dst, add []string) []string {
 	return dst
 }
 
-// Cleanup runs the teardown closures LIFO, joining any errors; idempotent.
-// With LogWriter set, each teardown logs a confirmation or the residual-credential
-// risk on failure. Nil LogWriter stays silent.
+// Cleanup runs the teardown closures LIFO, joining any errors; idempotent. Each
+// teardown is reported to OnTeardown when set.
 func (r *Resolved) Cleanup(ctx context.Context) error {
 	if r == nil {
 		return nil
@@ -371,17 +373,16 @@ func (r *Resolved) Cleanup(ctx context.Context) error {
 	var errs []error
 	for i := len(r.cleanups) - 1; i >= 0; i-- {
 		nc := r.cleanups[i]
-		if err := nc.fn(ctx); err != nil {
+		err := nc.fn(ctx)
+		if err != nil {
 			errs = append(errs, err)
-			if r.LogWriter != nil {
-				hint := nc.hint
-				if hint == "" {
-					hint = "a minted credential may still be live until it expires on its own"
-				}
-				fmt.Fprintf(r.LogWriter, "corral: %s: teardown FAILED — %s\n", nc.provider, hint)
+		}
+		if r.OnTeardown != nil {
+			hint := nc.hint
+			if hint == "" {
+				hint = "a minted credential may still be live until it expires on its own"
 			}
-		} else if r.LogWriter != nil {
-			fmt.Fprintf(r.LogWriter, "corral: %s: minted credentials torn down\n", nc.provider)
+			r.OnTeardown(nc.provider, err, hint)
 		}
 	}
 	r.cleanups = nil

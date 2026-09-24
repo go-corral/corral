@@ -91,6 +91,15 @@ func resolve(terminal bool) Style {
 	return NewStyle(terminal && !colorDisabledByEnv(), !unicodeByEnv())
 }
 
+// StyleOf returns the Style for w: StyleFor when w is a file, else no color and the
+// locale's character set.
+func StyleOf(w io.Writer) Style {
+	if f, ok := w.(*os.File); ok {
+		return StyleFor(f)
+	}
+	return resolve(false)
+}
+
 // IsTerminal reports whether f is an interactive terminal (false for a pipe, file, or closed
 // handle, as in tests/CI/`claude -p`). Asks the tty driver via term.IsTerminal, not a
 // char-device mode bit: /dev/null is a char device too, so a mode check would misread
@@ -116,12 +125,25 @@ func unicodeByEnv() bool {
 	return true
 }
 
-// Sep returns the separator between fields on one line.
-func (s Style) Sep() string {
+// asciiText maps the non-ASCII characters corral's own text uses to plain ASCII.
+var asciiText = strings.NewReplacer(
+	"—", "-",
+	"→", "->",
+	"…", "...",
+	"·", "|",
+	"─", "-",
+	"│", "|",
+	"├", "|",
+	"└", "`",
+)
+
+// Text returns t in the stream's character set. The primitives apply it to all text they
+// write, except the command of a Fix.
+func (s Style) Text(t string) string {
 	if s.ASCII {
-		return "|"
+		return asciiText.Replace(t)
 	}
-	return "·"
+	return t
 }
 
 // Glyph returns g in the stream's character set.
@@ -175,8 +197,9 @@ func (s Style) slot(g Glyph) (string, int) {
 // own value right. An Off row is dimmed whole.
 func (s Style) Row(w io.Writer, r Row) {
 	lead, n := s.slot(r.Glyph)
-	pad := strings.Repeat(" ", max(ValueColumn-1-n-utf8.RuneCountInString(r.Label), 1))
-	line := r.Label + pad + r.Value
+	label := s.Text(r.Label)
+	pad := strings.Repeat(" ", max(ValueColumn-1-n-utf8.RuneCountInString(label), 1))
+	line := label + pad + s.Text(r.Value)
 	if r.Glyph == Off {
 		line = s.Dim + line + s.Reset
 	}
@@ -188,21 +211,25 @@ func (s Style) Row(w io.Writer, r Row) {
 
 // Cont writes text on its own line at the value column, under the row above.
 func (s Style) Cont(w io.Writer, text string) {
-	fmt.Fprintf(w, "%s%s\n", strings.Repeat(" ", ValueColumn-1), text)
+	fmt.Fprintf(w, "%s%s\n", strings.Repeat(" ", ValueColumn-1), s.Text(text))
+}
+
+// Fix writes the fix glyph and cmd at the value column, under the row above. cmd is written
+// verbatim in every character set, so a copied command stays exact.
+func (s Style) Fix(w io.Writer, cmd string) {
+	fmt.Fprintf(w, "%s%s %s\n", strings.Repeat(" ", ValueColumn-1), s.Glyph(Fix), cmd)
 }
 
 // Quote writes one line of quoted output at the value column behind a dim gutter.
 func (s Style) Quote(w io.Writer, text string) {
-	bar := "│"
-	if s.ASCII {
-		bar = "|"
-	}
-	s.Cont(w, s.Dim+bar+" "+s.Reset+text)
+	s.Cont(w, s.Dim+"│ "+s.Reset+text)
 }
 
-// Message writes g in the status column followed by free text.
+// Message writes g in the status column followed by free text. Each further line of text
+// starts at the column of the first.
 func (s Style) Message(w io.Writer, g Glyph, text string) {
-	lead, _ := s.slot(g)
+	lead, n := s.slot(g)
+	text = strings.ReplaceAll(s.Text(text), "\n", "\n"+strings.Repeat(" ", n))
 	fmt.Fprintf(w, "%s%s\n", lead, text)
 }
 
@@ -256,6 +283,9 @@ func (s Style) Header(w io.Writer, version string, verdict []string, rollup []Ro
 			beside = append(beside, strings.Repeat(" ", RollupLabelWidth)+s.Dim+r.Reason+s.Reset)
 		}
 	}
+	for i, b := range beside {
+		beside[i] = s.Text(b)
+	}
 	s.mark(w, beside)
 }
 
@@ -265,11 +295,12 @@ func (s Style) Rule(w io.Writer, title string) {
 	if s.ASCII {
 		line = "-"
 	}
+	title = s.Text(title)
 	fill := max(RuleStop-utf8.RuneCountInString(title)-1, 0)
 	fmt.Fprintf(w, "%s%s%s %s%s%s\n", s.Bold, title, s.Reset, s.Dim, strings.Repeat(line, fill), s.Reset)
 }
 
-// Node is one tree entry. Text is written as given.
+// Node is one tree entry.
 type Node struct {
 	Text     string
 	Children []Node
@@ -277,7 +308,7 @@ type Node struct {
 
 // Tree writes root at indent and its descendants under branch characters.
 func (s Style) Tree(w io.Writer, indent string, root Node) {
-	fmt.Fprintf(w, "%s%s\n", indent, root.Text)
+	fmt.Fprintf(w, "%s%s\n", indent, s.Text(root.Text))
 	s.branches(w, indent, root.Children)
 }
 
@@ -291,7 +322,7 @@ func (s Style) branches(w io.Writer, prefix string, nodes []Node) {
 		if i == len(nodes)-1 {
 			branch, next = last, "    "
 		}
-		fmt.Fprintf(w, "%s%s%s\n", prefix, branch, n.Text)
+		fmt.Fprintf(w, "%s%s%s\n", prefix, branch, s.Text(n.Text))
 		s.branches(w, prefix+next, n.Children)
 	}
 }

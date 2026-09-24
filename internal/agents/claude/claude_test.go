@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-corral/corral/internal/agents/spec"
+	"github.com/go-corral/corral/internal/health"
 )
 
 func TestClaudeIdentity(t *testing.T) {
@@ -205,6 +206,15 @@ func TestClaudeFootprint(t *testing.T) {
 }
 
 // containsLine reports whether any line contains sub. Shared by this package's report assertions.
+// checkValues returns the Value of each check.
+func checkValues(checks []health.Check) []string {
+	out := make([]string, len(checks))
+	for i, c := range checks {
+		out[i] = c.Value
+	}
+	return out
+}
+
 func containsLine(lines []string, sub string) bool {
 	for _, l := range lines {
 		if strings.Contains(l, sub) {

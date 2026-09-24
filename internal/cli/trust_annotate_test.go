@@ -13,16 +13,16 @@ func TestValidateAnnotatesUnapprovedConfig(t *testing.T) {
 	trustRepo(t, "hostname: ok\n") // chdir into an unapproved repo
 
 	var code int
-	out := captureStdout(t, func() { code = cmdValidate(nil) })
+	out := captureStdout(t, func() { code = cmdValidate(nil, "test") })
 	if code != 0 {
 		t.Fatalf("validate must stay usable on unapproved config, got code %d", code)
 	}
-	if !strings.Contains(out, "not approved") {
-		t.Errorf("validate should annotate the unapproved project source:\n%s", out)
+	if !strings.Contains(out, "sources     project not approved\n") || !strings.Contains(out, "  ! project         not approved\n") {
+		t.Errorf("validate should annotate and warn about the unapproved project source:\n%s", out)
 	}
 }
 
-// Successful approvals stay quiet; changed bytes must still prompt a visible notice.
+// Successful approvals raise no warning; changed bytes must still prompt a visible notice.
 func TestValidateHidesApprovedConfig(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -34,21 +34,21 @@ func TestValidateHidesApprovedConfig(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj) // pre-approves the written config
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
-	if strings.Contains(out, "approved") {
-		t.Errorf("an approved source should have no approval annotation:\n%s", out)
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "sources     project approved\n") || strings.Contains(out, "warnings ─") {
+		t.Errorf("an approved source should show its state and raise no warning:\n%s", out)
 	}
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("hostname: changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out = captureStdout(t, func() { cmdValidate(nil) })
-	if !strings.Contains(out, "changed since approval") {
+	out = captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "sources     project changed\n") || !strings.Contains(out, "  ! project         changed since approval\n") {
 		t.Errorf("changed source needs a re-approval notice:\n%s", out)
 	}
 }
 
-// validate lists the session-hook executables with their trust state — attributed to the
-// config path that names each, unreadable files called out instead of annotated.
+// validate lists the session-hook executables attributed to the config path that names each,
+// and warns about each one that is not approved or unreadable.
 func TestValidateAnnotatesHookExecs(t *testing.T) {
 	home, proj := trustRepo(t, "providers:\n  hooks:\n    preStart:\n      10-up:\n        exec: ./up.sh\n      20-gone:\n        exec: ./gone.sh\n        optional: true\n")
 	if err := os.WriteFile(filepath.Join(proj, "up.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -56,14 +56,14 @@ func TestValidateAnnotatesHookExecs(t *testing.T) {
 	}
 	_ = home
 
-	out := captureStdout(t, func() { cmdValidate(nil) })
-	if !strings.Contains(out, "Session-hook executables") {
-		t.Fatalf("validate should list the hook executables:\n%s", out)
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "    hook exec       ~/proj/up.sh\n                    providers.hooks.preStart.10-up\n") {
+		t.Fatalf("validate should list the hook executables with attribution:\n%s", out)
 	}
-	if !strings.Contains(out, "      providers.hooks.preStart.10-up\n") || !strings.Contains(out, "not approved") {
-		t.Errorf("the readable executable should carry attribution and trust state:\n%s", out)
+	if !strings.Contains(out, "  ! hook exec       not approved\n                    ~/proj/up.sh (providers.hooks.preStart.10-up); corral asks on the next run\n") {
+		t.Errorf("the readable executable should carry its trust state:\n%s", out)
 	}
-	if !strings.Contains(out, "unreadable") {
+	if !strings.Contains(out, "  ! hook exec       ~/proj/gone.sh\n                    providers.hooks.preStart.20-gone; open ~/proj/gone.sh: no such file or directory; the launch fails or skips this hook\n") {
 		t.Errorf("the missing executable should be called out as unreadable:\n%s", out)
 	}
 }

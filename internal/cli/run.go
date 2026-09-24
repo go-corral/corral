@@ -20,6 +20,7 @@ import (
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/sandbox"
@@ -94,6 +95,8 @@ func cmdRun(args []string, version string) int {
 	if code, ok := parseFlags(fs, args); !ok {
 		return code
 	}
+	c := report.StyleFor(os.Stderr)
+	warnLines := &lineWriter{w: os.Stderr, c: c, g: report.Attention}
 
 	if *home == "" {
 		h, err := os.UserHomeDir()
@@ -127,14 +130,14 @@ func cmdRun(args []string, version string) int {
 		return fatalf(os.Stderr, "%v", err)
 	}
 	if substituted {
-		fmt.Fprintf(os.Stderr, "corral: launched from home; using a fresh scratch workdir at %s "+
-			"so the whole home tree is not exposed (write your work elsewhere, or cd into a project first)\n", projectSrc)
+		c.Message(os.Stderr, report.Attention, fmt.Sprintf("launched from home; using a fresh scratch workdir at %s "+
+			"so the whole home tree is not exposed (write your work elsewhere, or cd into a project first)", projectSrc))
 	}
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run. Runs before any consumption or mint. --yes is
 	// refused here; --dry-run is exempt.
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, report.StyleFor(os.Stderr)) {
+	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, c) {
 		return 1
 	}
 	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
@@ -202,23 +205,26 @@ func cmdRun(args []string, version string) int {
 	backend := newBackend(backendKind, *bwrapPath, cfg.Sandbox)
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
-	c := report.StyleFor(os.Stderr)
-	warnings := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
-	warnings = append(warnings, resBuiltin.Warnings...)
+	checks := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
+	warnings := slices.Clone(resBuiltin.Warnings)
 	// Startup readiness advisory: each agent reports its own set.
 	if hostHome, herr := os.UserHomeDir(); herr == nil {
 		if a, ok := agents.Lookup(cfg.EffectiveAgent()); ok {
 			self, _ := os.Executable()
-			warnings = append(warnings, a.LaunchWarnings(agents.StatusInput{Home: hostHome, Host: host, Self: self, WorkDir: projectSrc})...)
+			checks = append(checks, a.LaunchWarnings(agents.StatusInput{Home: hostHome, Host: host, Self: self, WorkDir: projectSrc})...)
 		}
 	}
 	// The kill switch is set in the shell asking for a sandboxed session, where corral ignores it.
 	if sandbox.EnvEnabled(sandbox.DisableHooksEnvVar) {
-		warnings = append(warnings, fmt.Sprintf("%s is set in this shell, but it has NO effect inside the sandbox — this session is fully "+
-			"enforced (the switch only disables corral for an agent started WITHOUT `corral run`)", sandbox.DisableHooksEnvVar))
+		checks = append(checks, health.Check{State: health.Warn, Label: "environment", Value: sandbox.DisableHooksEnvVar + " is set in this shell",
+			Reason: "no effect here: this session is enforced; an agent started without corral run is not",
+			Fix:    "unset " + sandbox.DisableHooksEnvVar})
 	}
 	// A preStart session hook's captured stderr renders in the banner's format.
-	active := activeProviders(cfg, *home, host, projectSrc, bannerSessionHookPresenter(os.Stderr, c))
+	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
+	// Registered before the teardown, so it runs after the session-end hooks.
+	defer hookLog.Flush()
+	active := activeProviders(cfg, *home, host, projectSrc, bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
 	command = append(command, fs.Args()...)
 
@@ -262,10 +268,11 @@ func cmdRun(args []string, version string) int {
 		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
 		// so it gets a launch-only row.
 		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
-		writeStartupBanner(os.Stderr, c, cfg, banner, warnings, notices, previewOnly)
+		writeStartupBanner(os.Stderr, c, cfg, banner, checks, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
 		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc))
-		prep, err := backend.Prepare(&spec, os.Stderr)
+		prep, err := backend.Prepare(&spec, warnLines)
+		warnLines.Flush()
 		if err != nil {
 			return fatalf(os.Stderr, "prepare sandbox: %v", err)
 		}
@@ -277,8 +284,8 @@ func cmdRun(args []string, version string) int {
 		fmt.Println(shellQuote(argv))
 		// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
 		if len(previewOnly) > 0 {
-			fmt.Fprintf(os.Stderr, "corral: %d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s\n",
-				len(previewOnly), strings.Join(previewOnly, ", "))
+			c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
+				len(previewOnly), strings.Join(previewOnly, ", ")))
 		}
 		prep.Cleanup()
 		return 0
@@ -291,8 +298,8 @@ func cmdRun(args []string, version string) int {
 	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
 	// Print the banner around the gate and phase-B output, so the providers section renders as
 	// one contiguous block.
-	writeBannerHeader(os.Stderr, c, cfg, banner, warnings)
-	if len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
+	writeBannerHeader(os.Stderr, c, cfg, banner, checks, warnings)
+	if len(checks)+len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
 		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
 	}
 
@@ -304,6 +311,7 @@ func cmdRun(args []string, version string) int {
 	mintCtx, stopMint := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stopMint()
 	res, err := resolveProviders(mintCtx, sess, active)
+	hookLog.Flush()
 	if err != nil {
 		return fatalf(os.Stderr, "providers: %v", err)
 	}
@@ -343,7 +351,8 @@ func cmdRun(args []string, version string) int {
 
 	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-exec
 	// chdir.
-	prep, err = backend.Prepare(&spec, os.Stderr)
+	prep, err = backend.Prepare(&spec, warnLines)
+	warnLines.Flush()
 	if err != nil {
 		return fatalf(os.Stderr, "prepare sandbox: %v", err)
 	}
@@ -411,13 +420,14 @@ func sameDir(a, b string) bool {
 // runSupervised launches the sandbox as a child, forwards signals, waits for exit, then runs
 // session-end hooks and provider cleanup. Returns the child's exit code.
 func runSupervised(launcherAbs string, argv []string, res *providers.Resolved) int {
+	c := report.StyleFor(os.Stderr)
 	// Surface a teardown confirmation per provider as it is cleaned up.
-	res.LogWriter = os.Stderr
+	res.OnTeardown = teardownReporter(os.Stderr, c)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 		defer cancel()
 		if err := res.Cleanup(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "corral: provider cleanup: %v\n", err)
+			c.Message(os.Stderr, report.Attention, fmt.Sprintf("provider cleanup: %v", err))
 		}
 	}()
 
@@ -454,7 +464,7 @@ func runSupervised(launcherAbs string, argv []string, res *providers.Resolved) i
 // runPostSessionHooks runs the resolved providers' session-end hooks warn-only.
 func runPostSessionHooks(res *providers.Resolved, exit providers.SessionExit) {
 	if err := res.RunPostSession(context.Background(), exit); err != nil {
-		fmt.Fprintf(os.Stderr, "corral: post-session hooks: %v\n", err)
+		report.StyleFor(os.Stderr).Message(os.Stderr, report.Attention, fmt.Sprintf("post-session hooks: %v", err))
 	}
 }
 
@@ -465,12 +475,25 @@ func abortAfterMint(res *providers.Resolved) {
 	if res == nil {
 		return
 	}
-	res.LogWriter = os.Stderr
+	c := report.StyleFor(os.Stderr)
+	res.OnTeardown = teardownReporter(os.Stderr, c)
 	runPostSessionHooks(res, providers.SessionExit{})
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	if err := res.Cleanup(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "corral: provider cleanup: %v\n", err)
+		c.Message(os.Stderr, report.Attention, fmt.Sprintf("provider cleanup: %v", err))
+	}
+}
+
+// teardownReporter renders each provider teardown as a row: confirmed, or failed with the
+// residual-credential risk.
+func teardownReporter(w io.Writer, c report.Style) func(string, error, string) {
+	return func(provider string, err error, hint string) {
+		if err != nil {
+			c.Row(w, report.Row{Glyph: report.Blocked, Label: provider, Value: "teardown failed", Reason: hint})
+			return
+		}
+		c.Row(w, report.Row{Glyph: report.Ready, Label: provider, Value: "minted credentials torn down"})
 	}
 }
 

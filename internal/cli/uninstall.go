@@ -63,17 +63,28 @@ type uninstallOptions struct {
 
 // runUninstall is the testable core: collect the footprint, then either print it or run removal.
 func runUninstall(opts uninstallOptions, in io.Reader, out io.Writer) int {
+	c := opts.Colors
+	ctx := "footprint on this system"
+	if opts.Apply {
+		ctx = ""
+	}
+	writeTitle(out, c, "corral uninstall", ctx)
 	// Warn-and-allow: inside the sandbox every path resolves against the sandbox-private $HOME.
 	if sandbox.InsideCorral() {
-		writeWarnings(out, opts.Colors, []string{
+		writeWarnings(out, c, []string{
 			"running inside a corral sandbox — the paths below resolve to the sandbox-private $HOME, not the host's. Run `corral uninstall` on the host to see (or remove) the real installation.",
 		})
 	}
 
 	fp := collectUninstallFootprint(opts)
 	if !opts.Apply {
-		printUninstallFootprint(out, opts.Colors, fp)
-		fmt.Fprintln(out, "\nnothing was deleted. `corral uninstall --apply` removes the enforcement, cache, state and audit entries above.")
+		if fp.ConfigErr != nil {
+			writeWarnings(out, c, []string{fmt.Sprintf("global config is invalid (%v) — reporting corral's default locations instead", fp.ConfigErr)})
+		}
+		printUninstallFootprint(out, c, fp)
+		fmt.Fprintln(out)
+		c.Message(out, report.None, c.Dim+"nothing was deleted"+c.Reset)
+		c.Fix(out, "corral uninstall --apply")
 		return 0
 	}
 	// One buffered reader serves all phase prompts.
@@ -292,28 +303,25 @@ func collectAuditFootprint(cfg *config.Config, home string, host map[string]stri
 
 // --- manifest rendering ---
 
-// uninstallIndent / uninstallLabelW define the manifest's aligned grid.
-const (
-	uninstallIndent = "  "
-	uninstallLabelW = 10
-)
-
-// uninstallRow prints one labeled manifest row.
-func uninstallRow(w io.Writer, c report.Style, label, text string) {
-	fmt.Fprintf(w, "%s%s%-*s%s%s\n", uninstallIndent, c.Dim, uninstallLabelW, label+":", c.Reset, text)
+// uninstallSection opens a section: a blank line, the rule, and a dim note when set.
+func uninstallSection(w io.Writer, c report.Style, title, note string) {
+	fmt.Fprintln(w)
+	c.Rule(w, title)
+	if note != "" {
+		c.Message(w, report.None, c.Dim+note+c.Reset)
+	}
 }
 
-// uninstallCont prints a continuation line aligned under a row's text column.
-func uninstallCont(w io.Writer, text string) {
-	fmt.Fprintf(w, "%s%s%s\n", uninstallIndent, strings.Repeat(" ", uninstallLabelW), text)
+// presence returns the footprint glyph for an item that exists or not.
+func presence(exists bool) report.Glyph {
+	if exists {
+		return report.On
+	}
+	return report.Off
 }
 
 // printUninstallFootprint renders the read-only manifest.
 func printUninstallFootprint(out io.Writer, c report.Style, fp uninstallFootprint) {
-	fmt.Fprintf(out, "%scorral's footprint on this system%s\n", c.Bold, c.Reset)
-	if fp.ConfigErr != nil {
-		writeWarnings(out, c, []string{fmt.Sprintf("global config is invalid (%v) — reporting corral's default locations instead", fp.ConfigErr)})
-	}
 	reportUninstallEnforcement(out, c, fp)
 	reportUninstallState(out, c, fp)
 	reportUninstallKept(out, c, fp)
@@ -321,83 +329,84 @@ func printUninstallFootprint(out io.Writer, c report.Style, fp uninstallFootprin
 
 // reportUninstallEnforcement lists, per known agent, whether corral's enforcement is registered.
 func reportUninstallEnforcement(out io.Writer, c report.Style, fp uninstallFootprint) {
-	fmt.Fprintln(out, "\nEnforcement (corral's registration in each agent's own config):")
+	uninstallSection(out, c, "enforcement", "corral's registration in each agent's own config")
 	for _, a := range fp.Agents {
+		dir := abbrevHome(a.ConfigDir, fp.Home)
 		switch {
 		case a.Err != nil:
-			uninstallRow(out, c, a.Name, fmt.Sprintf("cannot determine (%v)", a.Err))
+			c.Row(out, report.Row{Glyph: report.Attention, Label: a.Name, Value: fmt.Sprintf("cannot determine (%v)", a.Err)})
 		case a.Registered:
-			uninstallRow(out, c, a.Name, fmt.Sprintf("%sREGISTERED%s — config dir %s", c.Yellow, c.Reset, abbrevHome(a.ConfigDir, fp.Home)))
+			c.Row(out, report.Row{Glyph: report.On, Label: a.Name, Value: "registered — config dir " + dir})
 		default:
-			uninstallRow(out, c, a.Name, "not registered — config dir "+abbrevHome(a.ConfigDir, fp.Home))
+			c.Row(out, report.Row{Glyph: report.Off, Label: a.Name, Value: "not registered — config dir " + dir})
 		}
 		for _, m := range a.Messages {
 			// abbrevText, not abbrevHome: an agent's message embeds paths mid-sentence.
-			uninstallCont(out, strings.TrimSuffix(abbrevText(m, fp.Home), ":"))
+			c.Cont(out, c.Dim+strings.TrimSuffix(abbrevText(m, fp.Home), ":")+c.Reset)
 		}
 	}
 }
 
 // reportUninstallState lists corral's own state: cache, trust/state dir, and audit logs.
 func reportUninstallState(out io.Writer, c report.Style, fp uninstallFootprint) {
-	fmt.Fprintln(out, "\nState (removed by `--apply`):")
+	uninstallSection(out, c, "state", "removed by --apply")
 
+	cache := abbrevHome(fp.Cache.Dir, fp.Home)
 	if !fp.Cache.Exists {
-		uninstallRow(out, c, "cache", abbrevHome(fp.Cache.Dir, fp.Home)+" — not present")
-	} else {
-		uninstallRow(out, c, "cache", abbrevHome(fp.Cache.Dir, fp.Home))
-		if len(fp.Cache.Entries) == 0 {
-			uninstallCont(out, "(empty)")
-		}
-		for _, e := range fp.Cache.Entries {
-			uninstallCont(out, fmt.Sprintf("%-24s %9s", e.Name, humanSize(e.Size)))
-		}
+		cache += " — not present"
+	}
+	c.Row(out, report.Row{Glyph: presence(fp.Cache.Exists), Label: "cache", Value: cache})
+	if fp.Cache.Exists && len(fp.Cache.Entries) == 0 {
+		c.Cont(out, "(empty)")
+	}
+	for _, e := range fp.Cache.Entries {
+		c.Cont(out, fmt.Sprintf("%-24s %9s", e.Name, humanSize(e.Size)))
 	}
 
-	stateText := abbrevHome(fp.State.Dir, fp.Home)
+	state := abbrevHome(fp.State.Dir, fp.Home)
 	if !fp.State.Exists {
-		stateText += " — not present"
+		state += " — not present"
 	} else {
-		stateText += fmt.Sprintf(" — %d approval record(s)", fp.State.Records)
+		state += fmt.Sprintf(" — %d approval record(s)", fp.State.Records)
 	}
-	uninstallRow(out, c, "state", stateText)
+	c.Row(out, report.Row{Glyph: presence(fp.State.Exists), Label: "state", Value: state})
 
 	for _, af := range fp.Audit {
 		text := fmt.Sprintf("%s (%s)", abbrevHome(af.Path, fp.Home), af.Source)
 		if !af.Exists {
-			uninstallRow(out, c, "audit", text+" — not present")
+			c.Row(out, report.Row{Glyph: report.Off, Label: "audit", Value: text + " — not present"})
 			continue
 		}
-		text += fmt.Sprintf(" — %s, %d rotated backup(s)", humanSize(af.Size), len(af.Backups))
+		detail := fmt.Sprintf("%s, %d rotated backup(s)", humanSize(af.Size), len(af.Backups))
 		if af.LockExists {
-			text += ", + " + filepath.Base(af.Lock)
+			detail += ", + " + filepath.Base(af.Lock)
 		}
-		uninstallRow(out, c, "audit", text)
+		c.Row(out, report.Row{Glyph: report.On, Label: "audit", Value: text, Reason: detail})
 	}
 }
 
 // reportUninstallKept prints the print-only section: things uninstall never deletes.
 func reportUninstallKept(out io.Writer, c report.Style, fp uninstallFootprint) {
-	fmt.Fprintln(out, "\nKept — uninstall never deletes these (remove them yourself if you want them gone):")
+	uninstallSection(out, c, "kept", "uninstall never deletes these; remove them yourself if you want them gone")
 
 	if fp.BinaryErr != nil {
-		uninstallRow(out, c, "binary", fmt.Sprintf("cannot resolve this executable (%v)", fp.BinaryErr))
+		c.Row(out, report.Row{Glyph: report.Attention, Label: "binary", Value: fmt.Sprintf("cannot resolve this executable (%v)", fp.BinaryErr)})
 	} else {
-		uninstallRow(out, c, "binary", abbrevHome(fp.Binary, fp.Home))
-		uninstallCont(out, "rm "+fp.Binary)
+		c.Row(out, report.Row{Glyph: report.On, Label: "binary", Value: abbrevHome(fp.Binary, fp.Home)})
+		c.Fix(out, shellQuote([]string{"rm", fp.Binary}))
 	}
-	uninstallCont(out, "and drop any `alias claude='corral run --'` from your shell rc (~/.bashrc, ~/.zshrc, …)")
+	c.Cont(out, c.Dim+"and drop any `alias claude='corral run --'` from your shell rc (~/.bashrc, ~/.zshrc, …)"+c.Reset)
 
 	if fp.GlobalConfigExists {
-		uninstallRow(out, c, "config", abbrevHome(fp.GlobalConfig, fp.Home))
-		uninstallCont(out, "rm "+fp.GlobalConfig)
+		c.Row(out, report.Row{Glyph: report.On, Label: "config", Value: abbrevHome(fp.GlobalConfig, fp.Home)})
+		c.Fix(out, shellQuote([]string{"rm", fp.GlobalConfig}))
 	} else {
-		uninstallRow(out, c, "config", abbrevHome(fp.GlobalConfig, fp.Home)+" — not present")
+		c.Row(out, report.Row{Glyph: report.Off, Label: "config", Value: abbrevHome(fp.GlobalConfig, fp.Home) + " — not present"})
 	}
 
-	uninstallRow(out, c, "plugin", "the corral-helper Claude Code plugin, if you installed it")
-	uninstallCont(out, "claude plugin uninstall corral-helper@corral")
-	uninstallCont(out, "claude plugin marketplace remove corral")
+	c.Row(out, report.Row{Label: "plugin", Value: "the corral-helper Claude Code plugin, if you installed it"})
+	c.Fix(out, "claude plugin uninstall corral-helper@corral")
+	c.Fix(out, "claude plugin marketplace remove corral")
 }
 
 // humanSize formats a byte count for the manifest (SI units).
@@ -420,18 +429,22 @@ func humanSize(n int64) string {
 
 // applyUninstall runs the removal phases in order, each behind its own confirmation.
 func applyUninstall(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) int {
+	c := opts.Colors
 	failed := uninstallGCPhase(opts, fp, in, out)
-	failed = deregisterPhase(opts, fp, in, out) || failed
-	failed = cachePhase(opts, fp, in, out) || failed
-	failed = statePhase(opts, fp, in, out) || failed
+	failed = deregisterPhase(opts, in, out) || failed
+	failed = removePhase(opts, in, out, "cache", fp.Cache.Dir, fp.Cache.Exists,
+		fmt.Sprintf("%d entr%s", len(fp.Cache.Entries), plural(len(fp.Cache.Entries), "y", "ies"))) || failed
+	failed = removePhase(opts, in, out, "state directory", fp.State.Dir, fp.State.Exists,
+		fmt.Sprintf("%d approval record(s)", fp.State.Records)) || failed
 	failed = auditPhase(opts, fp, in, out) || failed
 
-	reportUninstallKept(out, opts.Colors, fp)
+	reportUninstallKept(out, c, fp)
+	fmt.Fprintln(out)
 	if failed {
-		fmt.Fprintln(out, "\ncorral uninstall: finished with errors (see above).")
+		c.Message(out, report.Blocked, "finished with errors (see above)")
 		return 1
 	}
-	fmt.Fprintln(out, "\ncorral uninstall: done.")
+	c.Message(out, report.Ready, "done")
 	return 0
 }
 
@@ -444,31 +457,33 @@ func confirmPhase(opts uninstallOptions, in io.Reader, out io.Writer, prompt str
 }
 
 // skipped prints the visible "declined" marker.
-func skipped(out io.Writer) { fmt.Fprintln(out, uninstallIndent+"skipped.") }
+func skipped(out io.Writer, c report.Style) { c.Message(out, report.Off, "skipped") }
 
 // uninstallGCPhase reaps orphaned provider resources before the rest of the removal, while
 // the config is still readable. Delegates to runGC (its own preview and confirmation). A failure
 // is a warning, not a stop.
 func uninstallGCPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
-	fmt.Fprintln(out, "\nOrphaned provider resources:")
+	c := opts.Colors
+	uninstallSection(out, c, "orphaned resources", "")
 	if fp.Cfg == nil {
-		fmt.Fprintf(out, "%scannot check: %v — reap them with `corral gc` once the config is fixed.\n", uninstallIndent, fp.ConfigErr)
+		c.Message(out, report.Attention, fmt.Sprintf("cannot check: %v", fp.ConfigErr))
+		c.Cont(out, c.Dim+"reap them with `corral gc` once the config is fixed"+c.Reset)
 		return true
 	}
 	reapers := providers.Reapers(gcCandidates(fp.Cfg, opts.Home, opts.Host))
-	if code := runGC(context.Background(), reapers, gcOptions{Yes: opts.Yes}, in, out); code != 0 {
-		fmt.Fprintln(out, uninstallIndent+"warning: orphaned resources may remain — continuing with the local footprint.")
+	if code := runGC(context.Background(), reapers, gcOptions{Yes: opts.Yes, Colors: c}, in, out); code != 0 {
+		c.Message(out, report.Attention, "orphaned resources may remain; continuing with the local footprint")
 		return true
 	}
 	return false
 }
 
 // deregisterPhase removes corral's enforcement registration from every known agent.
-func deregisterPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
-	fmt.Fprintln(out, "\nDe-register enforcement:")
-	if !confirmPhase(opts, in, out, fmt.Sprintf("%sDe-register corral's enforcement for %s? [y/N] ",
-		uninstallIndent, strings.Join(agents.Known(), ", "))) {
-		skipped(out)
+func deregisterPhase(opts uninstallOptions, in io.Reader, out io.Writer) bool {
+	c := opts.Colors
+	uninstallSection(out, c, "de-register", "")
+	if !confirmPhase(opts, in, out, fmt.Sprintf("De-register corral's enforcement for %s? [y/N] ", strings.Join(agents.Known(), ", "))) {
+		skipped(out, c)
 		return false
 	}
 	failed := false
@@ -477,65 +492,58 @@ func deregisterPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader,
 		if !ok {
 			continue
 		}
-		report, err := a.Sync(agents.SyncInput{Home: opts.Home, Host: opts.Host, Remove: true})
+		res, err := a.Sync(agents.SyncInput{Home: opts.Home, Host: opts.Host, Remove: true})
 		if err != nil {
-			fmt.Fprintf(out, "%s%s: %v\n", uninstallIndent, name, err)
+			c.Row(out, report.Row{Glyph: report.Blocked, Label: name, Value: err.Error()})
 			failed = true
 			continue
 		}
-		for _, m := range report.Messages {
-			fmt.Fprintf(out, "%s%s: %s\n", uninstallIndent, name, m)
+		for i, m := range res.Messages {
+			if i == 0 {
+				c.Row(out, report.Row{Glyph: report.Ready, Label: name, Value: abbrevText(m, opts.Home)})
+				continue
+			}
+			c.Cont(out, abbrevText(m, opts.Home))
 		}
-		if report.Diff != nil {
-			fmt.Fprint(out, unifiedDiff(report.Diff.Before, report.Diff.After, report.Diff.FromLabel, report.Diff.ToLabel, opts.Colors))
+		if res.Diff != nil {
+			fmt.Fprint(out, unifiedDiff(res.Diff.Before, res.Diff.After, res.Diff.FromLabel, res.Diff.ToLabel, c))
 		}
 	}
 	return failed
 }
 
-// cachePhase deletes corral's cache dir wholesale.
-func cachePhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
-	fmt.Fprintln(out, "\nCache:")
-	if !fp.Cache.Exists {
-		fmt.Fprintf(out, "%s%s — not present, nothing to remove.\n", uninstallIndent, abbrevHome(fp.Cache.Dir, opts.Home))
+// removePhase deletes one of corral's directories wholesale. what describes its contents
+// in the prompt.
+func removePhase(opts uninstallOptions, in io.Reader, out io.Writer, section, dir string, exists bool, what string) bool {
+	c := opts.Colors
+	uninstallSection(out, c, section, "")
+	path := abbrevHome(dir, opts.Home)
+	if !exists {
+		c.Message(out, report.Off, path+" not present")
 		return false
 	}
-	if !confirmPhase(opts, in, out, fmt.Sprintf("%sDelete %s (%d entr%s)? [y/N] ",
-		uninstallIndent, abbrevHome(fp.Cache.Dir, opts.Home), len(fp.Cache.Entries), plural(len(fp.Cache.Entries), "y", "ies"))) {
-		skipped(out)
+	if !confirmPhase(opts, in, out, fmt.Sprintf("Delete %s (%s)? [y/N] ", path, what)) {
+		skipped(out, c)
 		return false
 	}
-	if err := os.RemoveAll(fp.Cache.Dir); err != nil {
-		fmt.Fprintf(out, "%scannot delete %s: %v\n", uninstallIndent, abbrevHome(fp.Cache.Dir, opts.Home), err)
-		return true
-	}
-	fmt.Fprintf(out, "%sdeleted %s\n", uninstallIndent, abbrevHome(fp.Cache.Dir, opts.Home))
-	return false
+	return deleteReported(out, c, path, os.RemoveAll(dir))
 }
 
-// statePhase deletes corral's state dir — the trust store's approval records.
-func statePhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
-	fmt.Fprintln(out, "\nState directory:")
-	if !fp.State.Exists {
-		fmt.Fprintf(out, "%s%s — not present, nothing to remove.\n", uninstallIndent, abbrevHome(fp.State.Dir, opts.Home))
-		return false
-	}
-	if !confirmPhase(opts, in, out, fmt.Sprintf("%sDelete %s (%d approval record(s))? [y/N] ",
-		uninstallIndent, abbrevHome(fp.State.Dir, opts.Home), fp.State.Records)) {
-		skipped(out)
-		return false
-	}
-	if err := os.RemoveAll(fp.State.Dir); err != nil {
-		fmt.Fprintf(out, "%scannot delete %s: %v\n", uninstallIndent, abbrevHome(fp.State.Dir, opts.Home), err)
+// deleteReported reports one deletion and whether it failed.
+func deleteReported(out io.Writer, c report.Style, path string, err error) bool {
+	if err != nil {
+		c.Message(out, report.Blocked, "cannot delete "+path)
+		c.Cont(out, c.Dim+err.Error()+c.Reset)
 		return true
 	}
-	fmt.Fprintf(out, "%sdeleted %s\n", uninstallIndent, abbrevHome(fp.State.Dir, opts.Home))
+	c.Message(out, report.Ready, "deleted "+path)
 	return false
 }
 
 // auditPhase deletes each existing audit log with its rotated backups and lock file.
 func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
-	fmt.Fprintln(out, "\nAudit logs:")
+	c := opts.Colors
+	uninstallSection(out, c, "audit logs", "")
 	var present []auditFootprint
 	for _, af := range fp.Audit {
 		if af.Exists {
@@ -543,7 +551,7 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 		}
 	}
 	if len(present) == 0 {
-		fmt.Fprintln(out, uninstallIndent+"no audit log present, nothing to remove.")
+		c.Message(out, report.Off, "no audit log present")
 		return false
 	}
 	files := 0
@@ -553,9 +561,9 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 			files++
 		}
 	}
-	if !confirmPhase(opts, in, out, fmt.Sprintf("%sDelete %d audit log(s) and their rotated backups — %d file(s) total? [y/N] ",
-		uninstallIndent, len(present), files)) {
-		skipped(out)
+	if !confirmPhase(opts, in, out, fmt.Sprintf("Delete %d audit log(s) and their rotated backups — %d file(s) total? [y/N] ",
+		len(present), files)) {
+		skipped(out, c)
 		return false
 	}
 	failed := false
@@ -565,13 +573,12 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 			targets = append(targets, af.Lock)
 		}
 		for _, t := range targets {
+			err := os.Remove(t)
 			// A file that vanished under us is the outcome we wanted.
-			if err := os.Remove(t); err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(out, "%scannot delete %s: %v\n", uninstallIndent, abbrevHome(t, opts.Home), err)
-				failed = true
-				continue
+			if os.IsNotExist(err) {
+				err = nil
 			}
-			fmt.Fprintf(out, "%sdeleted %s\n", uninstallIndent, abbrevHome(t, opts.Home))
+			failed = deleteReported(out, c, abbrevHome(t, opts.Home), err) || failed
 		}
 	}
 	return failed

@@ -31,6 +31,8 @@ func cmdUpdate(args []string, version string) int {
 	}
 
 	out := os.Stdout
+	c := report.StyleFor(out)
+	writeTitle(out, c, "corral update", "")
 	u, err := updaterFor(version)
 	if err != nil {
 		return fatalf(os.Stderr, "%v", err)
@@ -55,23 +57,22 @@ func cmdUpdate(args []string, version string) int {
 	cmp, comparable := selfupdate.Compare(latest, version)
 	switch {
 	case comparable && cmp == 0:
-		fmt.Fprintf(out, "corral is up to date (%s)\n", version)
+		c.Message(out, report.Ready, fmt.Sprintf("up to date (%s)", version))
 		return 0
 	case comparable && cmp < 0:
-		// Running binary is ahead of the latest published release.
-		fmt.Fprintf(out, "corral %s is newer than the latest release (%s); nothing to update\n", version, latest)
+		c.Message(out, report.Ready, fmt.Sprintf("%s is newer than the latest release %s", version, latest))
 		return 0
 	}
 
 	// An update is installable: either latest > current, or current is not a comparable
 	// release version (a "dev" build). Report the situation, then act unless --check.
 	if comparable {
-		fmt.Fprintf(out, "a newer corral is available: %s → %s\n", version, latest)
+		c.Message(out, report.Attention, fmt.Sprintf("%s → %s available", version, latest))
 	} else {
-		fmt.Fprintf(out, "corral %q is not a release build; the latest release is %s\n", version, latest)
+		c.Message(out, report.Attention, fmt.Sprintf("%q is not a release build; the latest release is %s", version, latest))
 	}
 	if *check {
-		fmt.Fprintln(out, "run 'corral update' to install it")
+		c.Fix(out, "corral update")
 		return 0
 	}
 
@@ -80,17 +81,21 @@ func cmdUpdate(args []string, version string) int {
 		return fatalf(os.Stderr, "locate the running binary: %v", err)
 	}
 
-	fmt.Fprintf(out, "this will replace %s\n", target)
+	c.Row(out, report.Row{Label: "binary", Value: target})
 	if !confirmUpdate(*yes, os.Stdin, out) {
 		return fatalf(os.Stderr, "update aborted (pass --yes to skip the prompt, or to install non-interactively)")
 	}
 
-	newVersion, err := u.Apply(ctx, rel, target, os.Stderr)
+	progress := &lineWriter{w: os.Stderr, c: report.StyleFor(os.Stderr), g: report.None}
+	newVersion, err := u.Apply(ctx, rel, target, progress)
+	progress.Flush()
 	if err != nil {
 		return fatalf(os.Stderr, "update: %v", err)
 	}
-	fmt.Fprintf(out, "corral updated to %s\n", newVersion)
-	fmt.Fprintln(out, "re-run 'corral sync' if a release note says the hook registration changed")
+	c.Message(out, report.Ready, "updated to "+newVersion)
+	c.Cont(out, c.Dim+"re-run corral sync if a release note says the hook"+c.Reset)
+	c.Cont(out, c.Dim+"registration changed"+c.Reset)
+	c.Fix(out, "corral sync")
 	return 0
 }
 

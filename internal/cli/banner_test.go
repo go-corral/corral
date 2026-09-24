@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/block"
 	"github.com/go-corral/corral/internal/providers/paths"
@@ -21,12 +23,14 @@ func TestSessionWarnings(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Providers.Docker.Enabled = true
 	cfg.Providers.Paths.RW = []string{"/usr"}
-	w := strings.Join(sessionWarnings(cfg, roTargets), "\n")
-	if !strings.Contains(w, "docker") || !strings.Contains(w, "root-equivalent") {
-		t.Errorf("expected a docker root-equivalent warning, got: %q", w)
+	want := []health.Check{
+		{State: health.Warn, Label: "docker", Value: "grants root-equivalent host access",
+			Reason: "a sandboxed process can mount the host filesystem, run privileged containers, and escape isolation"},
+		{State: health.Warn, Label: "paths.rw", Value: `"/usr" re-exposes "/usr" as writable`,
+			Reason: "it overlaps a baseline read-only system path and overrides corral's default protection"},
 	}
-	if !strings.Contains(w, "/usr") || !strings.Contains(w, "writable") {
-		t.Errorf("expected a baseline-shadow warning for /usr, got: %q", w)
+	if got := sessionWarnings(cfg, roTargets); !slices.Equal(got, want) {
+		t.Errorf("sessionWarnings = %+v, want %+v", got, want)
 	}
 
 	// Regression guard (review finding): a grant nested under a read-only baseline
@@ -34,9 +38,8 @@ func TestSessionWarnings(t *testing.T) {
 	// not just a grant that equals or contains the RO target.
 	child := &config.Config{}
 	child.Providers.Paths.RW = []string{"/usr/local/bin"}
-	cw := strings.Join(sessionWarnings(child, roTargets), "\n")
-	if !strings.Contains(cw, "/usr/local/bin") || !strings.Contains(cw, "writable") {
-		t.Errorf("a grant nested under a read-only baseline path must warn, got: %q", cw)
+	if cw := sessionWarnings(child, roTargets); len(cw) != 1 || cw[0].Value != `"/usr/local/bin" re-exposes "/usr" as writable` {
+		t.Errorf("a grant nested under a read-only baseline path must warn, got: %+v", cw)
 	}
 
 	// A clean config (no docker, no overlapping grant) warns about nothing.
@@ -59,8 +62,10 @@ func TestSessionWarningsMacPrivateNormalization(t *testing.T) {
 		t.Errorf("each /var|/etc|/tmp grant must overlap its /private-normalized target; want 3 warnings, got %d: %v", len(warnings), warnings)
 	}
 	// The message must echo the grant as written, not the folded /private form.
-	if w := strings.Join(warnings, "\n"); strings.Contains(w, `paths.rw "/private/`) {
-		t.Errorf("the advisory must echo the grant as written, not /private-folded: %q", w)
+	for _, w := range warnings {
+		if strings.HasPrefix(w.Value, `"/private/`) {
+			t.Errorf("the advisory must echo the grant as written, not /private-folded: %q", w.Value)
+		}
 	}
 }
 
@@ -97,6 +102,13 @@ func bannerFixture() (*config.Config, bannerInfo) {
 	}
 }
 
+// bannerChecks is one config warning with a reason and one with a fix.
+var bannerChecks = []health.Check{
+	{State: health.Warn, Label: "paths.ro", Value: `"/home/u/.agents/x" is covered by "/home/u/.agents"`,
+		Reason: "read-write grants win where they overlap, so this grant has no effect"},
+	{State: health.Warn, Label: "kubernetes", Value: `role "edit" is not a known read-only role`, Fix: "corral doctor"},
+}
+
 var bannerNotices = []providers.Notice{
 	{Provider: "home", Text: "private $HOME at /home/u/.cache/corral/home-x"},
 	{Provider: "aiignore", Text: "3 pattern(s) from .aiignore"},
@@ -106,7 +118,7 @@ var bannerNotices = []providers.Notice{
 func TestWriteStartupBanner(t *testing.T) {
 	cfg, info := bannerFixture()
 	var b strings.Builder
-	writeStartupBanner(&b, report.NewStyle(false, false), cfg, info, []string{"heads up"}, bannerNotices, []string{"hooks"})
+	writeStartupBanner(&b, report.NewStyle(false, false), cfg, info, bannerChecks, []string{"heads up"}, bannerNotices, []string{"hooks"})
 	want := strings.Join([]string{
 		"",
 		"  ████████████  corral v0.3.0   profile offline",
@@ -120,6 +132,10 @@ func TestWriteStartupBanner(t *testing.T) {
 		"                policy      audit events in ~/.claude/corral-audit.jsonl",
 		"                            ! bash-mode is not checked or secret-scanned",
 		"",
+		`  ! paths.ro        "~/.agents/x" is covered by "~/.agents"`,
+		"                    read-write grants win where they overlap, so this grant has no effect",
+		`  ! kubernetes      role "edit" is not a known read-only role`,
+		"                    → corral doctor",
 		"  ! heads up",
 		"",
 		"providers " + strings.Repeat("─", 56),
@@ -140,7 +156,7 @@ func TestWriteStartupBannerASCII(t *testing.T) {
 	cfg, info := bannerFixture()
 	c := report.NewStyle(false, true)
 	var b strings.Builder
-	writeStartupBanner(&b, c, cfg, info, []string{"heads up"}, bannerNotices, []string{"hooks"})
+	writeStartupBanner(&b, c, cfg, info, bannerChecks, []string{"heads up"}, bannerNotices, []string{"hooks"})
 	bannerSessionHookPresenter(&b, c)("preStart", "10-a", "hi\n", true)
 	want := strings.Join([]string{
 		"",
@@ -155,6 +171,10 @@ func TestWriteStartupBannerASCII(t *testing.T) {
 		"                policy      audit events in ~/.claude/corral-audit.jsonl",
 		"                            ! bash-mode is not checked or secret-scanned",
 		"",
+		`[!]  paths.ro       "~/.agents/x" is covered by "~/.agents"`,
+		"                    read-write grants win where they overlap, so this grant has no effect",
+		`[!]  kubernetes     role "edit" is not a known read-only role`,
+		"                    -> corral doctor",
 		"[!]  heads up",
 		"",
 		"providers " + strings.Repeat("-", 56),
@@ -181,7 +201,7 @@ func TestBannerHeaderBodySplit(t *testing.T) {
 	cfg, info := bannerFixture()
 
 	var head strings.Builder
-	writeBannerHeader(&head, report.NewStyle(false, false), cfg, info, []string{"heads up"})
+	writeBannerHeader(&head, report.NewStyle(false, false), cfg, info, nil, []string{"heads up"})
 	h := head.String()
 	if !strings.HasSuffix(h, "\n  ! heads up\n") {
 		t.Errorf("header must end with the warnings, so the gate prompt follows them:\n%s", h)
@@ -208,7 +228,7 @@ func TestBannerHeaderBodySplit(t *testing.T) {
 // the agent writes to the host $HOME.
 func TestBannerRollupOptionalRows(t *testing.T) {
 	var b strings.Builder
-	writeBannerHeader(&b, report.NewStyle(false, false), &config.Config{}, bannerInfo{version: "dev", home: "/home/u", workdir: "/w", auditLog: "/a.jsonl"}, nil)
+	writeBannerHeader(&b, report.NewStyle(false, false), &config.Config{}, bannerInfo{version: "dev", home: "/home/u", workdir: "/w", auditLog: "/a.jsonl"}, nil, nil)
 	out := b.String()
 	for _, absent := range []string{"writable", "read-only", "profile"} {
 		if strings.Contains(out, absent) {
@@ -239,7 +259,7 @@ func TestBannerFitsLineMax(t *testing.T) {
 	}}}
 	for _, c := range []report.Style{report.NewStyle(false, false), report.NewStyle(false, true)} {
 		var b strings.Builder
-		writeBannerHeader(&b, c, cfg, bannerInfo{version: "0.3.0", latest: "0.4.0", home: "/home/u", workdir: "/home/u/src/x", auditLog: "/home/u/.claude/corral-audit.jsonl"}, nil)
+		writeBannerHeader(&b, c, cfg, bannerInfo{version: "0.3.0", latest: "0.4.0", home: "/home/u", workdir: "/home/u/src/x", auditLog: "/home/u/.claude/corral-audit.jsonl"}, nil, nil)
 		for _, ln := range strings.Split(b.String(), "\n") {
 			if n := utf8.RuneCountInString(ln); n > report.LineMax {
 				t.Errorf("line is %d columns, want at most %d: %q", n, report.LineMax, ln)
@@ -263,7 +283,7 @@ func TestBannerUpdateVerdict(t *testing.T) {
 		{report.NewStyle(false, true), "  #          #  [!] 0.3.0 -> 0.4.0 available\n", "  #  ####  #        -> corral update\n"},
 	} {
 		var b strings.Builder
-		writeBannerHeader(&b, tt.style, &config.Config{}, bannerInfo{version: "0.3.0", latest: "0.4.0", home: "/h", workdir: "/w", auditLog: "/a"}, nil)
+		writeBannerHeader(&b, tt.style, &config.Config{}, bannerInfo{version: "0.3.0", latest: "0.4.0", home: "/h", workdir: "/w", auditLog: "/a"}, nil, nil)
 		if !strings.Contains(b.String(), tt.warn+tt.fix) {
 			t.Errorf("header missing the update verdict %q%q:\n%s", tt.warn, tt.fix, b.String())
 		}
@@ -322,7 +342,7 @@ func TestWriteStartupBannerColors(t *testing.T) {
 	cfg, info := bannerFixture()
 	c := report.NewStyle(true, false)
 	var b strings.Builder
-	writeStartupBanner(&b, c, cfg, info, nil, bannerNotices[:1], []string{"hooks"})
+	writeStartupBanner(&b, c, cfg, info, nil, nil, bannerNotices[:1], []string{"hooks"})
 	out := b.String()
 	for _, want := range []string{
 		c.Bold + "corral v0.3.0" + c.Reset + "   " + c.Dim + "profile offline" + c.Reset,
@@ -353,5 +373,16 @@ func TestAbbrevHome(t *testing.T) {
 		if got := abbrevHome(tt.path, tt.home); got != tt.want {
 			t.Errorf("abbrevHome(%q, %q) = %q, want %q", tt.path, tt.home, got, tt.want)
 		}
+	}
+}
+
+// In the ASCII form a fix command keeps its user data: only corral's own text is transliterated.
+func TestWriteChecksFixVerbatim(t *testing.T) {
+	var b strings.Builder
+	writeChecks(&b, report.NewStyle(false, true), []health.Check{{State: health.Warn, Label: "config", Value: "a — b", Fix: "rm '/home/u/a — b'"}}, "/home/u")
+	want := "[!]  config         a - b\n" +
+		"                    -> rm '/home/u/a — b'\n"
+	if b.String() != want {
+		t.Errorf("checks = %q, want %q", b.String(), want)
 	}
 }

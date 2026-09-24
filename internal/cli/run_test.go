@@ -432,7 +432,7 @@ func TestRunDeclinedLaunchDoesNotMint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// kubernetes bound to a write-capable role (`edit`, not a known read-only role) → the
-	// static "bound role" advisory. A real launch would mint a SA + RBAC + token for it.
+	// static role advisory. A real launch would mint a SA + RBAC + token for it.
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
 		[]byte("providers:\n  kubernetes:\n    enabled: true\n    permissions:\n      - clusterWide: true\n        clusterRole: edit\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -459,7 +459,7 @@ func TestRunDeclinedLaunchDoesNotMint(t *testing.T) {
 		t.Errorf("a declined launch must abort with a non-zero code, got %d", code)
 	}
 	// The advisory the operator declined was shown before the gate, and the launch aborted.
-	if !strings.Contains(stderr, `bound role "edit"`) {
+	if !strings.Contains(stderr, `role "edit" is not a known read-only role`) {
 		t.Errorf("the kubernetes write-role warning must be shown before the gate:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "launch aborted") {
@@ -976,6 +976,32 @@ func TestRunPiActivatesBridge(t *testing.T) {
 	}
 }
 
+// The launch advisories render as checks with their fix commands: claude's hook registration
+// and the kill switch set in the launching shell.
+func TestRunLaunchChecks(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	t.Setenv("CORRAL_DISABLE_HOOKS", "1")
+
+	stderr := captureStderr(t, func() {
+		_ = captureStdout(t, func() { cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev") })
+	})
+	for _, want := range []string{
+		"  ! hooks           not registered for this binary in ~/.claude/settings.json\n",
+		"                    → corral sync claude\n",
+		"  ! environment     CORRAL_DISABLE_HOOKS is set in this shell\n",
+		"                    → unset CORRAL_DISABLE_HOOKS\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("launch banner missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 // TestRunBridgeAgentSuppressesSettingsAdvisory verifies the claude-only settings.json
 // advisories (the "run corral sync" sync-state warning and the fullscreen-TUI warning) are
 // shown for a command-hook agent (claude) but suppressed for a bridge agent (pi) — telling a
@@ -1237,7 +1263,7 @@ func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {
 
 	// validate refuses what run refuses.
 	stderr = captureStderr(t, func() {
-		captureStdout(t, func() { code = cmdValidate(nil) })
+		captureStdout(t, func() { code = cmdValidate(nil, "test") })
 	})
 	if code == 0 || !strings.Contains(stderr, "policy.audit.path") {
 		t.Errorf("validate must refuse the audit path, exit=%d:\n%s", code, stderr)

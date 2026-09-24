@@ -91,7 +91,7 @@ type Agent interface {
 	ReservedEnv() []string
 	Doctor(StatusInput) []health.Check
 	Sync(SyncInput) (SyncReport, error)
-	LaunchWarnings(StatusInput) []string
+	LaunchWarnings(StatusInput) []health.Check
 	ProtectedPaths(configDir string) []string
 	Footprint() Footprint
 }

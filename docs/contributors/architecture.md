@@ -506,6 +506,7 @@ type Contribution struct {
     Env        map[string]string           // e.g. KUBECONFIG, GITLAB_TOKEN (secrets)
     Status     []string                    // for the OPERATOR (startup banner)
     AgentNotes []string                    // for the MODEL (session-start note)
+    Warnings   []string                    // for the OPERATOR (after the providers section; a failing Mint puts them in its error)
     Cleanup    func(context.Context) error // in-session teardown (LIFO); nil if nothing to undo
     // PostSession is the session-END dual of Cleanup: declaration order (not LIFO),
     // unbounded context, warn-only, fires on any ended session + on an aborted launch once
