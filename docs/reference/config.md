@@ -34,6 +34,7 @@ agents:
     errorReporting: false
     feedbackSurvey: false
     attributionHeader: true
+    agentView: false
 providers:
   block:
     directories: []
@@ -178,7 +179,17 @@ checks this variable before loading account or organization connectors.
   `CLAUDE_CODE_ATTRIBUTION_HEADER=0`. Omitting the block can improve prompt-cache hit rates
   for a local model or LLM gateway.
 
-> All five settings use environment variables corral **reserves** (see
+### `agents.claude.agentView`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Behavior:** controls Claude Code's
+  [agent view](https://code.claude.com/docs/en/agent-view), which runs sessions in a
+  background supervisor. Background sessions cannot outlive the sandbox, so corral sets
+  `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` when this field is `false`. Setting `true` leaves the
+  variable unset but grants the supervisor no extra sandbox access.
+
+> All six settings use environment variables corral **reserves** (see
 > [`providers.env`](#providersenv)), so an `env.set` entry cannot change them. Use the
 > corresponding `agents.claude` setting instead.
 
@@ -320,7 +331,8 @@ names to this list.
     `CORRAL_AGENT`, `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
     and `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
     `ENABLE_CLAUDEAI_MCP_SERVERS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`,
-    `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, and `CLAUDE_CODE_ATTRIBUTION_HEADER`, plus
+    `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, `CLAUDE_CODE_ATTRIBUTION_HEADER`, and
+    `CLAUDE_CODE_DISABLE_AGENT_VIEW`, plus
     pi's `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`. Use the
     `agents.claude` fields for Claude Code settings and set pi's directory variables in
     the host environment. Config cannot replace variables that control corral's policy,

@@ -311,11 +311,17 @@ func TestClaudePrivacyDefaults(t *testing.T) {
 	if _, ok := env["CLAUDE_CODE_ATTRIBUTION_HEADER"]; ok {
 		t.Error("AgentEnv must omit CLAUDE_CODE_ATTRIBUTION_HEADER for the true attributionHeader default")
 	}
+	if c.AgentView {
+		t.Error("agentView must default false")
+	}
+	if env["CLAUDE_CODE_DISABLE_AGENT_VIEW"] != "1" {
+		t.Errorf("AgentEnv must set CLAUDE_CODE_DISABLE_AGENT_VIEW=1 for the false agentView default, got %+v", env)
+	}
 }
 
 func TestClaudePrivacyOptIn(t *testing.T) {
 	cfg, _, err := loadFrom(t, "/home/u",
-		"agents:\n  claude:\n    telemetry: true\n    errorReporting: true\n    feedbackSurvey: true\n    attributionHeader: false", "", "")
+		"agents:\n  claude:\n    telemetry: true\n    errorReporting: true\n    feedbackSurvey: true\n    attributionHeader: false\n    agentView: true", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +331,12 @@ func TestClaudePrivacyOptIn(t *testing.T) {
 	}
 	if c.AttributionHeader {
 		t.Error("attributionHeader: false must decode false")
+	}
+	if !c.AgentView {
+		t.Error("agentView: true must decode true")
+	}
+	if _, ok := cfg.AgentEnv()["CLAUDE_CODE_DISABLE_AGENT_VIEW"]; ok {
+		t.Error("AgentEnv must omit CLAUDE_CODE_DISABLE_AGENT_VIEW when agentView is true")
 	}
 }
 

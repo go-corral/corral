@@ -75,6 +75,7 @@ func TestClaudeReservedEnv(t *testing.T) {
 		"DISABLE_ERROR_REPORTING",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER",
+		"CLAUDE_CODE_DISABLE_AGENT_VIEW",
 	} {
 		if !slices.Contains(a.ReservedEnv(), name) {
 			t.Errorf("claude.ReservedEnv() = %v, want it to reserve %q", a.ReservedEnv(), name)
@@ -94,6 +95,7 @@ func TestClaudePrivacyEnv(t *testing.T) {
 		"DISABLE_ERROR_REPORTING":             "1",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"CLAUDE_CODE_DISABLE_AGENT_VIEW":      "1",
 	} {
 		if hardened[k] != want {
 			t.Errorf("hardened SandboxEnv[%s] = %q, want %q", k, hardened[k], want)
@@ -107,6 +109,7 @@ func TestClaudePrivacyEnv(t *testing.T) {
 		ErrorReporting:     true,
 		FeedbackSurvey:     true,
 		AttributionHeader:  true,
+		AgentView:          true,
 	}.SandboxEnv()
 	if on != nil {
 		t.Errorf("all capabilities enabled: SandboxEnv must be nil (contribute nothing), got %v", on)

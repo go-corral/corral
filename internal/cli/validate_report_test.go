@@ -39,6 +39,7 @@ Agent · claude
   Telemetry        on
   Error reporting  off
   Feedback survey  off
+  Agent view       off
 
 Filesystem
   Blocked   6 paths: 6 always blocked + 0 configured
@@ -141,7 +142,7 @@ func TestValidatePiReport(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	for _, unwanted := range []string{"Connectors", "Telemetry", "Error reporting", "Feedback survey", "~/.cache/corral/home"} {
+	for _, unwanted := range []string{"Connectors", "Telemetry", "Error reporting", "Feedback survey", "Agent view", "~/.cache/corral/home"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("unexpected %q:\n%s", unwanted, out)
 		}

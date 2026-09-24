@@ -10,12 +10,13 @@ type Config struct {
 	ErrorReporting     bool `yaml:"errorReporting"`
 	FeedbackSurvey     bool `yaml:"feedbackSurvey"`
 	AttributionHeader  bool `yaml:"attributionHeader"`
+	AgentView          bool `yaml:"agentView"`
 }
 
 var _ spec.AgentConfig = Config{}
 
-// SandboxEnv is claude's deny-by-default connectors + phone-home policy: unless explicitly
-// enabled, the agent sets Claude Code's own kill-switch env var.
+// SandboxEnv is claude's deny-by-default connectors, phone-home, and agent-view policy:
+// unless explicitly enabled, the agent sets Claude Code's own kill-switch env var.
 func (c Config) SandboxEnv() map[string]string {
 	env := map[string]string{}
 	if !c.ClaudeaiConnectors {
@@ -32,6 +33,9 @@ func (c Config) SandboxEnv() map[string]string {
 	}
 	if !c.AttributionHeader {
 		env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
+	}
+	if !c.AgentView {
+		env["CLAUDE_CODE_DISABLE_AGENT_VIEW"] = "1"
 	}
 	if len(env) == 0 {
 		return nil
@@ -52,6 +56,7 @@ func (c Config) ValidationFields() []spec.BannerField {
 		toggle("Telemetry", c.Telemetry),
 		toggle("Error reporting", c.ErrorReporting),
 		toggle("Feedback survey", c.FeedbackSurvey),
+		toggle("Agent view", c.AgentView),
 	}
 	if !c.AttributionHeader {
 		fields = append(fields, toggle("Attribution header", false))

@@ -67,9 +67,10 @@ elsewhere are unaffected.
 | `agents.claude.errorReporting` | `false` | Disables Sentry error reporting. |
 | `agents.claude.feedbackSurvey` | `false` | Disables session-quality surveys. |
 | `agents.claude.attributionHeader` | `true` | Keeps Claude Code's system-prompt attribution block. Set `false` for a local model or gateway that should omit it. |
+| `agents.claude.agentView` | `false` | Disables [agent view](https://code.claude.com/docs/en/agent-view). Its background sessions cannot outlive the sandbox. |
 
-`corral validate` reports the connector, telemetry, error-reporting, and survey
-settings. See
+`corral validate` reports the connector, telemetry, error-reporting, survey, and
+agent view settings. See
 [`agents.claude`](config.md#agentsclaudeclaudeaiconnectors) for the environment
 variables corral sets.
 
