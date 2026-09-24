@@ -40,5 +40,3 @@ provider, look up an interface, diagnose a failure, or understand a security dec
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md): dev setup, golden-file review, the
   cross-platform manual-verification convention.
-- [contributors/architecture.md](contributors/architecture.md): the architecture
-  reference: locked decisions, per-package design, the rewrite-trap checklist.

@@ -42,7 +42,10 @@ type Deps struct {
 type Registration struct {
 	Name string
 	// Builtin selects the launch phase: phase A built-ins resolve pre-gate; phase B
-	// features resolve post-gate.
+	// features resolve post-gate. A built-in's Mint must be pure (dryRun-identical, no
+	// side effects) because phase A runs before the confirmation gate; a feature's Mint
+	// is allowed side effects only because phase B runs after it, so a declined launch
+	// mints nothing.
 	Builtin       bool
 	Enabled       func(cfg *config.Config) bool
 	Optional      func(cfg *config.Config) bool
