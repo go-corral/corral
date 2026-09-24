@@ -316,15 +316,15 @@ names to this list.
   - Each `name` must be a valid environment variable name.
   - A name can appear in `passthrough` or `set`, but not both. The default passthrough
     list already claims its names.
-  - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_AGENT`,
-    `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`, and
-    `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
+  - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_AUDIT_PATH`,
+    `CORRAL_AGENT`, `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
+    and `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
     `ENABLE_CLAUDEAI_MCP_SERVERS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`,
     `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, and `CLAUDE_CODE_ATTRIBUTION_HEADER`, plus
     pi's `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`. Use the
     `agents.claude` fields for Claude Code settings and set pi's directory variables in
     the host environment. Config cannot replace variables that control corral's policy,
-    selected binary, or session notes.
+    audit log, selected binary, or session notes.
   - A name cannot be set to two different values. Repeating the same `{name, value}` in
     two layers collapses to one entry; a different value is a config error because lists
     merge rather than replace.
@@ -555,8 +555,10 @@ plus `d` (day), `w` (week), `mo` (30 days), and `y` (365 days).
 - **`path`** (absolute or `~`-relative path, default empty): log file location. An empty
   value places `corral-audit.jsonl` under the selected agent's config directory:
   `$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, and `$PI_CODING_AGENT_DIR` or
-  `~/.pi` for pi. The selected agent config directory is mounted read-write; policy
-  blocks agent tool calls that try to change or remove the log.
+  `~/.pi` for pi. In the sandbox, `CORRAL_AUDIT_PATH` holds the log path. For a custom
+  path, corral creates the parent directory and adds it to
+  [`providers.paths.rw`](#providerspaths), so use a dedicated directory. corral refuses
+  a parent directory that is or contains the home directory.
 - **`rotateInterval`** (duration, default `1w`): age at which corral rotates the live
   log. Must be positive.
 - **`retention`** (duration, default `6mo`): how long to keep a rotated backup, measured

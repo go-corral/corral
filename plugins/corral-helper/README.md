@@ -67,6 +67,8 @@ skill is therefore self-contained.
   Include nested path grants in the config-edit check: the helper must use `[grant]` rather
   than grouping branches and keep validity separate from host readiness. From an active
   sandbox, confirm it asks for host-side `validate` output before using paths to guide a change.
+  For audit questions, confirm the helper uses `echo "$CORRAL_AUDIT_PATH"` to name the file
+  the current session logs to.
 - Keep Linux/bwrap and macOS/Seatbelt guidance balanced. Source and CI do not replace
   manual macOS verification for platform-specific behavior.
 

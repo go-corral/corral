@@ -151,7 +151,7 @@ func TestApplyRejectsProviderEnvClaimingBackendNotesMarker(t *testing.T) {
 // re-invokes — so it must fail Apply closed. Matters most for a provider whose Env is authored
 // outside the trust-approved config: a session hook's stdout contribution.
 func TestApplyRejectsProviderEnvClaimingControlMarkers(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.AuditPathEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar} {
 		t.Run(name, func(t *testing.T) {
 			a := &fakeProvider{name: "hooks", available: true,
 				contrib: &Contribution{Env: map[string]string{name: "/work/proj/evil.yml"}}}

@@ -136,6 +136,9 @@ func cmdRun(args []string, version string) int {
 	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, colors(colorTo(os.Stderr))) {
 		return 1
 	}
+	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
+		return fatalf(os.Stderr, "config invalid: %v", err)
+	}
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
 	if err := checkResolvedPathGrants(cfg, *home); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
@@ -164,6 +167,8 @@ func cmdRun(args []string, version string) int {
 		spec.SetEnv = map[string]string{}
 	}
 	spec.SetEnv[sandbox.AgentEnvVar] = cfg.EffectiveAgent()
+	// Pin the audit-log path so the in-sandbox hook does not resolve it against the private home.
+	spec.SetEnv[sandbox.AuditPathEnvVar] = configuredAuditPath(cfg, cfg.AgentConfigDir(*home, host))
 
 	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
 	launch := cfg.AgentLaunch()

@@ -80,3 +80,59 @@ func TestPinGlobalConfig(t *testing.T) {
 		t.Errorf("no global source → no mount, got %+v", bare.Mounts)
 	}
 }
+
+// grantAuditDir adds a custom audit-log directory to the read-write grants and creates it;
+// a dry run adds the grant only, and the default path adds nothing.
+func TestGrantAuditDir(t *testing.T) {
+	home := t.TempDir()
+	cfg := &config.Config{}
+	if err := grantAuditDir(cfg, home, false); err != nil || len(cfg.Providers.Paths.RW) != 0 {
+		t.Fatalf("default path must add no grant, got %v, err %v", cfg.Providers.Paths.RW, err)
+	}
+
+	dir := filepath.Join(home, "state")
+	cfg.Policy.Audit.Path = filepath.Join(dir, "audit.jsonl")
+	if err := grantAuditDir(cfg, home, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("dry run must not create the directory, stat err: %v", err)
+	}
+
+	cfg.Providers.Paths.RW = nil
+	if err := grantAuditDir(cfg, home, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Providers.Paths.RW) != 1 || cfg.Providers.Paths.RW[0] != dir {
+		t.Errorf("grant = %v, want [%s]", cfg.Providers.Paths.RW, dir)
+	}
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("directory must exist with mode 0700, got %v, err %v", fi, err)
+	}
+}
+
+// grantAuditDir refuses a directory that would open the home directory read-write, and one
+// that resolves into an always-blocked path through a symlinked ancestor, without creating it.
+func TestGrantAuditDirRefuses(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(home, "logs")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(home, "audit.jsonl"),
+		"/audit.jsonl",
+		filepath.Join(home, "logs", "sub", "audit.jsonl"),
+	} {
+		cfg := &config.Config{}
+		cfg.Policy.Audit.Path = p
+		if err := grantAuditDir(cfg, home, false); err == nil {
+			t.Errorf("%s: want refusal, got grants %v", p, cfg.Providers.Paths.RW)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ssh", "sub")); !os.IsNotExist(err) {
+		t.Errorf("a refused directory must not be created, stat err: %v", err)
+	}
+}

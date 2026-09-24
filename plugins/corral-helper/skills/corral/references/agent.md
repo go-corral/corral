@@ -91,7 +91,8 @@ After the user restarts through the alias or `corral run`:
    [gitlab.md](how-to/gitlab.md).
 
 Treat a failed probe as a diagnosis task. Capture `doctor`, `validate`, and the audit
-record's `rule` and `reason`; then follow
+record's `rule` and `reason`; the current session logs to the file in
+`$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). Then follow
 [troubleshooting.md](how-to/troubleshooting.md).
 
 ## Run commands for the user

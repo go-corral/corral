@@ -496,9 +496,20 @@ func agentFootprints(cfg *config.Config) (policy.AgentFootprint, []policy.AgentF
 	return active, all
 }
 
-// effectiveAuditPath returns the resolved audit-log path: configured policy.audit.path or the default
-// <configDir>/corral-audit.jsonl. Shared by the auditor (writes) and the self-protect gate (guards), so they never diverge.
+// effectiveAuditPath returns the resolved audit-log path: the launcher's pin
+// (CORRAL_AUDIT_PATH) when set, else the configured path. Shared by the auditor (writes)
+// and the self-protect gate (guards), so they never diverge.
 func effectiveAuditPath(cfg *config.Config, configDir string) string {
+	if p := os.Getenv(sandbox.AuditPathEnvVar); p != "" {
+		return p
+	}
+	return configuredAuditPath(cfg, configDir)
+}
+
+// configuredAuditPath returns the audit path from config alone: policy.audit.path or
+// the default <configDir>/corral-audit.jsonl. The launcher resolves with this half — a
+// nested launch must resolve from its own config, not inherit the enclosing sandbox's pin.
+func configuredAuditPath(cfg *config.Config, configDir string) string {
 	if p := cfg.Policy.Audit.Path; p != "" {
 		return p
 	}

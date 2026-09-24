@@ -12,7 +12,7 @@ import (
 // sandbox constants so a rename there can't silently let env.set claim a control var.
 // (A test file can import sandbox: sandbox does not import config, so there is no cycle.)
 func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.AuditPathEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames is missing the sandbox marker %q — env.set could set it", name)
 		}

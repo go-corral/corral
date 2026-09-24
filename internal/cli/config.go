@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/pathutil"
+	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -49,6 +53,43 @@ func pinGlobalConfig(spec *sandbox.SandboxSpec, sources []config.Source) {
 			return
 		}
 	}
+}
+
+// grantAuditDir adds the directory of a custom policy.audit.path to providers.paths.rw,
+// so the grant checks, the read-write bind, and the banner cover it. The directory is
+// created because a missing grant is not mounted.
+func grantAuditDir(cfg *config.Config, home string, dryRun bool) error {
+	p := cfg.Policy.Audit.Path
+	if p == "" {
+		return nil
+	}
+	dir := filepath.Dir(p)
+	if pathutil.AtOrUnderClean(home, dir) {
+		return fmt.Errorf("policy.audit.path %q: directory %q is or contains the home directory; use a dedicated directory", p, dir)
+	}
+	cfg.Providers.Paths.RW = append(cfg.Providers.Paths.RW, dir)
+	floor := config.AlwaysBlockedExpanded(home)
+	if err := cfg.Providers.Paths.Validate(floor); err != nil {
+		return fmt.Errorf("policy.audit.path %q: %w", p, err)
+	}
+	// checkResolvedPathGrants cannot resolve a missing directory, so check where MkdirAll
+	// would create it: behind a symlinked ancestor, that can be an always-blocked path.
+	real, err := policy.CanonicalizeRoot(dir, "")
+	if err != nil {
+		return fmt.Errorf("policy.audit.path %q: %w", p, err)
+	}
+	for _, f := range floor {
+		if pathutil.AtOrUnder(real, pathutil.Resolve(f)) {
+			return fmt.Errorf("policy.audit.path %q: directory %q resolves into the always-blocked path %q", p, dir, f)
+		}
+	}
+	if dryRun {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("policy.audit.path %q: %w", p, err)
+	}
+	return nil
 }
 
 // specParams maps a loaded config to sandbox.DefaultParams. config is the single source

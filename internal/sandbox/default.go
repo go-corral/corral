@@ -26,6 +26,10 @@ const BackendNotesEnvVar = "CORRAL_BACKEND_NOTES"
 // env.set cannot forge it.
 const AgentEnvVar = "CORRAL_AGENT"
 
+// AuditPathEnvVar pins the launcher-resolved audit-log path for the
+// in-sandbox hook, which would otherwise re-resolve it from the private home.
+const AuditPathEnvVar = "CORRAL_AUDIT_PATH"
+
 // BinEnvVar pins the corral binary an agent's in-process policy extension
 // re-invokes. Reserved so nothing can redirect enforcement.
 const BinEnvVar = "CORRAL_BIN"

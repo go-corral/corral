@@ -184,7 +184,7 @@ because the resolved SSH directory is masked inside the grant.
 
 ## Reading the audit log
 
-Each policy decision is one JSON line. The default path follows the selected agent's
+corral logs each policy decision as one JSON line. The default log is in the agent's
 config directory:
 
 | Agent       | Default audit log                                                                                     |
@@ -193,10 +193,11 @@ config directory:
 | pi          | `$PI_CODING_AGENT_DIR/corral-audit.jsonl`, or `~/.pi/corral-audit.jsonl` when the variable is unset   |
 
 [`policy.audit.path`](../reference/config.md#policyaudit) overrides these defaults.
-Set a shell variable to the effective path, then inspect recent decisions:
+Inside a session, `CORRAL_AUDIT_PATH` holds the active path. On the host, replace the
+fallback with your path:
 
 ```sh
-log=~/.claude/corral-audit.jsonl
+log=${CORRAL_AUDIT_PATH:-~/.claude/corral-audit.jsonl}
 tail -n 20 "$log" | jq .
 jq 'select(.action == "deny")' "$log"
 ```
