@@ -266,6 +266,44 @@ func TestProfileCanAddEnvSet(t *testing.T) {
 	}
 }
 
+// A line repeated within one layer collapses to one. This depends on the default key:
+// unionAny only merges append-unique when both layers carry it.
+func TestNotesLinesDuplicateCollapses(t *testing.T) {
+	home := "/home/u"
+	local := "providers:\n  notes:\n    agent: [\"A\", \"A\"]\n"
+	cfg, _, err := loadFrom(t, home, "", "", local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers.Notes.Agent; len(got) != 1 || got[0] != "A" {
+		t.Errorf("providers.notes.agent = %v, want [A]", got)
+	}
+}
+
+// The layer merge dedups raw values only, so the same line with different
+// surrounding whitespace in two layers collapses at trim time, not in the merge.
+func TestNotesLinesWhitespaceVariantCollapses(t *testing.T) {
+	home := "/home/u"
+	global := "providers:\n  notes:\n    agent: [\"A\"]\n"
+	local := "providers:\n  notes:\n    agent: [\"  A  \"]\n"
+	cfg, _, err := loadFrom(t, home, "", global, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers.Notes.Lines(); len(got) != 1 || got[0] != "A" {
+		t.Errorf("providers.notes.agent lines = %v, want [A]", got)
+	}
+}
+
+// A validation error from the notes provider surfaces from Load, naming the field.
+func TestNotesLinesValidationErrorSurfacesFromLoad(t *testing.T) {
+	home := "/home/u"
+	project := "providers:\n  notes:\n    agent: [\"   \"]\n"
+	if _, _, err := loadFrom(t, home, "", project, ""); err == nil || !strings.Contains(err.Error(), "providers.notes.agent") {
+		t.Errorf("Load() = %v, want an error naming providers.notes.agent", err)
+	}
+}
+
 func TestClaudeaiConnectorsDefaultsOff(t *testing.T) {
 	cfg, _, err := loadFrom(t, "", "", "", "")
 	if err != nil {

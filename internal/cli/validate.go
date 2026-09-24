@@ -217,6 +217,14 @@ func writeValidate(w io.Writer, c report.Style, v validateInput) {
 	for _, p := range v.execs.sortedAttrPaths() {
 		c.Row(w, report.Row{Label: "hook exec", Value: pathText(p), Reason: reportText(v.execs.attr[p])})
 	}
+	if notes := cfg.Providers.Notes.Lines(); len(notes) == 0 {
+		c.Row(w, report.Row{Label: "agent notes", Value: "none"})
+	} else {
+		c.Row(w, report.Row{Label: "agent notes", Value: reportText(notes[0])})
+		for _, n := range notes[1:] {
+			c.Cont(w, reportText(n))
+		}
+	}
 	// These are configured providers, not availability probes or minted contributions.
 	provs := enabledProviders(cfg)
 	if len(provs) == 0 {

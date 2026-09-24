@@ -58,6 +58,8 @@ providers:
       - PI_CODING_AGENT_DIR
       - PI_CODING_AGENT_SESSION_DIR
     set: []
+  notes:
+    agent: []
   docker:
     enabled: false
   ssh:
@@ -204,10 +206,11 @@ but unnecessary. See [the agents reference](agents.md#pi) for pi's fixed sandbox
 ### `providers`
 
 Provider settings control access beyond the filesystem baseline. `block` hides extra
-paths, `aiignore` applies repository exclusions, `paths` adds filesystem access, and
-`env` controls environment variables. These providers have no `enabled` or `optional`
-field; their entries apply whenever present. Blocks and AI-ignore exclusions are
-applied before path grants, so a later grant does not expose an excluded path.
+paths, `aiignore` applies repository exclusions, `paths` adds filesystem access, `env`
+controls environment variables, and `notes` adds fixed lines to the agent's
+session-start note. These providers have no `enabled` or `optional` field; their
+entries apply whenever present. Blocks and AI-ignore exclusions are applied before
+path grants, so a later grant does not expose an excluded path.
 
 `hooks`, `docker`, `ssh`, `home`, `kubernetes`, and `gitlab` are configured separately.
 `home` is enabled by default. Hooks have no default entries. Docker, SSH, Kubernetes,
@@ -345,6 +348,19 @@ names to this list.
     needs no confirmation.
   - A name that conflicts with a variable from an enabled provider, such as
     `GITLAB_TOKEN`, stops the launch.
+
+#### `providers.notes`
+
+- **`providers.notes.agent`:** lines added to the agent's session-start note:
+
+  ```yaml
+  providers:
+    notes:
+      agent:
+        - Ask before installing a new dependency.
+  ```
+
+  Lines merge append-unique across layers and profiles, as usual.
 
 #### `providers.hooks`
 

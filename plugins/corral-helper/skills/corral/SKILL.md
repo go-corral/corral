@@ -4,8 +4,9 @@ description: >-
   Help install, configure, run, update, uninstall, and troubleshoot corral, the coding-agent
   sandbox for Claude Code and pi. Trigger when the user mentions corral, an agent sandbox,
   doctor/sync/validate/run, .corral.yml, provider setup, filesystem or environment grants,
-  session hooks, blocked tool calls, the audit log, always-blocked paths, masked credential
-  directories, or a vague report that the sandbox will not allow something.
+  session hooks, agent notes or the session-start note, blocked tool calls, the audit log,
+  always-blocked paths, masked credential directories, or a vague report that the sandbox
+  will not allow something.
 ---
 
 # corral helper
@@ -156,6 +157,8 @@ Inside an active corral sandbox, policy blocks writes to corral's config files. 
 - **Session hooks:** [session-hooks.md](references/how-to/session-hooks.md) for setup and
   recovery; [hooks-contract.md](references/reference/hooks-contract.md) for execution and
   contribution details.
+- **Agent notes:** [config.md#providersnotes](references/reference/config.md#providersnotes)
+  for a static line added to the agent's session-start note.
 - **Blocks, provider failures, and a launch warning that `$HOME/<path>` is a real entry in
   the private home:** [troubleshooting.md](references/how-to/troubleshooting.md).
 - **Repository approval:** [trust-gate.md](references/explanation/trust-gate.md).

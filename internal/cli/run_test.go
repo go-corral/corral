@@ -1190,6 +1190,44 @@ func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 	}
 }
 
+// TestRunDryRunReflectsNotesProvider: a configured providers.notes.agent line reaches
+// CORRAL_PROVIDER_NOTES attributed to "notes" in the previewed sandbox environment, and
+// authors no Status row in the startup banner (static config, like every built-in).
+func TestRunDryRunReflectsNotesProvider(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "providers:\n  notes:\n    agent: [\"Keep it terse.\"]\n"
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	t.Setenv("NO_COLOR", "1")
+
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+		})
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	// The pin rides in the cleared env (bwrap --setenv, Seatbelt env -i VAR=…) alongside the
+	// other active providers' notes (e.g. home), so match the bullet rather than the whole value.
+	if !strings.Contains(stdout, sandbox.ProviderNotesEnvVar) || !strings.Contains(stdout, "- notes: Keep it terse.") {
+		t.Errorf("dry-run argv must carry the configured line attributed to notes:\n%s", stdout)
+	}
+	// Static config authors no banner row: the built-in contract every provider in this
+	// registry table follows.
+	if strings.Contains(stderr, "notes") {
+		t.Errorf("notes must author no banner status row:\n%s", stderr)
+	}
+}
+
 // TestRunDryRunPinsAuditPath: the launcher pins the audit-log path as CORRAL_AUDIT_PATH,
 // and a custom policy.audit.path gets its directory as a read-write grant.
 func TestRunDryRunPinsAuditPath(t *testing.T) {

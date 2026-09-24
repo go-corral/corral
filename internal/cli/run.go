@@ -188,7 +188,7 @@ func cmdRun(args []string, version string) int {
 		}
 		extensionArgs = []string{launch.ExtensionFlag, assetPath}
 	}
-	// Phase A — built-in providers (block, aiignore, paths, env). Pure Mint, resolved before the
+	// Phase A — built-in providers (block, aiignore, paths, env, notes). Pure Mint, resolved before the
 	// gate so advisory warnings feed it and deny channels are in the spec before phase B.
 	ctx := context.Background()
 	sess := newSession(*home, projectSrc)

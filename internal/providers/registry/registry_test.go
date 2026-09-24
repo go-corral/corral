@@ -83,10 +83,10 @@ func TestRegistryBuiltinShape(t *testing.T) {
 
 // drift guard: the Builtin flag routes a provider's Mint before the confirmation
 // gate (phase A), so flipping it silently moves a deny provider across the gate —
-// or a side-effecting feature in front of it. Pin the set: exactly the four
+// or a side-effecting feature in front of it. Pin the set: exactly the five
 // config-owned built-ins, leading the table (deny before grant, before features).
 func TestRegistryBuiltinSetPinned(t *testing.T) {
-	want := []string{"block", "aiignore", "paths", "env"}
+	want := []string{"block", "aiignore", "paths", "env", "notes"}
 	for i, e := range registry {
 		if i < len(want) {
 			if !e.Builtin || e.Name != want[i] {
@@ -123,6 +123,7 @@ func TestRegistryBuiltinMintPure(t *testing.T) {
 	cfg.Providers.Paths.RO = []string{"/data/ro"}
 	cfg.Providers.Env.Passthrough = []string{"TERM"}
 	cfg.Providers.Env.Set = []env.Var{{Name: "FOO", Value: "bar"}}
+	cfg.Providers.Notes.Agent = []string{"A note."}
 
 	d := Deps{Home: "/home/u"}
 	sess := providers.Session{User: "u", ID: "s1", WorkDir: repo}

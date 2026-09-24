@@ -91,6 +91,7 @@ settings ───────────────────────�
                     other host variables are dropped
     hook exec       ~/bin/up
                     providers.hooks.preStart.10-up
+    agent notes     none
   ● docker          docker daemon socket + ~/.docker
                     setup error: abort launch
 path grants ──────────────────────────────────────────────────────
@@ -217,6 +218,7 @@ settings ───────────────────────�
                     CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
                     PI_CODING_AGENT_SESSION_DIR
                     other host variables are dropped
+    agent notes     none
   ● home            private $HOME (allowed paths symlinked in; tool caches & state isolated)
                     setup error: abort launch
 path grants ──────────────────────────────────────────────────────
@@ -356,5 +358,15 @@ func TestValidateListOnlyExpandsBlockedPaths(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing grant %q:\n%s", want, plain)
 		}
+	}
+}
+
+// corral validate lists every effective providers.notes.agent line, not just a count.
+func TestValidateAgentNotesTwoLines(t *testing.T) {
+	trustRepo(t, "providers:\n  notes:\n    agent: [\"First note.\", \"Second note.\"]\n")
+	t.Setenv("NO_COLOR", "1")
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "    agent notes     First note.\n                    Second note.\n") {
+		t.Errorf("missing both configured agent notes:\n%s", out)
 	}
 }
