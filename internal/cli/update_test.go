@@ -269,7 +269,7 @@ func TestConfirmUpdateNonInteractive(t *testing.T) {
 }
 
 // /dev/null is a character device, so a mode-bit check would misclassify it as an
-// interactive terminal — isTerminal asks the tty driver instead. confirmUpdate must refuse
+// interactive terminal — report.IsTerminal asks the tty driver instead. confirmUpdate must refuse
 // the non-interactive update without --yes and without prompting.
 func TestConfirmUpdateDevNullNonInteractive(t *testing.T) {
 	f, err := os.Open(os.DevNull)

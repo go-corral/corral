@@ -723,6 +723,7 @@ well-tested module with golden-file coverage:
 corral/
   cmd/corral/           # thin main: parse argv, dispatch to internal/cli
   internal/cli/         # command dispatcher + subcommands: run, hook, sync, validate, doctor, gc, update
+  internal/cli/report/  # terminal render layer: detail grid, glyphs, color + ASCII fallbacks
   internal/config/      # layered YAML load + merge + validation
   internal/agents/      # agent seam: spec/ (Agent contract + neutral types), claude/ (+ claudecfg/: generate / merge Claude settings.json) + pi/ (per-agent impls), facade registry
   internal/selfupdate/  # launcher-side self-update: release fetch, checksum verify, in-place replace

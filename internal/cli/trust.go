@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers/hooks"
 	"github.com/go-corral/corral/internal/trust"
@@ -122,16 +123,16 @@ const (
 // answered=false when no interactive answer is possible (stdin is not a terminal); otherwise
 // answered=true with approved reflecting the y/N reply (default-no). It is a package var so
 // tests can drive the interactive path without a real terminal.
-var promptTrustApproval = func(in *os.File, out io.Writer, c ansi) (answered, approved bool) {
-	if !isTerminal(in) {
+var promptTrustApproval = func(in *os.File, out io.Writer, c report.Style) (answered, approved bool) {
+	if !report.IsTerminal(in) {
 		return false, false
 	}
-	return true, promptYesNo(in, out, fmt.Sprintf("%sApprove for future runs? [y/N]%s ", c.bold, c.reset))
+	return true, promptYesNo(in, out, fmt.Sprintf("%sApprove for future runs? [y/N]%s ", c.Bold, c.Reset))
 }
 
 // checkRepoConfigTrust enforces approve-once for repo-shipped config and session-hook
 // executables before a side-effectful command consumes them. Returns true to proceed.
-func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in *os.File, out io.Writer, c ansi) bool {
+func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in *os.File, out io.Writer, c report.Style) bool {
 	cfgEntries := trustEntries(sources)
 	all := append(append([]trust.Entry{}, cfgEntries...), execs.entries...)
 	if len(all) == 0 {
@@ -215,7 +216,7 @@ func trustAnnotations(entries []trust.Entry) map[string]trustNote {
 
 // writeTrustDryRunNote annotates a --dry-run preview with the approval state. Silent when
 // everything is already approved or the store cannot be opened.
-func writeTrustDryRunNote(out io.Writer, c ansi, sources []config.Source, execs hookExecs) {
+func writeTrustDryRunNote(out io.Writer, c report.Style, sources []config.Source, execs hookExecs) {
 	entries := append(trustEntries(sources), execs.entries...)
 	if len(entries) == 0 {
 		return
@@ -228,7 +229,7 @@ func writeTrustDryRunNote(out io.Writer, c ansi, sources []config.Source, execs 
 	if len(pending) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "%scorral: note: not yet approved — a real run would prompt to approve:%s\n", c.yellow, c.reset)
+	fmt.Fprintf(out, "%scorral: note: not yet approved — a real run would prompt to approve:%s\n", c.Yellow, c.Reset)
 	for _, p := range pending {
 		fmt.Fprintf(out, "  - %-7s %s%s\n", pendingState(p), p.Path, attrSuffix(execs.attr, p.Path))
 	}
@@ -252,7 +253,7 @@ func attrSuffix(attr map[string]string, path string) string {
 }
 
 // writeTrustPending lists what the gate is stopping on.
-func writeTrustPending(out io.Writer, c ansi, cfgPending, execPending []trust.Result, attr map[string]string) {
+func writeTrustPending(out io.Writer, c report.Style, cfgPending, execPending []trust.Result, attr map[string]string) {
 	subjects := make([]string, 0, 2)
 	if len(cfgPending) > 0 {
 		subjects = append(subjects, "repo config")
@@ -264,7 +265,7 @@ func writeTrustPending(out io.Writer, c ansi, cfgPending, execPending []trust.Re
 		}
 		subjects = append(subjects, s)
 	}
-	fmt.Fprintf(out, "%scorral: unapproved %s — review, then approve:%s\n", c.bold, strings.Join(subjects, " and "), c.reset)
+	fmt.Fprintf(out, "%scorral: unapproved %s — review, then approve:%s\n", c.Bold, strings.Join(subjects, " and "), c.Reset)
 	for _, p := range cfgPending {
 		fmt.Fprintf(out, "  - %-7s %s\n", pendingState(p), p.Path)
 	}

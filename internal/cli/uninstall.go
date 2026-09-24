@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/audit"
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/sandbox"
@@ -47,7 +48,7 @@ func cmdUninstall(args []string) int {
 		Host:   envMap(),
 		Apply:  *apply,
 		Yes:    *yes,
-		Colors: colors(colorTo(os.Stdout)),
+		Colors: report.StyleFor(os.Stdout),
 	}, os.Stdin, os.Stdout)
 }
 
@@ -57,7 +58,7 @@ type uninstallOptions struct {
 	Host   map[string]string
 	Apply  bool
 	Yes    bool
-	Colors ansi
+	Colors report.Style
 }
 
 // runUninstall is the testable core: collect the footprint, then either print it or run removal.
@@ -298,8 +299,8 @@ const (
 )
 
 // uninstallRow prints one labeled manifest row.
-func uninstallRow(w io.Writer, c ansi, label, text string) {
-	fmt.Fprintf(w, "%s%s%-*s%s%s\n", uninstallIndent, c.dim, uninstallLabelW, label+":", c.reset, text)
+func uninstallRow(w io.Writer, c report.Style, label, text string) {
+	fmt.Fprintf(w, "%s%s%-*s%s%s\n", uninstallIndent, c.Dim, uninstallLabelW, label+":", c.Reset, text)
 }
 
 // uninstallCont prints a continuation line aligned under a row's text column.
@@ -308,8 +309,8 @@ func uninstallCont(w io.Writer, text string) {
 }
 
 // printUninstallFootprint renders the read-only manifest.
-func printUninstallFootprint(out io.Writer, c ansi, fp uninstallFootprint) {
-	fmt.Fprintf(out, "%scorral's footprint on this system%s\n", c.bold, c.reset)
+func printUninstallFootprint(out io.Writer, c report.Style, fp uninstallFootprint) {
+	fmt.Fprintf(out, "%scorral's footprint on this system%s\n", c.Bold, c.Reset)
 	if fp.ConfigErr != nil {
 		writeWarnings(out, c, []string{fmt.Sprintf("global config is invalid (%v) — reporting corral's default locations instead", fp.ConfigErr)})
 	}
@@ -319,14 +320,14 @@ func printUninstallFootprint(out io.Writer, c ansi, fp uninstallFootprint) {
 }
 
 // reportUninstallEnforcement lists, per known agent, whether corral's enforcement is registered.
-func reportUninstallEnforcement(out io.Writer, c ansi, fp uninstallFootprint) {
+func reportUninstallEnforcement(out io.Writer, c report.Style, fp uninstallFootprint) {
 	fmt.Fprintln(out, "\nEnforcement (corral's registration in each agent's own config):")
 	for _, a := range fp.Agents {
 		switch {
 		case a.Err != nil:
 			uninstallRow(out, c, a.Name, fmt.Sprintf("cannot determine (%v)", a.Err))
 		case a.Registered:
-			uninstallRow(out, c, a.Name, fmt.Sprintf("%sREGISTERED%s — config dir %s", c.yellow, c.reset, abbrevHome(a.ConfigDir, fp.Home)))
+			uninstallRow(out, c, a.Name, fmt.Sprintf("%sREGISTERED%s — config dir %s", c.Yellow, c.Reset, abbrevHome(a.ConfigDir, fp.Home)))
 		default:
 			uninstallRow(out, c, a.Name, "not registered — config dir "+abbrevHome(a.ConfigDir, fp.Home))
 		}
@@ -338,7 +339,7 @@ func reportUninstallEnforcement(out io.Writer, c ansi, fp uninstallFootprint) {
 }
 
 // reportUninstallState lists corral's own state: cache, trust/state dir, and audit logs.
-func reportUninstallState(out io.Writer, c ansi, fp uninstallFootprint) {
+func reportUninstallState(out io.Writer, c report.Style, fp uninstallFootprint) {
 	fmt.Fprintln(out, "\nState (removed by `--apply`):")
 
 	if !fp.Cache.Exists {
@@ -376,7 +377,7 @@ func reportUninstallState(out io.Writer, c ansi, fp uninstallFootprint) {
 }
 
 // reportUninstallKept prints the print-only section: things uninstall never deletes.
-func reportUninstallKept(out io.Writer, c ansi, fp uninstallFootprint) {
+func reportUninstallKept(out io.Writer, c report.Style, fp uninstallFootprint) {
 	fmt.Fprintln(out, "\nKept — uninstall never deletes these (remove them yourself if you want them gone):")
 
 	if fp.BinaryErr != nil {

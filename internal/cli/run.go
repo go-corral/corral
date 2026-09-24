@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
@@ -133,7 +134,7 @@ func cmdRun(args []string, version string) int {
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run. Runs before any consumption or mint. --yes is
 	// refused here; --dry-run is exempt.
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, colors(colorTo(os.Stderr))) {
+	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, report.StyleFor(os.Stderr)) {
 		return 1
 	}
 	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
@@ -201,7 +202,7 @@ func cmdRun(args []string, version string) int {
 	backend := newBackend(backendKind, *bwrapPath, cfg.Sandbox)
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
-	c := colors(colorTo(os.Stderr))
+	c := report.StyleFor(os.Stderr)
 	warnings := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
 	warnings = append(warnings, resBuiltin.Warnings...)
 	// Startup readiness advisory: each agent reports its own set.
@@ -534,11 +535,11 @@ var checkUpdateOnStart = func(ctx context.Context, cfg *config.Config, home, ver
 
 // confirmProceed gates a launch with advisory warnings behind an explicit "yes". --yes skips
 // it. Non-interactive stdin proceeds. Package var for tests.
-var confirmProceed = func(yes bool, in *os.File, out io.Writer, c ansi) bool {
-	if yes || !isTerminal(in) {
+var confirmProceed = func(yes bool, in *os.File, out io.Writer, c report.Style) bool {
+	if yes || !report.IsTerminal(in) {
 		return true
 	}
-	return promptYesNo(in, out, fmt.Sprintf("%sProceed past the warning(s) above? [y/N]%s ", c.bold, c.reset))
+	return promptYesNo(in, out, fmt.Sprintf("%sProceed past the warning(s) above? [y/N]%s ", c.Bold, c.Reset))
 }
 
 // promptYesNo writes the prompt, reads one line, and reports whether the reply was affirmative.

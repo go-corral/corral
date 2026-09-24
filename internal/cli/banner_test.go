@@ -1,10 +1,10 @@
 package cli
 
 import (
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/block"
@@ -88,7 +88,7 @@ func TestWriteStartupBanner(t *testing.T) {
 	cfg.Providers.Home.Enabled = true
 
 	var b strings.Builder
-	writeStartupBanner(&b, colors(false), cfg, "0.3.0", "a newer corral is available: 0.3.0 → 0.4.0",
+	writeStartupBanner(&b, report.NewStyle(false, false), cfg, "0.3.0", "a newer corral is available: 0.3.0 → 0.4.0",
 		"/home/u", []string{"offline"}, "/tmp/corral-work-x1y2z3",
 		[]string{"heads up"}, []providers.Notice{
 			{Provider: "home", Text: "private $HOME at /home/u/.cache/corral/home-x"},
@@ -98,9 +98,10 @@ func TestWriteStartupBanner(t *testing.T) {
 
 	for _, want := range []string{
 		// version + status sit beside the logo; the update notice is the version warning there
-		"corral", "v0.3.0", "· sandbox active", "⚠ a newer corral is available: 0.3.0 → 0.4.0",
+		"corral", "v0.3.0", "· sandbox active", "! a newer corral is available: 0.3.0 → 0.4.0",
 		"session", "profile", "offline", "network", "open",
-		"workdir", "/tmp/corral-work-x1y2z3", "connectors", "off",
+		// rows sit on the shared grid: value at column 21
+		"\n    workdir         /tmp/corral-work-x1y2z3\n", "connectors", "off",
 		"providers", "read-write", "/data",
 		// blocked paths are spelled out (home abbreviated to ~), floor tagged,
 		// config additions after a "+"; AI-ignore masks moved to the aiignore
@@ -108,7 +109,7 @@ func TestWriteStartupBanner(t *testing.T) {
 		"blocked", "~/.ssh", "~/.gnupg", "~/.aws", "(always blocked)", "/data/secrets",
 		// the standing "!" bash-mode caveat is a banner line, not a model-only note
 		"note", "bash-mode output is not secret-scanned",
-		"⚠ heads up",
+		"  ! heads up",
 		// provider status rows are labeled with their provider name, host paths abbreviated
 		"home       private $HOME at ~/.cache/corral/home-x",
 		"gitlab     minted project access token for g/r (scopes: read_api)",
@@ -118,7 +119,36 @@ func TestWriteStartupBanner(t *testing.T) {
 		}
 	}
 	if strings.Contains(out, "\x1b[") {
-		t.Errorf("colors(false) must emit no ANSI escape codes:\n%q", out)
+		t.Errorf("an uncolored style must emit no ANSI escape codes:\n%q", out)
+	}
+}
+
+// With ASCII-only input, the ASCII form of all run output is ASCII only: nothing corral
+// formats itself adds Unicode.
+func TestWriteStartupBannerASCII(t *testing.T) {
+	cfg := &config.Config{Providers: config.Providers{Paths: paths.Config{RO: []string{"/a", "/b"}, RW: []string{"/data"}}}}
+	c := report.NewStyle(false, true)
+	var b strings.Builder
+	writeStartupBanner(&b, c, cfg, "0.3.0", "a newer corral is available",
+		"/home/u", []string{"offline"}, "/w", []string{"heads up"}, []providers.Notice{
+			{Provider: "home", Text: "private $HOME at /home/u/x"},
+			{Provider: "home", Text: "second row"},
+		})
+	bannerSessionHookPresenter(&b, c)("preStart", "10-a", "hi\n", true)
+	out := b.String()
+	for _, want := range []string{
+		"  ############", "v0.3.0 | sandbox active", "[!] a newer corral is available", "\n[!]  heads up\n",
+		"\n     workdir        /w\n", "profile offline | network", "                    | (output truncated)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ASCII banner missing %q:\n%s", want, out)
+		}
+	}
+	for i, r := range out {
+		if r > 0x7f {
+			t.Errorf("ASCII banner has %q at byte %d:\n%s", r, i, out)
+			break
+		}
 	}
 }
 
@@ -134,9 +164,9 @@ func TestBannerHeaderBodySplit(t *testing.T) {
 	warnings := []string{"heads up"}
 
 	var head strings.Builder
-	writeBannerHeader(&head, colors(false), "0.3.0", "a newer corral is available", warnings)
+	writeBannerHeader(&head, report.NewStyle(false, false), "0.3.0", "a newer corral is available", warnings)
 	h := head.String()
-	for _, want := range []string{"corral", "v0.3.0", "· sandbox active", "⚠ a newer corral is available", "⚠ heads up"} {
+	for _, want := range []string{"corral", "v0.3.0", "· sandbox active", "! a newer corral is available", "  ! heads up"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("header missing %q:\n%s", want, h)
 		}
@@ -148,7 +178,7 @@ func TestBannerHeaderBodySplit(t *testing.T) {
 	}
 
 	var body strings.Builder
-	writeBannerBody(&body, colors(false), cfg, "/home/u", []string{"offline"}, "/w", []providers.Notice{
+	writeBannerBody(&body, report.NewStyle(false, false), cfg, "/home/u", []string{"offline"}, "/w", []providers.Notice{
 		{Provider: "home", Text: "private $HOME at /home/u/.cache/corral/home-x"},
 	})
 	b := body.String()
@@ -167,9 +197,9 @@ func TestBannerHeaderBodySplit(t *testing.T) {
 // The providers section attributes every status row to its provider: the name prints
 // once per consecutive run (further rows indent under the text column), the first row
 // carries the "providers" label, and host paths in the status text abbreviate to ~.
-func TestWriteNoticesLabelsProviders(t *testing.T) {
+func TestBannerNoticesLabelProviders(t *testing.T) {
 	var b strings.Builder
-	writeNotices(&b, colors(false), "/home/u", []providers.Notice{
+	writeBannerBody(&b, report.NewStyle(false, false), &config.Config{}, "/home/u", nil, "/w", []providers.Notice{
 		{Provider: "block", Text: "masking 0 dir(s) + 1 file(s)"},
 		{Provider: "aiignore", Text: "3 pattern(s) from .aiignore"},
 		{Provider: "aiignore", Text: `1 "!" re-include pattern(s) ignored`},
@@ -177,14 +207,15 @@ func TestWriteNoticesLabelsProviders(t *testing.T) {
 	})
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	want := []string{
-		"  providers  block      masking 0 dir(s) + 1 file(s)",
-		"             aiignore   3 pattern(s) from .aiignore",
-		`                        1 "!" re-include pattern(s) ignored`,
-		"             hooks      preStart ran 10-a · from ~/proj",
+		"    providers       block      masking 0 dir(s) + 1 file(s)",
+		"                    aiignore   3 pattern(s) from .aiignore",
+		`                               1 "!" re-include pattern(s) ignored`,
+		"                    hooks      preStart ran 10-a · from ~/proj",
 	}
-	if len(lines) != len(want) {
-		t.Fatalf("lines = %q, want %q", lines, want)
+	if len(lines) < len(want) {
+		t.Fatalf("lines = %q, want suffix %q", lines, want)
 	}
+	lines = lines[len(lines)-len(want):]
 	for i, w := range want {
 		if lines[i] != w {
 			t.Errorf("line %d = %q, want %q", i, lines[i], w)
@@ -196,42 +227,9 @@ func TestWriteNoticesLabelsProviders(t *testing.T) {
 // section (writeStartupBanner falls back to the plain label row).
 func TestWriteStartupBannerNoProviders(t *testing.T) {
 	var b strings.Builder
-	writeStartupBanner(&b, colors(false), &config.Config{}, "dev", "", "/home/u", nil, "/w", nil, nil)
-	if !strings.Contains(b.String(), "providers  (none)") {
+	writeStartupBanner(&b, report.NewStyle(false, false), &config.Config{}, "dev", "", "/home/u", nil, "/w", nil, nil)
+	if !strings.Contains(b.String(), "    providers       (none)") {
 		t.Errorf("empty notices must render the providers row as (none):\n%s", b.String())
-	}
-}
-
-func TestColorsAndColorTo(t *testing.T) {
-	if c := colors(false); c.yellow != "" || c.reset != "" || c.bold != "" {
-		t.Error("disabled colors must be empty strings")
-	}
-	if c := colors(true); c.yellow == "" || c.reset == "" {
-		t.Error("enabled colors must be non-empty")
-	}
-	// A regular file is not a terminal → no color.
-	f, err := os.CreateTemp(t.TempDir(), "out")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	if colorTo(f) {
-		t.Error("a regular file is not a tty; colorTo must be false")
-	}
-}
-
-// TestIsTerminalDevNull ensures a character-device mode bit is not mistaken for a terminal.
-func TestIsTerminalDevNull(t *testing.T) {
-	f, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	if isTerminal(f) {
-		t.Error("/dev/null is a character device but not a terminal; isTerminal must be false")
-	}
-	if colorTo(f) {
-		t.Error("colorTo(/dev/null) must be false")
 	}
 }
 

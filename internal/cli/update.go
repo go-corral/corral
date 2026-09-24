@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/selfupdate"
 )
 
@@ -120,7 +121,7 @@ var confirmUpdate = func(yes bool, in *os.File, out io.Writer) bool {
 	if yes {
 		return true
 	}
-	if !isTerminal(in) {
+	if !report.IsTerminal(in) {
 		return false // non-interactive and no --yes: do not replace the binary
 	}
 	return promptYesNo(in, out, "Proceed with the update? [y/N] ")

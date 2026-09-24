@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/hooks"
@@ -84,7 +85,7 @@ func setTrustPrompt(t *testing.T, fn func() (answered, approved bool)) {
 	t.Helper()
 	orig := promptTrustApproval
 	t.Cleanup(func() { promptTrustApproval = orig })
-	promptTrustApproval = func(*os.File, io.Writer, ansi) (bool, bool) { return fn() }
+	promptTrustApproval = func(*os.File, io.Writer, report.Style) (bool, bool) { return fn() }
 }
 
 // assertAllUnapproved fails unless every repo-config entry under proj is still unapproved.
@@ -121,7 +122,7 @@ func TestRunBlocksUnapprovedRepoConfigNonInteractive(t *testing.T) {
 }
 
 // /dev/null is a character device, so a mode-bit tty check would misread it as interactive;
-// isTerminal asks the tty driver instead. With /dev/null stdin the trust gate must report the
+// report.IsTerminal asks the tty driver instead. With /dev/null stdin the trust gate must report the
 // actionable trustNonInteractiveMsg (approve in a real terminal), not trustDeclinedMsg ("not
 // approved — aborted"). os.Stdin is swapped directly because withStdin's pipe is never a
 // character device.
@@ -163,7 +164,7 @@ func TestPromptTrustApprovalDevNullNonInteractive(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	var out strings.Builder
-	answered, approved := promptTrustApproval(f, &out, ansi{})
+	answered, approved := promptTrustApproval(f, &out, report.Style{})
 	if answered {
 		t.Error("promptTrustApproval(/dev/null) answered=true, want false (no interactive answer is possible)")
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/trust"
@@ -40,10 +41,10 @@ func cmdValidate(args []string) int {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	out := os.Stdout
-	c := colors(colorTo(out))
+	c := report.StyleFor(out)
 	env := envMap()
 	pathText := func(p string) string { return reportText(abbrevHome(p, home)) }
-	fmt.Fprintf(out, "%scorral validate%s\nConfiguration valid\n", c.bold, c.reset)
+	fmt.Fprintf(out, "%scorral validate%s\nConfiguration valid\n", c.Bold, c.Reset)
 	if warnings := validateWarnings(cfg, home, env); len(warnings) > 0 {
 		writeReportHeading(out, c, "Warnings")
 		writeWarnings(out, c, warnings)
@@ -63,7 +64,7 @@ func cmdValidate(args []string) int {
 		}
 		fmt.Fprintf(out, "    %-10s %s\n", s.Kind, pathText(s.Path))
 		if a, ok := trustAnn[s.Path]; ok && a.state != trust.StateApproved {
-			fmt.Fprintf(out, "               %s%s%s\n", c.yellow, reportText(a.label), c.reset)
+			fmt.Fprintf(out, "               %s%s%s\n", c.Yellow, reportText(a.label), c.Reset)
 		}
 	}
 	active := make([]string, 0, len(*profiles))
@@ -82,9 +83,9 @@ func cmdValidate(args []string) int {
 				a, annotated := hookAnn[p]
 				switch {
 				case execs.unreadable[p] != "":
-					fmt.Fprintf(out, "      %sunreadable — launch will fail or skip this hook: %s%s\n", c.yellow, reportText(execs.unreadable[p]), c.reset)
+					fmt.Fprintf(out, "      %sunreadable — launch will fail or skip this hook: %s%s\n", c.Yellow, reportText(execs.unreadable[p]), c.Reset)
 				case annotated && a.state != trust.StateApproved:
-					fmt.Fprintf(out, "      %s%s%s\n", c.yellow, reportText(a.label), c.reset)
+					fmt.Fprintf(out, "      %s%s%s\n", c.Yellow, reportText(a.label), c.Reset)
 				}
 			}
 		}
@@ -137,7 +138,7 @@ func cmdValidate(args []string) int {
 		for _, p := range *profiles {
 			command = append(command, "--profile", p)
 		}
-		fmt.Fprintf(out, "            %sList with %s%s\n", c.dim, shellQuote(command), c.reset)
+		fmt.Fprintf(out, "            %sList with %s%s\n", c.Dim, shellQuote(command), c.Reset)
 	}
 
 	// Resolved masks are invisible to the hook inside the sandbox.
@@ -154,7 +155,7 @@ func cmdValidate(args []string) int {
 	writeReportHeading(out, c, "Environment")
 	fmt.Fprintln(out, "  Host passthrough allowlist")
 	writeReportNames(out, cfg.Providers.Env.Passthrough)
-	fmt.Fprintf(out, "  %sOther host variables are dropped.%s\n", c.dim, c.reset)
+	fmt.Fprintf(out, "  %sOther host variables are dropped.%s\n", c.Dim, c.Reset)
 
 	// These are configured providers, not availability probes or minted contributions.
 	writeReportHeading(out, c, "Providers")
@@ -208,11 +209,11 @@ func resolvedFloorExtras(home string) []string {
 	return out
 }
 
-func writeReportHeading(w io.Writer, c ansi, title string) {
-	fmt.Fprintf(w, "\n%s%s%s\n", c.bold, title, c.reset)
+func writeReportHeading(w io.Writer, c report.Style, title string) {
+	fmt.Fprintf(w, "\n%s%s%s\n", c.Bold, title, c.Reset)
 }
 
-func writeGrantSection(w io.Writer, c ansi, label string, paths []string, home string) {
+func writeGrantSection(w io.Writer, c report.Style, label string, paths []string, home string) {
 	if len(paths) == 0 {
 		fmt.Fprintf(w, "\n  %s   none\n", label)
 		return
@@ -224,7 +225,7 @@ func writeGrantSection(w io.Writer, c ansi, label string, paths []string, home s
 		noun = "grant"
 	}
 	const hint = "[grant] marks configured paths"
-	fmt.Fprintf(w, "\n  %s · %d %s · %s%s%s\n%s", label, count, noun, c.dim, hint, c.reset, tree.String())
+	fmt.Fprintf(w, "\n  %s · %d %s · %s%s%s\n%s", label, count, noun, c.Dim, hint, c.Reset, tree.String())
 }
 
 func writeReportNames(w io.Writer, names []string) {

@@ -3,10 +3,12 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/cli/report"
 )
 
-// plain is the no-color ansi used in tests so assertions match raw text.
-var plain = ansi{}
+// plain is the no-color style used in tests so assertions match raw text.
+var plain = report.Style{}
 
 func TestUnifiedDiffIdenticalIsEmpty(t *testing.T) {
 	if d := unifiedDiff([]byte("a\nb\n"), []byte("a\nb\n"), "x", "y", plain); d != "" {
@@ -79,9 +81,9 @@ func TestUnifiedDiffCreateFromEmpty(t *testing.T) {
 }
 
 func TestUnifiedDiffColorWraps(t *testing.T) {
-	c := colors(true)
+	c := report.NewStyle(true, false)
 	d := unifiedDiff([]byte("x\n"), []byte("y\n"), "a", "b", c)
-	if !strings.Contains(d, c.green) || !strings.Contains(d, c.red) {
+	if !strings.Contains(d, c.Green) || !strings.Contains(d, c.Red) {
 		t.Errorf("colorized diff should contain green+red codes:\n%q", d)
 	}
 }

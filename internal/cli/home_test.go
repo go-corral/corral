@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/sandbox"
@@ -441,7 +442,7 @@ func TestRunPrivateHomeShadowGatesBeforeMint(t *testing.T) {
 
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return false }
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return false }
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })
 	resolveProviders = func(context.Context, providers.Session, []providers.Active) (*providers.Resolved, error) {
@@ -473,7 +474,7 @@ func TestRunLateShadowPrintsAfterBody(t *testing.T) {
 
 	origConfirm := confirmProceed
 	t.Cleanup(func() { confirmProceed = origConfirm })
-	confirmProceed = func(bool, *os.File, io.Writer, ansi) bool { return true }
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true }
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })
 	resolveProviders = func(context.Context, providers.Session, []providers.Active) (*providers.Resolved, error) {
