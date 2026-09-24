@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -130,15 +131,15 @@ type bannerInfo struct {
 
 // writeStartupBanner prints the launch banner to w. Split into header and body so the
 // real launch can slot its confirmation gate between them.
-func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, cfgWarnings []health.Check, warnings []string, notices []providers.Notice, launchOnly []string) {
-	writeBannerHeader(w, c, cfg, b, cfgWarnings, warnings)
+func writeStartupBanner(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, checks []health.Check, warnings []string, notices []providers.Notice, launchOnly []string) {
+	writeBannerHeader(w, c, cfg, b, checks, warnings)
 	writeBannerBody(w, c, b.home, notices, launchOnly)
 }
 
 // writeBannerHeader prints the mark with the version line and the roll-up of what the
-// session can reach, then the config warnings and the other warnings. Everything here is
+// session can reach, then the warning checks and the other warnings. Everything here is
 // known before providers mint.
-func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, cfgWarnings []health.Check, warnings []string) {
+func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b bannerInfo, checks []health.Check, warnings []string) {
 	title := fmt.Sprintf("%scorral %s%s", c.Bold, bannerVersion(b.version), c.Reset)
 	if len(b.profiles) > 0 {
 		title += fmt.Sprintf("   %sprofile %s%s", c.Dim, strings.Join(b.profiles, ", "), c.Reset)
@@ -147,8 +148,8 @@ func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b banner
 	if b.latest != "" {
 		glyph := c.Glyph(report.Attention)
 		verdict = append(verdict,
-			fmt.Sprintf("%s%s%s %s %s %s available", c.Yellow, glyph, c.Reset, b.version, c.Glyph(report.Fix), b.latest),
-			fmt.Sprintf("%s%s corral update", strings.Repeat(" ", utf8.RuneCountInString(glyph)+1), c.Glyph(report.Fix)))
+			fmt.Sprintf("%s%s%s %s → %s available", c.Yellow, glyph, c.Reset, b.version, b.latest),
+			strings.Repeat(" ", utf8.RuneCountInString(glyph)+1)+"→ corral update")
 	}
 	blue := func(s string) string { return c.Blue + s + c.Reset }
 
@@ -171,9 +172,9 @@ func writeBannerHeader(w io.Writer, c report.Style, cfg *config.Config, b banner
 	)
 	c.Header(w, title, verdict, rollup)
 
-	if len(cfgWarnings)+len(warnings) > 0 {
+	if len(checks)+len(warnings) > 0 {
 		fmt.Fprintln(w)
-		writeChecks(w, c, cfgWarnings, b.home)
+		writeChecks(w, c, checks, b.home)
 		writeWarnings(w, c, warnings)
 	}
 }
@@ -207,15 +208,53 @@ func writeChecks(w io.Writer, c report.Style, checks []health.Check, home string
 	for _, ch := range checks {
 		c.Row(w, report.Row{Glyph: report.Attention, Label: ch.Label, Value: abbrevText(ch.Value, home), Reason: abbrevText(ch.Reason, home)})
 		if ch.Fix != "" {
-			c.Cont(w, c.Glyph(report.Fix)+" "+ch.Fix)
+			c.Fix(w, ch.Fix)
 		}
 	}
+}
+
+// writeTitle prints the title line of a command without the mark header, with dim context
+// when ctx is set.
+func writeTitle(w io.Writer, c report.Style, title, ctx string) {
+	line := c.Bold + title + c.Reset
+	if ctx != "" {
+		line += "   " + c.Dim + ctx + c.Reset
+	}
+	fmt.Fprintln(w, c.Text(line))
 }
 
 // writeWarnings renders advisory warning lines.
 func writeWarnings(w io.Writer, c report.Style, warnings []string) {
 	for _, msg := range warnings {
 		c.Message(w, report.Attention, msg)
+	}
+}
+
+// lineWriter writes each complete line it receives as a message with glyph g.
+type lineWriter struct {
+	w   io.Writer
+	c   report.Style
+	g   report.Glyph
+	buf []byte
+}
+
+func (l *lineWriter) Write(p []byte) (int, error) {
+	l.buf = append(l.buf, p...)
+	for {
+		i := bytes.IndexByte(l.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		l.c.Message(l.w, l.g, string(l.buf[:i]))
+		l.buf = l.buf[i+1:]
+	}
+}
+
+// Flush writes a trailing partial line. Call it when the writer's user is done.
+func (l *lineWriter) Flush() {
+	if len(l.buf) > 0 {
+		l.c.Message(l.w, l.g, string(l.buf))
+		l.buf = nil
 	}
 }
 

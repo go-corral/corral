@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -23,9 +24,10 @@ func launchDeps(cfg *config.Config, home string, host map[string]string, workDir
 }
 
 // activeProviders returns enabled feature providers in registry order.
-func activeProviders(cfg *config.Config, home string, host map[string]string, workDir string, present hooks.Presenter) []providers.Active {
+func activeProviders(cfg *config.Config, home string, host map[string]string, workDir string, present hooks.Presenter, log io.Writer) []providers.Active {
 	d := launchDeps(cfg, home, host, workDir)
 	d.SessionHookPresenter = present
+	d.SessionHookLog = log
 	return registry.Features(cfg, d)
 }
 

@@ -90,7 +90,7 @@ ran or was skipped. A `preStart` script's stderr appears there under the entry n
 When the session ends, corral announces each `postEnd` entry on stderr:
 
 ```text
-corral: running post-end session hook providers.hooks.postEnd.session-report
+    running post-end session hook providers.hooks.postEnd.session-report
 ```
 
 `corral run --dry-run` never executes session hooks. Its banner reports that hooks

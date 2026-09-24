@@ -111,12 +111,12 @@ func trustStore() (*trust.Store, error) {
 // share the exact wording. Both cover the gate's whole surface — repo config and
 // session-hook executables ride the same approval.
 const (
-	trustNonInteractiveMsg = "corral: approving repo config or session-hook executables requires one interactive run " +
+	trustNonInteractiveMsg = "approving repo config or session-hook executables requires one interactive run " +
 		"in a terminal — run `corral run`/`corral sync` there to review and approve them, after which " +
 		"non-interactive runs proceed."
-	trustYesRefusalMsg = "corral: --yes means \"proceed past warnings\", not \"approve new repo-supplied code\" — " +
+	trustYesRefusalMsg = "--yes means \"proceed past warnings\", not \"approve new repo-supplied code\" — " +
 		"approve it once in an interactive terminal first."
-	trustDeclinedMsg = "corral: not approved — aborted."
+	trustDeclinedMsg = "not approved — aborted."
 )
 
 // promptTrustApproval asks the operator to approve what writeTrustPending just listed — the
@@ -141,7 +141,7 @@ func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in
 	}
 	store, err := trustStore()
 	if err != nil {
-		fmt.Fprintf(out, "corral: %v\n", err)
+		c.Message(out, report.Blocked, err.Error())
 		return false
 	}
 	pending := store.Pending(all)
@@ -161,21 +161,21 @@ func checkRepoConfigTrust(sources []config.Source, execs hookExecs, yes bool, in
 	writeTrustPending(out, c, cfgPending, execPending, execs.attr)
 
 	if yes {
-		fmt.Fprintln(out, trustYesRefusalMsg)
+		c.Message(out, report.Blocked, trustYesRefusalMsg)
 		return false
 	}
 	answered, approved := promptTrustApproval(in, out, c)
 	switch {
 	case !answered:
-		fmt.Fprintln(out, trustNonInteractiveMsg)
+		c.Message(out, report.Blocked, trustNonInteractiveMsg)
 		return false
 	case !approved:
-		fmt.Fprintln(out, trustDeclinedMsg)
+		c.Message(out, report.Blocked, trustDeclinedMsg)
 		return false
 	}
 	// Persist all covered entries (not just pending): re-approval is idempotent.
 	if err := store.Approve(all); err != nil {
-		fmt.Fprintf(out, "corral: could not record config approval: %v\n", err)
+		c.Message(out, report.Blocked, fmt.Sprintf("could not record config approval: %v", err))
 		return false
 	}
 	return true
@@ -253,10 +253,8 @@ func writeTrustDryRunNote(out io.Writer, c report.Style, sources []config.Source
 	if len(pending) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "%scorral: note: not yet approved — a real run would prompt to approve:%s\n", c.Yellow, c.Reset)
-	for _, p := range pending {
-		fmt.Fprintf(out, "  - %-7s %s%s\n", pendingState(p), p.Path, attrSuffix(execs.attr, p.Path))
-	}
+	c.Message(out, report.Attention, "not yet approved — a real run would prompt to approve:")
+	writePendingRows(out, c, pending, execs.attr)
 }
 
 // pendingState renders a trust.Result's state for the pending lists.
@@ -267,13 +265,12 @@ func pendingState(p trust.Result) string {
 	return "new"
 }
 
-// attrSuffix appends the config-path attribution for a hook executable ("" for a config
-// file, which needs none — its path is the config path).
-func attrSuffix(attr map[string]string, path string) string {
-	if a := attr[path]; a != "" {
-		return "   (" + a + ")"
+// writePendingRows lists pending entries, each hook executable with the config paths that
+// name it.
+func writePendingRows(out io.Writer, c report.Style, pending []trust.Result, attr map[string]string) {
+	for _, p := range pending {
+		c.Row(out, report.Row{Label: pendingState(p), Value: p.Path, Reason: attr[p.Path]})
 	}
-	return ""
 }
 
 // writeTrustPending lists what the gate is stopping on.
@@ -289,11 +286,7 @@ func writeTrustPending(out io.Writer, c report.Style, cfgPending, execPending []
 		}
 		subjects = append(subjects, s)
 	}
-	fmt.Fprintf(out, "%scorral: unapproved %s — review, then approve:%s\n", c.Bold, strings.Join(subjects, " and "), c.Reset)
-	for _, p := range cfgPending {
-		fmt.Fprintf(out, "  - %-7s %s\n", pendingState(p), p.Path)
-	}
-	for _, p := range execPending {
-		fmt.Fprintf(out, "  - %-7s %s%s\n", pendingState(p), p.Path, attrSuffix(attr, p.Path))
-	}
+	c.Message(out, report.Attention, "unapproved "+strings.Join(subjects, " and ")+" — review, then approve:")
+	writePendingRows(out, c, cfgPending, attr)
+	writePendingRows(out, c, execPending, attr)
 }

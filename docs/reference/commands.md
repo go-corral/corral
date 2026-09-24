@@ -7,6 +7,11 @@ corral <command> [flags]
 `corral <command> -h` prints the command's flags. Flags accept one dash or two
 (`-yes` and `--yes` are the same flag).
 
+Errors print as `✗ <message>` and warnings as `! <message>`. `→` names the command that
+fixes a problem. When the locale is not UTF-8, the output uses ASCII: `[x]`, `[!]`,
+`[ok]`, and `->`. The command after the arrow is never changed. Color is off when the output is not a terminal, `NO_COLOR` is set, or
+`TERM` is `dumb`. The `hook` enforcer's output is plain text.
+
 ## corral run
 
 ```
@@ -49,6 +54,19 @@ new or changed repository config. `--dry-run` does not.
 Each saved Claude Code command checks that the registered corral binary still exists
 before running it. Sync also recognizes an older `<bin> hook <sub>` registration and
 replaces it with the checked form.
+
+Sync prints one line per message, marked `✓`, or unmarked with `--dry-run`, then the
+`settings.json` diff:
+
+```text
+corral sync   claude
+  ✓ updated /home/alice/.claude/settings.json — registered hooks: PreToolUse, PostToolUse, SessionStart, UserPromptSubmit:
+--- /home/alice/.claude/settings.json (current)
++++ /home/alice/.claude/settings.json (after sync)
+```
+
+If the registered binary is outside every directory the sandbox mounts, sync warns on
+stderr that the policy hook cannot run inside the sandbox.
 
 `--binary` resolves a relative path against the current directory before saving it. It
 rejects paths containing a double quote, `$`, a backtick, a backslash, or a control
@@ -188,7 +206,18 @@ corral gc [flags]
 
 Finds provider resources left by a crashed session, such as a per-session
 ServiceAccount, and the temporary kubeconfig under `~/.cache/corral/`. It previews the
-results and asks before deleting them.
+results and asks before deleting them:
+
+```text
+corral gc   1 orphaned resource
+  ● kubernetes      ServiceAccount corral/corral-alice-4242-1a2b3c4d (user=alice session=4242-1a2b3c4d)
+Reap these 1 resource(s)? [y/N] y
+  ✓ reaped 1 resource
+```
+
+With nothing to delete, `gc` prints `✓ no orphaned resources`. A provider that cannot
+list its resources prints a `!` line. When that happens and no orphans are found, `gc`
+prints `! no orphaned resources` and exits 1.
 
 | Flag               | Effect                                                                     |
 | ------------------ | -------------------------------------------------------------------------- |
@@ -209,6 +238,19 @@ source (owner and repository on GitHub) is fixed when corral is built. If the
 repository is private, set `GITHUB_TOKEN` (or `GH_TOKEN`) so the download can
 authenticate; a public repository needs no token.
 
+```text
+corral update
+  ! 0.20.0 → 0.21.0 available
+    binary          /usr/local/bin/corral
+Proceed with the update? [y/N] y
+  ✓ updated to 0.21.0
+                    re-run corral sync if a release note says the hook
+                    registration changed
+                    → corral sync
+```
+
+When the binary is current, `update` prints `✓ up to date`.
+
 | Flag                   | Effect                                                                          |
 | ---------------------- | ------------------------------------------------------------------------------- |
 | `--check`              | Only report whether a newer version exists; download nothing.                   |
@@ -226,6 +268,12 @@ anything. `--apply` removes them in confirmed steps: provider resources left by 
 sessions, each agent's corral files, the cache, repository approval records, and audit
 logs. The binary, global config, and helper plugin are not deleted; the report gives the
 command for removing each one by hand.
+
+The report has three sections: `enforcement`, `state` (removed by `--apply`), and `kept`.
+`●` marks an item that is present and `○` an item that is not. With `--apply`, each step
+prints its own section and marks each deletion `✓ deleted <path>` or
+`✗ cannot delete <path>`. The command ends with `✓ done` or
+`✗ finished with errors (see above)`.
 
 | Flag      | Effect                                                                |
 | --------- | --------------------------------------------------------------------- |

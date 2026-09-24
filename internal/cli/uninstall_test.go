@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/trust"
 )
 
@@ -172,17 +173,18 @@ func TestUninstallManifestReportsFootprintAndDeletesNothing(t *testing.T) {
 	}
 
 	// Enforcement: both agents registered, with their resolved paths.
-	mustContain(t, out, "Enforcement", "claude:", "pi:", "REGISTERED",
+	mustContain(t, out, "enforcement ─", "  ● claude          registered — config dir ~/.claude\n",
+		"  ● pi              registered — config dir ~/",
 		"~/.claude/settings.json", "~/.pi/agent/extensions/corral-presence.ts")
 	// State: cache entries, the trust-record count, audit siblings.
 	mustContain(t, out, "~/.cache/corral", "home-abcd1234", "kube", "update-check.json",
 		"~/.local/state/corral", "1 approval record",
 		"~/.claude/corral-audit.jsonl", "1 rotated backup(s)", "corral-audit.jsonl.lock")
 	// Kept: the print-only section with its by-hand commands.
-	mustContain(t, out, "Kept", "rm "+bin, "~/.config/corral/config.yml", "alias claude=",
+	mustContain(t, out, "kept ─", "rm "+bin, "~/.config/corral/config.yml", "alias claude=",
 		"claude plugin uninstall corral-helper@corral", "claude plugin marketplace remove corral")
 	// And the hint that says how to actually remove things.
-	mustContain(t, out, "nothing was deleted", "--apply")
+	mustContain(t, out, "nothing was deleted", "                    → corral uninstall --apply\n")
 	// Repo config is not uninstall's concern: the approved path recorded in the trust store
 	// must never surface in the report.
 	if strings.Contains(out, "src/proj") || strings.Contains(out, ".corral.yml") {
@@ -208,7 +210,7 @@ func TestUninstallManifestPristineHome(t *testing.T) {
 	}
 	mustContain(t, out, "not registered", "nothing to remove", "~/.cache/corral — not present",
 		"~/.local/state/corral — not present", "corral-audit.jsonl (claude default) — not present")
-	if strings.Contains(out, "REGISTERED") {
+	if strings.Count(out, "●") != 1 { // the binary only
 		t.Errorf("pristine home must not report registered enforcement, got:\n%s", out)
 	}
 }
@@ -242,7 +244,7 @@ func TestUninstallApplyYesRemovesEnforcementCacheStateAudit(t *testing.T) {
 	mustNotExist(t, seed.Presence, seed.Kube, seed.UpdateFile, seed.Home, seed.HomeKeyed,
 		seed.CacheDir, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
 
-	mustContain(t, out, "Kept", "rm "+bin, "~/.config/corral/config.yml",
+	mustContain(t, out, "kept ─", "rm "+bin, "~/.config/corral/config.yml", "  ✓ done\n",
 		"claude plugin uninstall corral-helper@corral", "claude plugin marketplace remove corral")
 	if strings.Contains(out, "skipped") {
 		t.Errorf("--yes must not skip a phase, got:\n%s", out)
@@ -333,6 +335,10 @@ func TestUninstallInvalidGlobalConfigDegrades(t *testing.T) {
 		t.Errorf("apply exit = %d, want 1 (the gc phase cannot run); output:\n%s", code, out)
 	}
 	mustContain(t, out, "cannot check", "`corral gc`", "finished with errors")
+	// --apply prints no footprint, and names the config error once, in the gc phase.
+	if strings.Contains(out, "footprint on this system") || strings.Count(out, "did not find expected") != 1 {
+		t.Errorf("apply must show the config error once and no footprint title:\n%s", out)
+	}
 	// The local phases ran regardless of the config failure.
 	mustNotExist(t, seed.Presence, seed.UpdateFile, seed.Home, seed.HomeKeyed,
 		seed.StateDir, seed.AuditLog)
@@ -358,4 +364,55 @@ func TestUninstallModifiersRequireApply(t *testing.T) {
 	if !strings.Contains(stderr, "only applies with --apply") {
 		t.Errorf("--yes without --apply must explain itself, got: %q", stderr)
 	}
+}
+
+func TestUninstallRemovePhase(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".cache", "corral")
+	mkdirs(t, dir)
+	for _, tt := range []struct {
+		name   string
+		style  report.Style
+		exists bool
+		opts   uninstallOptions
+		in     string
+		want   string
+	}{
+		{"absent", report.NewStyle(false, false), false, uninstallOptions{}, "", "\n" +
+			"cache ────────────────────────────────────────────────────────────\n" +
+			"  ○ ~/.cache/corral not present\n"},
+		{"declined", report.NewStyle(false, true), true, uninstallOptions{}, "n\n", "\n" +
+			"cache ------------------------------------------------------------\n" +
+			"Delete ~/.cache/corral (2 entries)? [y/N] [--] skipped\n"},
+		{"deleted", report.NewStyle(false, true), true, uninstallOptions{Yes: true}, "", "\n" +
+			"cache ------------------------------------------------------------\n" +
+			"[ok] deleted ~/.cache/corral\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := tt.opts
+			opts.Home, opts.Colors = home, tt.style
+			var out strings.Builder
+			if failed := removePhase(opts, strings.NewReader(tt.in), &out, "cache", dir, tt.exists, "2 entries"); failed {
+				t.Error("removePhase reported a failure")
+			}
+			if out.String() != tt.want {
+				t.Errorf("output:\n%s\nwant:\n%s", out.String(), tt.want)
+			}
+		})
+	}
+	mustNotExist(t, dir)
+}
+
+func TestUninstallManifestASCII(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	fakeUninstallBinary(t, home)
+	var out strings.Builder
+	runUninstall(uninstallOptions{Home: home, Host: map[string]string{}, Colors: report.NewStyle(false, true)}, strings.NewReader(""), &out)
+	for i, r := range out.String() {
+		if r > 0x7f {
+			t.Fatalf("non-ASCII %q at byte %d:\n%s", r, i, out.String())
+		}
+	}
+	mustContain(t, out.String(), "[--] cache          ~/.cache/corral - not present\n", "                    -> corral uninstall --apply\n")
 }

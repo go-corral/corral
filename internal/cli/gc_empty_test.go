@@ -18,7 +18,7 @@ func TestCmdGCNoReapers(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "no orphaned resources found") {
-		t.Errorf("cmdGC output must say 'no orphaned resources found', got: %q", output)
+	if output != "  ✓ no orphaned resources\n" {
+		t.Errorf("cmdGC output must say 'no orphaned resources', got: %q", output)
 	}
 }

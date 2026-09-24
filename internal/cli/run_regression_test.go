@@ -150,10 +150,7 @@ func TestExitCodeLogic(t *testing.T) {
 						t.Errorf("non-ExitError: got code %d, want 1", code)
 					}
 				})
-				// fatalf format is "corral: " + format + "\n"
-				// exitCode calls: fatalf(os.Stderr, "sandbox wait: %v", err)
-				// So we expect "corral: sandbox wait: other\n"
-				if !strings.Contains(stderr, "corral: sandbox wait:") {
+				if !strings.Contains(stderr, "✗ sandbox wait:") {
 					t.Errorf("fatalf must be called with 'sandbox wait:' message, got: %q", stderr)
 				}
 				if !strings.Contains(stderr, "other") {

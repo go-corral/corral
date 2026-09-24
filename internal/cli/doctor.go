@@ -49,7 +49,7 @@ func cmdDoctor(args []string, version string) int {
 		agentsArea(cfg, cfgErr, home, homeErr),
 		providersArea(cfg, cfgErr, home),
 		environmentArea(),
-		updateArea(c, cfg, cfgErr, version, home, homeErr),
+		updateArea(cfg, cfgErr, version, home, homeErr),
 	}
 	for _, a := range areas {
 		for i := range a.checks {
@@ -216,7 +216,7 @@ func environmentArea() doctorArea {
 }
 
 // updateArea reports the cached result of the last version check, with no network call.
-func updateArea(c report.Style, cfg *config.Config, cfgErr error, version, home string, homeErr error) doctorArea {
+func updateArea(cfg *config.Config, cfgErr error, version, home string, homeErr error) doctorArea {
 	ch := health.Check{Label: "update"}
 	if homeErr != nil {
 		ch.State, ch.Value, ch.Reason = health.Warn, "unknown", "cannot resolve home"
@@ -226,7 +226,7 @@ func updateArea(c report.Style, cfg *config.Config, cfgErr error, version, home 
 	switch {
 	case ok && selfupdate.IsNewer(latest, version):
 		ch = health.Check{State: health.Warn, Label: "corral",
-			Value: fmt.Sprintf("%s %s %s available", version, c.Glyph(report.Fix), latest), Fix: "corral update"}
+			Value: fmt.Sprintf("%s → %s available", version, latest), Fix: "corral update"}
 	case cfgErr == nil && !cfg.Update.CheckOnStart:
 		ch.State, ch.Value, ch.Reason, ch.Fix = health.Warn, "launch check disabled", "never checked", "corral update --check"
 		if ok {
@@ -280,7 +280,7 @@ func writeDoctor(w io.Writer, c report.Style, title string, areas []doctorArea) 
 		rollup = append(rollup, report.Row{Label: a.name, Value: rollupValue(c, a, worst, bad)})
 	}
 
-	sep := "  " + c.Sep() + "  "
+	sep := "  ·  "
 	failedText := fmt.Sprintf("%d failed", failed)
 	if failed > 0 {
 		failedText = c.Red + failedText + c.Reset
@@ -305,7 +305,7 @@ func writeDoctor(w io.Writer, c report.Style, title string, areas []doctorArea) 
 				}
 				c.Row(w, report.Row{Glyph: stateGlyph(ch.State), Label: ch.Label, Value: ch.Value, Reason: ch.Reason})
 				if ch.Fix != "" {
-					c.Cont(w, c.Glyph(report.Fix)+" "+ch.Fix)
+					c.Fix(w, ch.Fix)
 				}
 			}
 		}

@@ -123,7 +123,7 @@ func writeValidate(w io.Writer, c report.Style, v validateInput) {
 	if len(v.warnings) > 0 {
 		warnText = c.Yellow + warnText + c.Reset
 	}
-	sep := "  " + c.Sep() + "  "
+	sep := "  ·  "
 	verdict := c.Status(report.Ready) + " config valid" + sep +
 		fmt.Sprintf("%d %s", nSources, plural(nSources, "source", "sources")) + sep + warnText
 

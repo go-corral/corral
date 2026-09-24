@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -174,7 +175,18 @@ func TestApplyRejectsProviderEnvClaimingControlMarkers(t *testing.T) {
 	}
 }
 
-func TestCleanupLogsPerProviderWhenLogWriterSet(t *testing.T) {
+// logTeardown records each teardown report as one line.
+func logTeardown(buf *strings.Builder) func(string, error, string) {
+	return func(provider string, err error, hint string) {
+		if err != nil {
+			fmt.Fprintf(buf, "%s: teardown FAILED — %s\n", provider, hint)
+			return
+		}
+		fmt.Fprintf(buf, "%s: minted credentials torn down\n", provider)
+	}
+}
+
+func TestCleanupLogsPerProviderWhenOnTeardownSet(t *testing.T) {
 	var log []string
 	a := &fakeProvider{name: "gitlab", available: true, contrib: &Contribution{Cleanup: cleanupRecorder(&log, "a")}}
 	b := &fakeProvider{name: "kubernetes", available: true, contrib: &Contribution{Cleanup: cleanupRecorder(&log, "b")}}
@@ -183,14 +195,14 @@ func TestCleanupLogsPerProviderWhenLogWriterSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf strings.Builder
-	res.LogWriter = &buf
+	res.OnTeardown = logTeardown(&buf)
 	_ = res.Cleanup(context.Background())
 
 	out := buf.String()
 	// LIFO: kubernetes torn down first, then gitlab — each named, none silent.
 	for _, want := range []string{
-		"corral: kubernetes: minted credentials torn down",
-		"corral: gitlab: minted credentials torn down",
+		"kubernetes: minted credentials torn down",
+		"gitlab: minted credentials torn down",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("teardown log missing %q:\n%s", want, out)
@@ -201,21 +213,21 @@ func TestCleanupLogsPerProviderWhenLogWriterSet(t *testing.T) {
 	}
 }
 
-func TestCleanupSilentWithoutLogWriter(t *testing.T) {
+func TestCleanupSilentWithoutOnTeardown(t *testing.T) {
 	var log []string
 	a := &fakeProvider{name: "gitlab", available: true, contrib: &Contribution{Cleanup: cleanupRecorder(&log, "a")}}
 	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: a}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No LogWriter set → cleanup still runs, just emits nothing (the dry-run / unwind path).
+	// No OnTeardown set → cleanup still runs, just emits nothing (the dry-run / unwind path).
 	_ = res.Cleanup(context.Background())
 	if len(log) != 1 {
-		t.Errorf("cleanup should still run without a LogWriter, ran %v", log)
+		t.Errorf("cleanup should still run without an OnTeardown, ran %v", log)
 	}
 }
 
-func TestCleanupFailureSurfacesHintWhenLogWriterSet(t *testing.T) {
+func TestCleanupFailureSurfacesHintWhenOnTeardownSet(t *testing.T) {
 	failing := &fakeProvider{name: "gitlab", available: true, contrib: &Contribution{
 		CleanupHint: "the minted token may still be live until it expires on 2026-06-03 — revoke it manually",
 		Cleanup:     func(context.Context) error { return errors.New("revoke token: 500") },
@@ -225,7 +237,7 @@ func TestCleanupFailureSurfacesHintWhenLogWriterSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf strings.Builder
-	res.LogWriter = &buf
+	res.OnTeardown = logTeardown(&buf)
 	if err := res.Cleanup(context.Background()); err == nil {
 		t.Fatal("a failing cleanup must still return its error for the launcher to log")
 	}
@@ -246,7 +258,7 @@ func TestCleanupFailureFallsBackWithoutHint(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: failing}})
 	var buf strings.Builder
-	res.LogWriter = &buf
+	res.OnTeardown = logTeardown(&buf)
 	_ = res.Cleanup(context.Background())
 	out := buf.String()
 	// Assert the exact fallback wording, not just the prefix — the generic line must still
@@ -257,7 +269,7 @@ func TestCleanupFailureFallsBackWithoutHint(t *testing.T) {
 }
 
 func TestCleanupMixedSuccessFailureLIFO(t *testing.T) {
-	// LIFO with one provider succeeding and one failing, LogWriter set: the success path
+	// LIFO with one provider succeeding and one failing, OnTeardown set: the success path
 	// (torn down) and the failure path (teardown failed) must not cross-execute, both must be
 	// reported in LIFO order, and the joined error must still propagate.
 	var torn []string
@@ -272,7 +284,7 @@ func TestCleanupMixedSuccessFailureLIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf strings.Builder
-	res.LogWriter = &buf
+	res.OnTeardown = logTeardown(&buf)
 	if err := res.Cleanup(context.Background()); err == nil {
 		t.Fatal("a mixed cleanup with one failure must still return the joined error")
 	}
@@ -291,16 +303,16 @@ func TestCleanupMixedSuccessFailureLIFO(t *testing.T) {
 	}
 }
 
-func TestCleanupFailureSilentWithoutLogWriter(t *testing.T) {
-	// The unwind/dry-run path (LogWriter nil): the error still propagates, nothing prints,
-	// and a nil LogWriter must not panic.
+func TestCleanupFailureSilentWithoutOnTeardown(t *testing.T) {
+	// The unwind/dry-run path (OnTeardown nil): the error still propagates, nothing prints,
+	// and a nil OnTeardown must not panic.
 	failing := &fakeProvider{name: "gitlab", available: true, contrib: &Contribution{
 		CleanupHint: "x",
 		Cleanup:     func(context.Context) error { return errors.New("revoke token: 500") },
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: failing}})
 	if err := res.Cleanup(context.Background()); err == nil {
-		t.Fatal("the cleanup error must still propagate without a LogWriter")
+		t.Fatal("the cleanup error must still propagate without an OnTeardown")
 	}
 }
 

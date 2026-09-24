@@ -71,8 +71,8 @@ func TestCmdUpdateUpToDate(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "up to date") {
-		t.Errorf("output = %q, want 'up to date'", out)
+	if want := "corral update\n  ✓ up to date (0.3.0)\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
 	}
 }
 
@@ -84,8 +84,11 @@ func TestCmdUpdateCheckReportsNewer(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "0.3.0 → 0.4.0") || !strings.Contains(out, "corral update") {
-		t.Errorf("output = %q, want it to report the available upgrade", out)
+	want := "corral update\n" +
+		"  ! 0.3.0 → 0.4.0 available\n" +
+		"                    → corral update\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
 	}
 }
 
@@ -97,8 +100,8 @@ func TestCmdUpdateAheadOfRelease(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "newer than the latest release") {
-		t.Errorf("output = %q, want it to report the binary is ahead", out)
+	if want := "corral update\n  ✓ 0.4.0 is newer than the latest release 0.3.0\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
 	}
 }
 
@@ -110,8 +113,11 @@ func TestCmdUpdateDevBuild(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit = %d, want 0", code)
 	}
-	if !strings.Contains(out, "not a release build") {
-		t.Errorf("output = %q, want the dev-build notice", out)
+	want := "corral update\n" +
+		"  ! \"dev\" is not a release build; the latest release is 0.4.0\n" +
+		"                    → corral update\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
 	}
 }
 
@@ -224,8 +230,15 @@ func TestCmdUpdateInstallsBinary(t *testing.T) {
 	if got, _ := os.ReadFile(target); string(got) != "NEW BINARY BYTES" {
 		t.Errorf("target content = %q, want the new binary", got)
 	}
-	if !strings.Contains(out, "updated to 0.4.0") {
-		t.Errorf("stdout = %q, want the success message", out)
+	want := "corral update\n" +
+		"  ! 0.3.0 → 0.4.0 available\n" +
+		"    binary          " + target + "\n" +
+		"  ✓ updated to 0.4.0\n" +
+		"                    re-run corral sync if a release note says the hook\n" +
+		"                    registration changed\n" +
+		"                    → corral sync\n"
+	if out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
 	}
 }
 

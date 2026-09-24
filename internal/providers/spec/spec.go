@@ -32,6 +32,9 @@ type Contribution struct {
 	// AgentNotes are secret-free, model-facing lines. Keep each to one terse line —
 	// they ride every turn's context.
 	AgentNotes []string
+	// Warnings are secret-free advisory lines the launcher prints after the providers
+	// section. They are ignored when Mint fails, so a failing Mint puts them in its error.
+	Warnings []string
 	// CleanupHint is surfaced only when Cleanup fails: the residual-credential risk
 	// and the remedy.
 	CleanupHint string

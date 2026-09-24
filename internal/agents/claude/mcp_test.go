@@ -53,7 +53,7 @@ func TestMCPTransportWarningsReadsBothScopes(t *testing.T) {
 	}}`)
 
 	w := mcpTransportWarnings(home, project)
-	joined := strings.Join(w, "\n")
+	joined := strings.Join(checkValues(w), "\n")
 	if len(w) != 2 {
 		t.Fatalf("want 2 warnings (docs, remote), got %d:\n%s", len(w), joined)
 	}
@@ -85,7 +85,7 @@ func TestMCPTransportWarningsSkipsProjectWhenWorkDirEmpty(t *testing.T) {
 	}}`)
 
 	w := mcpTransportWarnings(home, "")
-	joined := strings.Join(w, "\n")
+	joined := strings.Join(checkValues(w), "\n")
 	if len(w) != 1 || !strings.Contains(joined, `"remote"`) {
 		t.Fatalf("empty workDir must read only ~/.claude.json (want 1 warning for remote), got %d:\n%s", len(w), joined)
 	}

@@ -307,3 +307,36 @@ func TestMainVersion(t *testing.T) {
 		t.Errorf("version output missing version: %q", out)
 	}
 }
+
+// The hook enforcer's own lines stay plain text: Claude Code shows stderr to the user and
+// parses stdout as JSON.
+func TestCmdHookOutputStaysPlain(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "corral hook: missing event (e.g. pre-tool-use)\n"},
+		{[]string{"frobnicate"}, "corral hook: unknown event \"frobnicate\", blocking (fail-closed)\n"},
+	} {
+		if got := captureStderr(t, func() { cmdHook(tt.args) }); got != tt.want {
+			t.Errorf("cmdHook(%q) stderr = %q, want %q", tt.args, got, tt.want)
+		}
+	}
+	if got := captureStderr(t, func() { cmdHook([]string{"pre-tool-use", "--not-a-flag"}) }); !strings.HasSuffix(got, "\ncorral: bad hook arguments, blocking (fail-closed)\n") {
+		t.Errorf("bad-flag stderr = %q", got)
+	}
+
+	t.Chdir(t.TempDir())
+	t.Setenv(sandbox.GlobalConfigEnvVar, "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var stderr string
+	out := captureStdout(t, func() {
+		withStdin(t, preToolUseEvent(t, home, filepath.Join(home, ".ssh", "id_rsa")), func() {
+			stderr = captureStderr(t, func() { cmdHook([]string{"pre-tool-use"}) })
+		})
+	})
+	if !strings.Contains(out, `"permissionDecision":"deny"`) || strings.Contains(out+stderr, "\x1b") {
+		t.Errorf("hook output must be plain JSON: stdout %q, stderr %q", out, stderr)
+	}
+}

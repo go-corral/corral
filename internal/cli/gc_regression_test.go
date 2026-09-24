@@ -33,7 +33,7 @@ func TestCmdGCConfigLoadError(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(errOut, "corral:") {
+	if !strings.Contains(errOut, "✗ load config:") {
 		t.Errorf("cmdGC error must be reported via fatalf, got stderr: %q", errOut)
 	}
 }

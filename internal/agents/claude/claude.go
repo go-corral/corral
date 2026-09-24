@@ -181,15 +181,15 @@ func (c agent) removeReport(in spec.SyncInput, st claudeSyncState) spec.SyncRepo
 	}
 }
 
-func (c agent) LaunchWarnings(in spec.StatusInput) []string {
-	var w []string
+func (c agent) LaunchWarnings(in spec.StatusInput) []health.Check {
+	var w []health.Check
 	path := c.settingsPath(in.Home, in.Host)
 	if in.Self != "" {
 		data, _ := os.ReadFile(path)
 		if report := claudecfg.HookRegistration(data, in.Self); !report.Registered() {
 			missing := append(append([]string{}, report.Missing...), report.Stale...)
-			w = append(w, fmt.Sprintf("Claude settings.json (%s) does not register corral's hooks for this binary (%s) — run `corral sync`; "+
-				"until then those events are ungated, in this session and in every bare `claude`", path, strings.Join(missing, ", ")))
+			w = append(w, health.Check{State: health.Warn, Label: "hooks", Value: "not registered for this binary in " + path,
+				Reason: strings.Join(missing, ", ") + " are ungated here and in every bare claude", Fix: "corral sync claude"})
 		}
 	}
 	w = append(w, fullscreenBannerWarning(path)...)
@@ -297,13 +297,12 @@ func headlineSuffix(s claudecfg.SyncSummary) string {
 
 // fullscreenBannerWarning returns the advisory shown when Claude Code's TUI mode is not
 // explicitly "default": in fullscreen rendering claude covers corral's startup banner.
-func fullscreenBannerWarning(settingsPath string) []string {
+func fullscreenBannerWarning(settingsPath string) []health.Check {
 	if claudeTUIMode(settingsPath) == "default" {
 		return nil
 	}
-	return []string{
-		`Claude Code may render in fullscreen, which covers this banner (corral's session summary and notices) the moment it launches — set "/tui default" in Claude Code to keep them visible inline, or pass --yes to skip this prompt.`,
-	}
+	return []health.Check{{State: health.Warn, Label: "tui", Value: "Claude Code may cover this banner in fullscreen",
+		Reason: `set "/tui default" in Claude Code to keep it visible, or pass --yes to skip this prompt`}}
 }
 
 // claudeTUIMode reads the "tui" rendering mode from claude's settings.json, or "" when

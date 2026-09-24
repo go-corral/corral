@@ -43,18 +43,21 @@ func (r *recorder) run(cmd *exec.Cmd) error {
 }
 
 // newWith builds a *hooks wired to the recorder seam (bypassing New's real cmd.Run) and
-// routing corral's header lines into the recorder's log buffer instead of os.Stderr.
+// routing corral's header lines into the recorder's log buffer.
 func newWith(cfg Config, rec *recorder) *hooks {
 	return &hooks{cfg: cfg, agent: "claude", run: rec.run, log: &rec.log}
 }
 
 func TestNameAndAvailable(t *testing.T) {
-	p := New(Config{}, "claude", nil)
+	p := New(Config{}, "claude", nil, nil)
 	if p.Name() != "hooks" {
 		t.Errorf("Name() = %q, want hooks", p.Name())
 	}
 	if !p.Available(context.Background()) {
 		t.Error("Available() must be true (nothing to probe)")
+	}
+	if h := p.(*hooks); h.log != os.Stderr {
+		t.Errorf("a nil log must default to os.Stderr, got %v", h.log)
 	}
 }
 
@@ -581,7 +584,7 @@ func TestPreStartPlainDefaultSurfacesStderr(t *testing.T) {
 	}
 	// The block is attributed to the config path, carries the output verbatim, and is
 	// newline-terminated even when the hook's last line was not.
-	if !strings.Contains(got, "corral: output from pre-start session hook providers.hooks.preStart.20-noisy:\n"+
+	if !strings.Contains(got, "output from pre-start session hook providers.hooks.preStart.20-noisy:\n"+
 		"warming caches\nfetch failed, retrying\n") {
 		t.Errorf("missing the attributed output block: %q", got)
 	}
@@ -680,7 +683,7 @@ func TestPostEndIgnoresPresenter(t *testing.T) {
 	if cmd.Stderr != os.Stderr {
 		t.Error("postEnd cmd.Stderr must stay the concrete os.Stderr")
 	}
-	if !strings.Contains(rec.log.String(), "corral: running post-end session hook providers.hooks.postEnd.report") {
+	if !strings.Contains(rec.log.String(), "running post-end session hook providers.hooks.postEnd.report") {
 		t.Errorf("postEnd must keep the corral:-prefixed header: %q", rec.log.String())
 	}
 }
@@ -705,7 +708,7 @@ func TestPostEndStdioPassthroughAndHeader(t *testing.T) {
 	if cmd.Stdin != nil {
 		t.Error("session hooks are one-way — postEnd stdin must be unwired (/dev/null) too")
 	}
-	if !strings.Contains(rec.log.String(), "corral: running post-end session hook providers.hooks.postEnd.report") {
+	if !strings.Contains(rec.log.String(), "running post-end session hook providers.hooks.postEnd.report") {
 		t.Errorf("missing the post-end attribution header line: %q", rec.log.String())
 	}
 }

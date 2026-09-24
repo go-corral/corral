@@ -5,6 +5,7 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,18 +120,25 @@ func (k *k8s) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.C
 	}
 
 	var created []k8sResource
+	var warnings []string
 	kubeconfigPath := kubeconfigPathFor(k.home, sess.ID)
+	// A failed Mint returns no Contribution, so its pending warnings travel in the error.
 	fail := func(e error) (*spec.Contribution, error) {
 		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
 		defer cancel()
 		_ = teardown(rbCtx, cs, created, kubeconfigPath)
+		for _, w := range warnings {
+			e = errors.Join(e, errors.New("warning: "+w))
+		}
 		return nil, e
 	}
 
 	if preProvisioned {
-		if err := k.requireNamespace(ctx, cs, ns); err != nil {
+		warn, err := k.requireNamespace(ctx, cs, ns)
+		if err != nil {
 			return fail(err)
 		}
+		warnings = append(warnings, warn...)
 	} else if err := k.ensureNamespace(ctx, cs, ns); err != nil {
 		return fail(err)
 	}
@@ -183,10 +191,11 @@ func (k *k8s) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.C
 				grants = append(grants, fmt.Sprintf("ClusterRole %s cluster-wide", p.ClusterRole))
 				continue
 			}
-			namespaces, err := k.matchNamespaces(ctx, cs, p.NamespaceSelector)
+			namespaces, warn, err := k.matchNamespaces(ctx, cs, p.NamespaceSelector)
 			if err != nil {
 				return fail(err)
 			}
+			warnings = append(warnings, warn...)
 			ref := roleRef(p)
 			for _, target := range namespaces {
 				rb := &rbacv1.RoleBinding{
@@ -223,7 +232,11 @@ func (k *k8s) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.C
 	if resp.Status.Token == "" {
 		return fail(fmt.Errorf("kubernetes API returned an empty token for %s/%s", ns, base))
 	}
-	lifetime := tokenValidity(k.cfg.EffectiveTokenLifetime(), resp)
+	requested := k.cfg.EffectiveTokenLifetime()
+	lifetime := tokenValidity(requested, resp)
+	if lifetime < requested-time.Minute {
+		warnings = append(warnings, fmt.Sprintf("kubernetes shortened the token lifetime to %s (requested %s) — the cluster caps it (--service-account-max-token-expiration)", lifetime, requested))
+	}
 
 	kubeconfig, err := buildKubeconfig(rc, ns, resp.Status.Token)
 	if err != nil {
@@ -264,13 +277,14 @@ func (k *k8s) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.C
 		AgentNotes:  []string{note},
 		CleanupHint: hint,
 		Cleanup:     cleanup,
+		Warnings:    warnings,
 	}, nil
 }
 
 // tokenValidity reports how long the minted token is really valid: the server's
 // status.expirationTimestamp if present, else the requested duration. A cluster capping lifetime
-// via --service-account-max-token-expiration shortens the request silently, so a shortened token
-// warns on stderr. Rounded to the minute so the round-trip doesn't look like a cap.
+// via --service-account-max-token-expiration shortens the request silently. Rounded to the minute
+// so the round-trip doesn't look like a cap.
 func tokenValidity(requested time.Duration, resp *authnv1.TokenRequest) time.Duration {
 	if resp.Status.ExpirationTimestamp.IsZero() {
 		return requested
@@ -278,9 +292,6 @@ func tokenValidity(requested time.Duration, resp *authnv1.TokenRequest) time.Dur
 	actual := time.Until(resp.Status.ExpirationTimestamp.Time).Round(time.Minute)
 	if actual <= 0 {
 		return requested
-	}
-	if actual < requested-time.Minute {
-		fmt.Fprintf(os.Stderr, "corral: kubernetes shortened the token lifetime to %s (requested %s) — the cluster caps it (--service-account-max-token-expiration)\n", actual, requested)
 	}
 	return actual
 }
@@ -320,42 +331,40 @@ func (k *k8s) ensureNamespace(ctx context.Context, cs kubernetes.Interface, ns s
 // admin's group binding, so a corral-created one would have no permissions.
 // NotFound → fail closed; Forbidden → warn and proceed (edit lacks get on the namespace object,
 // so unreadability says nothing about existence — the SA create right after fails closed if missing).
-func (k *k8s) requireNamespace(ctx context.Context, cs kubernetes.Interface, ns string) error {
-	_, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
+func (k *k8s) requireNamespace(ctx context.Context, cs kubernetes.Interface, ns string) (warnings []string, err error) {
+	_, err = cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 	switch {
 	case err == nil:
-		return nil
+		return nil, nil
 	case apierrors.IsNotFound(err):
-		return fmt.Errorf("namespace %q is not pre-provisioned; ask a cluster admin to create it and bind the target-namespace roles to group system:serviceaccounts:%s, point providers.kubernetes.serviceAccountNamespace at the namespace they prepared, or switch providers.kubernetes.mode to %s", ns, ns, ModeManaged)
+		return nil, fmt.Errorf("namespace %q is not pre-provisioned; ask a cluster admin to create it and bind the target-namespace roles to group system:serviceaccounts:%s, point providers.kubernetes.serviceAccountNamespace at the namespace they prepared, or switch providers.kubernetes.mode to %s", ns, ns, ModeManaged)
 	case apierrors.IsForbidden(err):
-		fmt.Fprintf(os.Stderr, "corral: kubernetes cannot read namespace %q (forbidden) — assuming it is pre-provisioned and continuing\n", ns)
-		return nil
+		return []string{fmt.Sprintf("kubernetes cannot read namespace %q (forbidden) — assuming it is pre-provisioned and continuing", ns)}, nil
 	default:
-		return fmt.Errorf("look up namespace %q: %w", ns, err)
+		return nil, fmt.Errorf("look up namespace %q: %w", ns, err)
 	}
 }
 
-func (k *k8s) matchNamespaces(ctx context.Context, cs kubernetes.Interface, sel *LabelSelector) ([]string, error) {
+func (k *k8s) matchNamespaces(ctx context.Context, cs kubernetes.Interface, sel *LabelSelector) (names, warnings []string, err error) {
 	ls := toLabelSelector(sel)
 	selStr, err := metav1.LabelSelectorAsSelector(ls)
 	if err != nil {
-		return nil, fmt.Errorf("invalid namespaceSelector: %w", err)
+		return nil, nil, fmt.Errorf("invalid namespaceSelector: %w", err)
 	}
 	if selStr.Empty() {
-		fmt.Fprintln(os.Stderr, "corral: kubernetes namespaceSelector is empty — binding in ALL namespaces")
+		warnings = append(warnings, "kubernetes namespaceSelector is empty — binding in ALL namespaces")
 	}
 	list, err := cs.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: selStr.String()})
 	if err != nil {
-		return nil, fmt.Errorf("list namespaces for selector %q: %w", selStr.String(), err)
+		return nil, nil, fmt.Errorf("list namespaces for selector %q: %w", selStr.String(), err)
 	}
-	out := make([]string, 0, len(list.Items))
 	for _, n := range list.Items {
-		out = append(out, n.Name)
+		names = append(names, n.Name)
 	}
-	if len(out) == 0 {
-		fmt.Fprintf(os.Stderr, "corral: kubernetes namespaceSelector %q matched no namespaces — no bindings created\n", selStr.String())
+	if len(names) == 0 {
+		warnings = append(warnings, fmt.Sprintf("kubernetes namespaceSelector %q matched no namespaces — no bindings created", selStr.String()))
 	}
-	return out, nil
+	return names, warnings, nil
 }
 
 // bindingClient is the subset of the typed RBAC binding clients that applyBindingImmutableRef needs.

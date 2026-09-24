@@ -77,7 +77,7 @@ launch. Output handling differs by event:
   `postEnd` hook is announced on stderr:
 
   ```
-  corral: running post-end session hook providers.hooks.postEnd.<key>
+      running post-end session hook providers.hooks.postEnd.<key>
   ```
 
 `CORRAL_EVENT` tells a script shared between the two events which contract it is

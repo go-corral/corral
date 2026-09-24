@@ -976,6 +976,32 @@ func TestRunPiActivatesBridge(t *testing.T) {
 	}
 }
 
+// The launch advisories render as checks with their fix commands: claude's hook registration
+// and the kill switch set in the launching shell.
+func TestRunLaunchChecks(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	t.Setenv("CORRAL_DISABLE_HOOKS", "1")
+
+	stderr := captureStderr(t, func() {
+		_ = captureStdout(t, func() { cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev") })
+	})
+	for _, want := range []string{
+		"  ! hooks           not registered for this binary in ~/.claude/settings.json\n",
+		"                    → corral sync claude\n",
+		"  ! environment     CORRAL_DISABLE_HOOKS is set in this shell\n",
+		"                    → unset CORRAL_DISABLE_HOOKS\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("launch banner missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 // TestRunBridgeAgentSuppressesSettingsAdvisory verifies the claude-only settings.json
 // advisories (the "run corral sync" sync-state warning and the fullscreen-TUI warning) are
 // shown for a command-hook agent (claude) but suppressed for a bridge agent (pi) — telling a
