@@ -212,7 +212,9 @@ agent: claude
 # traffic by default (they set DISABLE_TELEMETRY=1 / DISABLE_ERROR_REPORTING=1 /
 # CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1); set any true to allow it. attributionHeader defaults
 # true (Claude's own default); set false to drop the system-prompt attribution block
-# (CLAUDE_CODE_ATTRIBUTION_HEADER=0) — useful for a local LLM / LLM gateway.
+# (CLAUDE_CODE_ATTRIBUTION_HEADER=0) — useful for a local LLM / LLM gateway. agentView
+# defaults false (CLAUDE_CODE_DISABLE_AGENT_VIEW=1): its background sessions cannot outlive
+# the sandbox.
 agents:
   claude:
     claudeaiConnectors: false
@@ -220,6 +222,7 @@ agents:
     errorReporting: false
     feedbackSurvey: false
     attributionHeader: true
+    agentView: false
 providers:
   # --- built-in providers: always active, applied before the feature providers ---
   # Paths the sandbox masks and the hook denies, split by kind: directories are masked

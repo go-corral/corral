@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
@@ -97,5 +98,37 @@ func TestSpecParamsHomeProviderDisabled(t *testing.T) {
 	// SandboxHome should be empty when home provider is disabled
 	if params.SandboxHome != "" {
 		t.Errorf("specParams with home provider disabled: SandboxHome = %q, want empty", params.SandboxHome)
+	}
+}
+
+// agentView only toggles CLAUDE_CODE_DISABLE_AGENT_VIEW; every other sandbox param stays equal.
+func TestSpecParamsAgentViewOnlyChangesEnv(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := func(agent string, agentView bool) sandbox.DefaultParams {
+		cfg := &config.Config{Agent: agent}
+		cfg.Agents.Claude.AgentView = agentView
+		return specParams(cfg, home, proj, map[string]string{}, "")
+	}
+
+	off, on := build("claude", false), build("claude", true)
+	if off.AgentEnv["CLAUDE_CODE_DISABLE_AGENT_VIEW"] != "1" {
+		t.Errorf("agentView false: AgentEnv = %v, want CLAUDE_CODE_DISABLE_AGENT_VIEW=1", off.AgentEnv)
+	}
+	if _, ok := on.AgentEnv["CLAUDE_CODE_DISABLE_AGENT_VIEW"]; ok {
+		t.Errorf("agentView true: AgentEnv = %v, want no CLAUDE_CODE_DISABLE_AGENT_VIEW", on.AgentEnv)
+	}
+	delete(off.AgentEnv, "CLAUDE_CODE_DISABLE_AGENT_VIEW")
+	if !reflect.DeepEqual(off, on) {
+		t.Errorf("agentView must change only CLAUDE_CODE_DISABLE_AGENT_VIEW:\noff: %+v\non:  %+v", off, on)
+	}
+
+	for _, agentView := range []bool{false, true} {
+		if _, ok := build("pi", agentView).AgentEnv["CLAUDE_CODE_DISABLE_AGENT_VIEW"]; ok {
+			t.Errorf("pi with agentView %v: AgentEnv must not contain CLAUDE_CODE_DISABLE_AGENT_VIEW", agentView)
+		}
 	}
 }

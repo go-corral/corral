@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-corral/corral/internal/sandbox"
@@ -40,6 +41,7 @@ func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
 		"DISABLE_ERROR_REPORTING",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER",
+		"CLAUDE_CODE_DISABLE_AGENT_VIEW",
 	} {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames must keep %q reserved", name)
@@ -52,6 +54,15 @@ func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames must keep %q reserved", name)
 		}
+	}
+}
+
+func TestAgentViewEnvSetRejected(t *testing.T) {
+	_, _, err := loadFrom(t, "",
+		"providers:\n  env:\n    set:\n      - {name: CLAUDE_CODE_DISABLE_AGENT_VIEW, value: \"1\"}", "", "")
+	want := `providers.env.set: "CLAUDE_CODE_DISABLE_AGENT_VIEW" is reserved by corral and cannot be set`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("env.set naming CLAUDE_CODE_DISABLE_AGENT_VIEW: got err %v, want it to contain %q", err, want)
 	}
 }
 

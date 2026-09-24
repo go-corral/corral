@@ -81,6 +81,7 @@ settings ───────────────────────�
     telemetry       off
     error reporting off
     feedback survey off
+    agent view      off
     attribution header off
     also masked     ~/dotfiles/ssh
                     real paths of symlinked always-blocked directories
@@ -211,6 +212,7 @@ settings ───────────────────────�
     telemetry       on
     error reporting off
     feedback survey off
+    agent view      off
     env             TERM COLORTERM NO_COLOR EDITOR VISUAL PAGER TMPDIR LANG
                     CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
                     PI_CODING_AGENT_SESSION_DIR
@@ -306,7 +308,7 @@ func TestValidatePiReport(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	for _, unwanted := range []string{"connectors", "telemetry", "error reporting", "feedback survey", "~/.cache/corral/home"} {
+	for _, unwanted := range []string{"connectors", "telemetry", "error reporting", "feedback survey", "agent view", "~/.cache/corral/home"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("unexpected %q:\n%s", unwanted, out)
 		}
