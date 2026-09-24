@@ -60,7 +60,8 @@ session.
 
 - `corral validate` lists config sources, summarizes selected effective settings, and
   annotates repository config and session-hook executables with their approval state.
-- `corral doctor` reports approval state as part of its config and hook checks.
+- `corral doctor` warns about repository config and session-hook executables that are
+  not approved or changed since approval.
 - `corral run --dry-run` builds the sandbox preview without requiring approval and
   notes files that a real run would ask you to approve.
 - `corral sync --dry-run` previews agent synchronization without requiring approval.

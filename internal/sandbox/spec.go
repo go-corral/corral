@@ -1,6 +1,10 @@
 package sandbox
 
-import "io"
+import (
+	"io"
+
+	"github.com/go-corral/corral/internal/health"
+)
 
 // NetPolicy describes the sandbox's network posture. Only NetOpen is set
 // today; the field exists so the launch path never hard-codes "network is
@@ -87,7 +91,7 @@ type Backend interface {
 	Name() string
 	Available() bool
 	UnavailableHint() string
-	Doctor(w io.Writer)
+	Doctor() []health.Check
 	// ReadOnlyTargets returns the in-sandbox paths this backend would expose
 	// read-only from the embedded baseline. The launcher uses it to warn when
 	// a providers.paths.rw grant would shadow a baseline read-only system path.

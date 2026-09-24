@@ -2,9 +2,10 @@ package sandbox
 
 import (
 	"fmt"
-	"io"
 	"os/exec"
 	"runtime"
+
+	"github.com/go-corral/corral/internal/health"
 )
 
 // Kind identifies a sandbox backend, selected once per command.
@@ -53,12 +54,10 @@ func ResolveKind(override string) (Kind, error) {
 	return DefaultKind()
 }
 
-// ReportTool writes a "  name: <path>" diagnostic line for a sandbox helper
-// to w, resolving it on PATH. Shared by the backend packages' Doctor methods.
-func ReportTool(w io.Writer, name string) {
+// ToolCheck resolves a sandbox helper on PATH. hint is the Fail reason when it is missing.
+func ToolCheck(name, hint string) health.Check {
 	if p, err := exec.LookPath(name); err == nil {
-		fmt.Fprintf(w, "  %s: %s\n", name, p)
-	} else {
-		fmt.Fprintf(w, "  %s: NOT FOUND\n", name)
+		return health.Check{Label: name, Value: p}
 	}
+	return health.Check{State: health.Fail, Label: name, Value: "not found", Reason: hint}
 }

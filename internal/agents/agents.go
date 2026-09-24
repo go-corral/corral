@@ -13,18 +13,16 @@ import (
 )
 
 type (
-	Agent        = spec.Agent
-	AgentConfig  = spec.AgentConfig
-	Launch       = spec.Launch
-	BannerField  = spec.BannerField
-	ConfigPath   = spec.ConfigPath
-	Footprint    = spec.Footprint
-	StatusInput  = spec.StatusInput
-	SyncInput    = spec.SyncInput
-	SyncReport   = spec.SyncReport
-	SyncDiff     = spec.SyncDiff
-	DoctorReport = spec.DoctorReport
-	DoctorLine   = spec.DoctorLine
+	Agent       = spec.Agent
+	AgentConfig = spec.AgentConfig
+	Launch      = spec.Launch
+	BannerField = spec.BannerField
+	ConfigPath  = spec.ConfigPath
+	Footprint   = spec.Footprint
+	StatusInput = spec.StatusInput
+	SyncInput   = spec.SyncInput
+	SyncReport  = spec.SyncReport
+	SyncDiff    = spec.SyncDiff
 )
 
 func BinDir(bin string) string { return spec.BinDir(bin) }

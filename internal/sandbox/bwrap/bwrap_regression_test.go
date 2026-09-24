@@ -1,13 +1,13 @@
 package bwrap
 
 import (
-	"bytes"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -83,21 +83,31 @@ func TestNameReturnsBwrap(t *testing.T) {
 	}
 }
 
-// TestDoctorReportsPidNamespace verifies Doctor writes the tool report and the pid namespace.
+// TestDoctorReportsPidNamespace verifies Doctor returns the tool check and the pid namespace.
 func TestDoctorReportsPidNamespace(t *testing.T) {
-	b := New("")
-	var buf bytes.Buffer
-	b.Doctor(&buf)
-	output := buf.String()
-
-	// Should report the binary
-	if !strings.Contains(output, "bwrap") {
-		t.Errorf("Doctor output must mention bwrap; got: %s", output)
+	checks := New("").Doctor()
+	if len(checks) != 3 {
+		t.Fatalf("Doctor must return the tool, pid namespace, and legacy tiocsti checks; got %+v", checks)
 	}
+	if checks[0].Label != "bwrap" {
+		t.Errorf("first check must be the bwrap tool; got %+v", checks[0])
+	}
+	pid := checks[1]
+	if pid.Label != "pid namespace" || pid.Fix != "" {
+		t.Errorf("pid namespace check: got %+v", pid)
+	}
+	if pid.State == health.Warn && (pid.Value != "unavailable" || pid.Reason == "") {
+		t.Errorf("an unavailable pid namespace must say so and carry the error; got %+v", pid)
+	}
+}
 
-	// Should mention PID namespace (either successfully or as unavailable)
-	if !strings.Contains(output, "pid namespace") {
-		t.Errorf("Doctor output must mention 'pid namespace'; got: %s", output)
+// TestDoctorMissingBwrapFails verifies a missing bwrap fails with the install hint as its
+// reason and no fix command. The hint names the corral run flag, which doctor lacks.
+func TestDoctorMissingBwrapFails(t *testing.T) {
+	got := New("/nonexistent/bwrap").Doctor()[0]
+	want := health.Check{State: health.Fail, Label: "/nonexistent/bwrap", Value: "not found", Reason: "install bubblewrap, or pass --bwrap <path> to corral run"}
+	if got != want {
+		t.Errorf("bwrap check = %+v, want %+v", got, want)
 	}
 }
 
@@ -109,15 +119,16 @@ func TestDoctorReportsPidNamespace(t *testing.T) {
 // assertion does not depend on the test kernel.
 func TestDoctorReportsLegacyTIOCSTI(t *testing.T) {
 	cases := []struct {
-		name     string
-		content  string // ignored unless write is true
-		write    bool
-		want     string
-		wantWarn bool
+		name    string
+		content string // ignored unless write is true
+		write   bool
+		state   health.State
+		value   string
+		fix     string
 	}{
-		{name: "enabled warns", content: "1\n", write: true, want: "ENABLED", wantWarn: true},
-		{name: "disabled is quiet", content: "0\n", write: true, want: "disabled"},
-		{name: "absent is not a failure", write: false, want: "not present"},
+		{name: "enabled warns", content: "1\n", write: true, state: health.Warn, value: "enabled", fix: "sudo sysctl -w dev.tty.legacy_tiocsti=0"},
+		{name: "disabled is quiet", content: "0\n", write: true, state: health.OK, value: "disabled"},
+		{name: "absent is not a failure", write: false, state: health.OK, value: "not present"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,19 +138,17 @@ func TestDoctorReportsLegacyTIOCSTI(t *testing.T) {
 					t.Fatalf("seed sysctl: %v", err)
 				}
 			}
-			var buf bytes.Buffer
-			reportLegacyTIOCSTI(&buf, path)
-			got := buf.String()
-			if !strings.Contains(got, "legacy tiocsti:") {
-				t.Errorf("must report under a stable label; got %q", got)
-			}
-			if !strings.Contains(got, tc.want) {
-				t.Errorf("expected %q in the report; got %q", tc.want, got)
+			got := legacyTIOCSTICheck(path)
+			if got.Label != "legacy tiocsti" || got.State != tc.state || got.Value != tc.value {
+				t.Errorf("got %+v, want state %v value %q", got, tc.state, tc.value)
 			}
 			// Only the enabled case may tell the operator to change a sysctl — the other
 			// two must not nag about a kernel that is already safe.
-			if mentions := strings.Contains(got, "dev.tty.legacy_tiocsti=0"); mentions != tc.wantWarn {
-				t.Errorf("remediation advice present=%v, want %v; got %q", mentions, tc.wantWarn, got)
+			if got.Fix != tc.fix {
+				t.Errorf("fix = %q, want %q", got.Fix, tc.fix)
+			}
+			if (got.Reason != "") != (tc.state == health.Warn) {
+				t.Errorf("only the warning carries a reason; got %+v", got)
 			}
 		})
 	}
@@ -148,10 +157,9 @@ func TestDoctorReportsLegacyTIOCSTI(t *testing.T) {
 // The real Doctor must include the check, so it cannot be added to the helper yet left
 // unwired (the failure mode that made this a review finding in the first place).
 func TestDoctorIncludesLegacyTIOCSTICheck(t *testing.T) {
-	var buf bytes.Buffer
-	New("").Doctor(&buf)
-	if !strings.Contains(buf.String(), "legacy tiocsti:") {
-		t.Errorf("Doctor must report the legacy TIOCSTI status; got %q", buf.String())
+	checks := New("").Doctor()
+	if got := checks[len(checks)-1]; got.Label != "legacy tiocsti" {
+		t.Errorf("Doctor must report the legacy TIOCSTI status; got %+v", checks)
 	}
 }
 

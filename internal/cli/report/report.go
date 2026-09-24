@@ -154,16 +154,20 @@ type Row struct {
 	Reason string
 }
 
+// Status returns g in its status color.
+func (s Style) Status(g Glyph) string {
+	if color := s.glyphColor(g); color != "" {
+		return color + s.Glyph(g) + s.Reset
+	}
+	return s.Glyph(g)
+}
+
 // slot returns the status column for g and its visible width.
 func (s Style) slot(g Glyph) (string, int) {
 	if s.ASCII {
 		return fmt.Sprintf("%-*s ", asciiSlot, s.Glyph(g)), asciiSlot + 1
 	}
-	glyph := s.Glyph(g)
-	if color := s.glyphColor(g); color != "" {
-		glyph = color + glyph + s.Reset
-	}
-	return "  " + glyph + " ", 4
+	return "  " + s.Status(g) + " ", 4
 }
 
 // Row writes r on the detail grid. A label longer than 14 characters, the most that fits

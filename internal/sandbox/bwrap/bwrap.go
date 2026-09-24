@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/sandbox"
 )
@@ -39,35 +40,38 @@ func (b Backend) UnavailableHint() string {
 	return fmt.Sprintf("bwrap not found (%q); install bubblewrap or pass -bwrap", b.bin())
 }
 
-func (b Backend) Doctor(w io.Writer) {
-	sandbox.ReportTool(w, b.bin())
+func (b Backend) Doctor() []health.Check {
+	checks := []health.Check{sandbox.ToolCheck(b.bin(), "install bubblewrap, or pass --bwrap <path> to corral run")}
 	if ns, err := os.Readlink("/proc/self/ns/pid"); err == nil {
-		fmt.Fprintf(w, "  pid namespace: %s\n", ns)
+		checks = append(checks, health.Check{Label: "pid namespace", Value: ns})
 	} else {
-		fmt.Fprintf(w, "  pid namespace: unavailable (%v)\n", err)
+		checks = append(checks, health.Check{State: health.Warn, Label: "pid namespace", Value: "unavailable", Reason: err.Error()})
 	}
-	reportLegacyTIOCSTI(w, legacyTIOCSTIPath)
+	return append(checks, legacyTIOCSTICheck(legacyTIOCSTIPath))
 }
 
 const legacyTIOCSTIPath = "/proc/sys/dev/tty/legacy_tiocsti"
 
-// reportLegacyTIOCSTI surfaces the residual risk of sharing the caller's
+// legacyTIOCSTICheck surfaces the residual risk of sharing the caller's
 // terminal with the sandbox. Where legacy TIOCSTI is still enabled, a process
 // inside the sandbox can push characters into the terminal's input queue for
 // the operator's shell to run after corral exits. Warns rather than blocks:
 // it reports a host-kernel property corral cannot change.
-func reportLegacyTIOCSTI(w io.Writer, path string) {
+func legacyTIOCSTICheck(path string) health.Check {
+	c := health.Check{Label: "legacy tiocsti"}
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintln(w, "  legacy tiocsti: not present — this kernel has no legacy TIOCSTI path")
-		return
+	switch {
+	case err != nil:
+		c.Value = "not present"
+	case strings.TrimSpace(string(raw)) != "1":
+		c.Value = "disabled"
+	default:
+		c.State = health.Warn
+		c.Value = "enabled"
+		c.Reason = "the sandbox shares your terminal, so a process inside it could inject keystrokes into your shell"
+		c.Fix = "sudo sysctl -w dev.tty.legacy_tiocsti=0"
 	}
-	if strings.TrimSpace(string(raw)) != "1" {
-		fmt.Fprintln(w, "  legacy tiocsti: disabled")
-		return
-	}
-	fmt.Fprintln(w, "  legacy tiocsti: ENABLED — the sandbox shares your terminal, so a process inside it")
-	fmt.Fprintln(w, "    could inject keystrokes into your shell; set dev.tty.legacy_tiocsti=0 to close that")
+	return c
 }
 
 func (b Backend) ReadOnlyTargets(spec sandbox.SandboxSpec) []string {
