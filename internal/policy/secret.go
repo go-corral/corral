@@ -75,6 +75,11 @@ const (
 	KindOnePassword   SecretKind = "a 1Password credential"
 	KindAgeKey        SecretKind = "an age secret key"
 	KindSentryToken   SecretKind = "a Sentry token"
+	KindNpmToken      SecretKind = "an npm access token"
+	KindPyPIToken     SecretKind = "a PyPI API token"
+	KindRubyGemsKey   SecretKind = "a RubyGems API key"
+	KindDockerToken   SecretKind = "a Docker Hub access token"
+	KindArtifactory   SecretKind = "a JFrog Artifactory API key"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -131,6 +136,13 @@ var knownFormats = []struct {
 	{KindOnePassword, regexp.MustCompile(`A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}`)},
 	{KindAgeKey, regexp.MustCompile(`AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}`)},
 	{KindSentryToken, regexp.MustCompile(`sntry(?:s_eyJ[A-Za-z0-9+/=_]{50,}|u_[a-f0-9]{64})`)},
+	{KindNpmToken, regexp.MustCompile(`npm_[A-Za-z0-9]{36,}`)},
+	// AgEIcHlwaS5vcmc is the base64 macaroon header naming pypi.org.
+	{KindPyPIToken, regexp.MustCompile(`pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}`)},
+	{KindRubyGemsKey, regexp.MustCompile(`rubygems_[a-f0-9]{48}`)},
+	{KindDockerToken, regexp.MustCompile(`dckr_(?:pat|oat)_[A-Za-z0-9_-]{27,}`)},
+	// The trailing \b rejects an AKCp run that continues into a longer alphanumeric string.
+	{KindArtifactory, regexp.MustCompile(`AKCp[A-Za-z0-9]{69}\b`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)
