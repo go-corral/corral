@@ -63,6 +63,10 @@ func TestSecretScannerParity(t *testing.T) {
 		{"rubygems", KindRubyGemsKey, "rubygems_" + strings.Repeat("0", 48)},
 		{"docker-pat", KindDockerToken, "dckr_" + "pat_" + strings.Repeat("h", 27)},
 		{"artifactory", KindArtifactory, "AKCp" + strings.Repeat("i", 69)},
+		{"gitlab-pat", KindGitLabToken, "glpat-" + strings.Repeat("f", 20)},
+		{"gitlab-job", KindGitLabToken, "glcbt-" + "64_" + strings.Repeat("g", 20)},
+		{"gitlab-runner-registration", KindGitLabToken, "GR1348941" + strings.Repeat("h", 20)},
+		{"gitlab-session", KindGitLabToken, "_gitlab_session=" + strings.Repeat("0", 32)},
 	}
 	benign := []struct {
 		name string
@@ -72,6 +76,7 @@ func TestSecretScannerParity(t *testing.T) {
 		{"short-ghp", "ghp_tooShort"}, // below the 36-char body bar: must not hit anywhere
 		{"git-sha", "commit " + strings.Repeat("a", 40)},
 		{"kebab-slug", "risk-admin-dashboard-configuration-and-settings-refactor"},
+		{"gitlab-prefix-in-prose", "set glpat-token in the CI settings"},
 	}
 
 	// scanAll runs the four real entry points over one input and returns their hit verdicts
