@@ -87,6 +87,7 @@ const (
 	KindNotionToken   SecretKind = "a Notion API token"
 	KindPostmanKey    SecretKind = "a Postman API key"
 	KindDynatrace     SecretKind = "a Dynatrace API token"
+	KindBedrockKey    SecretKind = "an Amazon Bedrock API key"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -104,7 +105,7 @@ var knownFormats = []struct {
 	// markers are stripped. Requiring consecutive full lines (not a single long token) keeps false
 	// positives down: inline hashes and single data-URI lines don't match.
 	{KindPEMBody, regexp.MustCompile(`(?m)^[A-Za-z0-9+/]{60,}={0,2}\r?$\n^[A-Za-z0-9+/]{60,}={0,2}\r?$`)},
-	{KindAWSKey, regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},
+	{KindAWSKey, regexp.MustCompile(`\b(?:AKIA|ASIA|ABIA|ACCA|A3T[0-9A-Z])[0-9A-Z]{16}\b`)},
 	{KindJWT, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)},
 	{KindGitHubToken, regexp.MustCompile(`\b(?:gh[opsru]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})\b`)},
 	{KindSlackToken, regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)},
@@ -159,6 +160,11 @@ var knownFormats = []struct {
 	{KindNotionToken, regexp.MustCompile(`ntn_[0-9]{11}[A-Za-z0-9]{35}`)},
 	{KindPostmanKey, regexp.MustCompile(`PMAK-[a-f0-9]{24}-[a-f0-9]{34}`)},
 	{KindDynatrace, regexp.MustCompile(`dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}`)},
+	// Long-term key: ABSK + base64 of "BedrockAPIKey-…" (the pattern AWS publishes). A key bound to
+	// an existing IAM user encodes that user's name instead and is not matched.
+	{KindBedrockKey, regexp.MustCompile(`ABSKQmVkcm9ja0FQSUtleS[A-Za-z0-9+/]{20,}`)},
+	// Short-term key: a presigned URL, base64 of "bedrock.amazonaws.com".
+	{KindBedrockKey, regexp.MustCompile(`bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29t`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)
