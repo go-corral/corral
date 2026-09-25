@@ -54,9 +54,18 @@ const (
 	KindStripeKey     SecretKind = "a Stripe live key"
 	KindGCPServiceKey SecretKind = "a GCP service-account key"
 	KindAtlassian     SecretKind = "an Atlassian token"
+	KindAnthropicKey  SecretKind = "an Anthropic API key or OAuth token"
+	KindOpenAIKey     SecretKind = "an OpenAI API key"
+	KindHuggingFace   SecretKind = "a Hugging Face token"
+	KindGroqKey       SecretKind = "a Groq API key"
+	KindXAIKey        SecretKind = "an xAI API key"
+	KindOpenRouterKey SecretKind = "an OpenRouter API key"
+	KindPerplexityKey SecretKind = "a Perplexity API key"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
+// A pattern that starts with a literal lets Go's regexp skip ahead with a fast literal search. A
+// leading \b or character class disables that and makes the pattern ~40x slower on a 1 MiB input.
 var knownFormats = []struct {
 	kind SecretKind
 	re   *regexp.Regexp
@@ -79,6 +88,16 @@ var knownFormats = []struct {
 	// ATATT3 = API token, ATCTT3 = access token. Atlassian publishes neither the prefix nor a
 	// fixed length, so the body bar stays well below the observed 192-char total.
 	{KindAtlassian, regexp.MustCompile(`\bAT[AC]TT3[A-Za-z0-9_=-]{50,}`)},
+	// api03 = API key, admin01 = admin key, oat01 = Claude Code OAuth token (`claude setup-token`).
+	{KindAnthropicKey, regexp.MustCompile(`sk-ant-[a-z]+\d{2}-[A-Za-z0-9_-]{40,}`)},
+	// T3BlbkFJ is base64 for "OpenAI"; requiring it keeps kebab-case slugs like `risk-admin-...` out.
+	{KindOpenAIKey, regexp.MustCompile(`sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ`)},
+	{KindHuggingFace, regexp.MustCompile(`hf_[A-Za-z]{34,}`)},
+	{KindHuggingFace, regexp.MustCompile(`api_org_[A-Za-z]{34,}`)},
+	{KindGroqKey, regexp.MustCompile(`gsk_[A-Za-z0-9]{52,}`)},
+	{KindXAIKey, regexp.MustCompile(`xai-[A-Za-z0-9_]{80,}`)},
+	{KindOpenRouterKey, regexp.MustCompile(`sk-or-v1-[0-9a-f]{64}`)},
+	{KindPerplexityKey, regexp.MustCompile(`pplx-[A-Za-z0-9]{48,}`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)
