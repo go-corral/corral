@@ -73,6 +73,10 @@ func TestSecretScannerParity(t *testing.T) {
 		{"notion", KindNotionToken, "ntn_" + strings.Repeat("1", 11) + strings.Repeat("i", 35)},
 		{"postman", KindPostmanKey, "PMAK-" + strings.Repeat("2", 24) + "-" + strings.Repeat("3", 34)},
 		{"dynatrace", KindDynatrace, "dt0c01." + strings.Repeat("j", 24) + "." + strings.Repeat("k", 64)},
+		{"aws-abia", KindAWSKey, "ABIA" + strings.Repeat("Y", 16)},
+		{"aws-a3t", KindAWSKey, "A3TX" + strings.Repeat("W", 16)},
+		{"bedrock-long-term", KindBedrockKey, "ABSK" + "QmVkcm9ja0FQSUtleS" + strings.Repeat("f", 110)},
+		{"bedrock-short-term", KindBedrockKey, "bedrock-api-key-" + "YmVkcm9jay5hbWF6b25hd3MuY29t" + "&X-Amz"},
 	}
 	benign := []struct {
 		name string
