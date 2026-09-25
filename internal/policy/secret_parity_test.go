@@ -44,6 +44,20 @@ func TestSecretScannerParity(t *testing.T) {
 		{"xai", KindXAIKey, "xai-" + strings.Repeat("n", 80)},
 		{"openrouter", KindOpenRouterKey, "sk-or-" + "v1-" + strings.Repeat("0", 64)},
 		{"perplexity", KindPerplexityKey, "pplx-" + strings.Repeat("o", 48)},
+		{"vault", KindVaultToken, "hvs." + strings.Repeat("f", 90)},
+		{"terraform", KindTerraform, strings.Repeat("g", 14) + ".atlas" + "v1." + strings.Repeat("h", 67)},
+		{"grafana-sa", KindGrafanaToken, "glsa_" + strings.Repeat("i", 32) + "_" + strings.Repeat("0", 8)},
+		{"digitalocean", KindDigitalOcean, "dop_" + "v1_" + strings.Repeat("1", 64)},
+		{"tailscale", KindTailscaleKey, "tskey-" + "auth-" + "k12345CNTRL-" + strings.Repeat("j", 32)},
+		{"databricks", KindDatabricks, "dapi" + strings.Repeat("2", 32)},
+		{"pulumi", KindPulumiToken, "pul-" + strings.Repeat("3", 40)},
+		{"doppler", KindDopplerToken, "dp." + "pt." + strings.Repeat("k", 43)},
+		{"heroku", KindHerokuKey, "HRKU-" + "AA" + strings.Repeat("l", 58)},
+		{"flyio", KindFlyToken, "fo1_" + strings.Repeat("m", 43)},
+		{"cloudflare-origin-ca", KindCloudflareKey, "v1.0-" + strings.Repeat("4", 24) + "-" + strings.Repeat("5", 146)},
+		{"1password-secret-key", KindOnePassword, "A3-" + "ABC123-" + "DEF456GHI78-" + "JKL90-" + "MNO12-" + "PQR34"},
+		{"age", KindAgeKey, "AGE-SECRET-" + "KEY-1" + strings.Repeat("Q", 58)},
+		{"sentry-user", KindSentryToken, "sntryu_" + strings.Repeat("6", 64)},
 	}
 	benign := []struct {
 		name string

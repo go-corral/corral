@@ -61,6 +61,20 @@ const (
 	KindXAIKey        SecretKind = "an xAI API key"
 	KindOpenRouterKey SecretKind = "an OpenRouter API key"
 	KindPerplexityKey SecretKind = "a Perplexity API key"
+	KindVaultToken    SecretKind = "a HashiCorp Vault token"
+	KindTerraform     SecretKind = "a Terraform Cloud API token"
+	KindGrafanaToken  SecretKind = "a Grafana token"
+	KindDigitalOcean  SecretKind = "a DigitalOcean token"
+	KindTailscaleKey  SecretKind = "a Tailscale key"
+	KindDatabricks    SecretKind = "a Databricks token"
+	KindPulumiToken   SecretKind = "a Pulumi access token"
+	KindDopplerToken  SecretKind = "a Doppler token"
+	KindHerokuKey     SecretKind = "a Heroku API key"
+	KindFlyToken      SecretKind = "a Fly.io token"
+	KindCloudflareKey SecretKind = "a Cloudflare origin CA key"
+	KindOnePassword   SecretKind = "a 1Password credential"
+	KindAgeKey        SecretKind = "an age secret key"
+	KindSentryToken   SecretKind = "a Sentry token"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -98,6 +112,25 @@ var knownFormats = []struct {
 	{KindXAIKey, regexp.MustCompile(`xai-[A-Za-z0-9_]{80,}`)},
 	{KindOpenRouterKey, regexp.MustCompile(`sk-or-v1-[0-9a-f]{64}`)},
 	{KindPerplexityKey, regexp.MustCompile(`pplx-[A-Za-z0-9]{48,}`)},
+	{KindVaultToken, regexp.MustCompile(`hv[sbr]\.[A-Za-z0-9_-]{90,}`)},
+	// The 14-char token id before .atlasv1. is left out so the pattern starts with a literal.
+	{KindTerraform, regexp.MustCompile(`\.atlasv1\.[A-Za-z0-9_=-]{60,}`)},
+	{KindGrafanaToken, regexp.MustCompile(`glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8}`)},
+	{KindGrafanaToken, regexp.MustCompile(`glc_[A-Za-z0-9+/]{32,}`)},
+	{KindGrafanaToken, regexp.MustCompile(`eyJrIjoi[A-Za-z0-9]{70,}`)},
+	{KindDigitalOcean, regexp.MustCompile(`do[opr]_v1_[a-f0-9]{64}`)},
+	{KindTailscaleKey, regexp.MustCompile(`tskey-[a-z]+-[A-Za-z0-9_]+-[A-Za-z0-9_]{16,}`)},
+	{KindDatabricks, regexp.MustCompile(`dapi[a-f0-9]{32}`)},
+	{KindPulumiToken, regexp.MustCompile(`pul-[a-f0-9]{40}`)},
+	{KindDopplerToken, regexp.MustCompile(`dp\.(?:ct|pt|st(?:\.[a-z0-9_-]{2,35})?|sa|scim|audit)\.[A-Za-z0-9]{40,}`)},
+	{KindHerokuKey, regexp.MustCompile(`HRKU-AA[A-Za-z0-9_-]{58,}`)},
+	{KindFlyToken, regexp.MustCompile(`fo1_[A-Za-z0-9_-]{43,}`)},
+	{KindFlyToken, regexp.MustCompile(`fm(?:1[ar]|2)_[A-Za-z0-9+/]{100,}`)},
+	{KindCloudflareKey, regexp.MustCompile(`v1\.0-[a-f0-9]{24}-[a-f0-9]{146}`)},
+	{KindOnePassword, regexp.MustCompile(`ops_eyJ[A-Za-z0-9+/]{250,}`)},
+	{KindOnePassword, regexp.MustCompile(`A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}`)},
+	{KindAgeKey, regexp.MustCompile(`AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}`)},
+	{KindSentryToken, regexp.MustCompile(`sntry(?:s_eyJ[A-Za-z0-9+/=_]{50,}|u_[a-f0-9]{64})`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)
