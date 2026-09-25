@@ -35,6 +35,15 @@ func TestSecretScannerParity(t *testing.T) {
 		{"google-api", KindGoogleAPIKey, "AIza" + strings.Repeat("d", 35)},
 		{"stripe-live", KindStripeKey, "sk_live_" + strings.Repeat("e", 20)},
 		{"atlassian-api", KindAtlassian, "ATATT3" + strings.Repeat("f", 177) + "=0A1B2C3D"},
+		{"anthropic-api", KindAnthropicKey, "sk-ant-" + "api03-" + strings.Repeat("f", 93) + "AA"},
+		{"anthropic-oauth", KindAnthropicKey, "sk-ant-" + "oat01-" + strings.Repeat("g", 95)},
+		{"openai-project", KindOpenAIKey, "sk-" + "proj-" + strings.Repeat("h", 74) + "T3Blbk" + "FJ" + strings.Repeat("i", 74)},
+		{"openai-legacy", KindOpenAIKey, "sk-" + strings.Repeat("j", 20) + "T3Blbk" + "FJ" + strings.Repeat("k", 20)},
+		{"huggingface", KindHuggingFace, "hf_" + strings.Repeat("l", 34)},
+		{"groq", KindGroqKey, "gsk_" + strings.Repeat("m", 52)},
+		{"xai", KindXAIKey, "xai-" + strings.Repeat("n", 80)},
+		{"openrouter", KindOpenRouterKey, "sk-or-" + "v1-" + strings.Repeat("0", 64)},
+		{"perplexity", KindPerplexityKey, "pplx-" + strings.Repeat("o", 48)},
 	}
 	benign := []struct {
 		name string
@@ -43,6 +52,7 @@ func TestSecretScannerParity(t *testing.T) {
 		{"prose", "please summarize the architecture doc and suggest next steps"},
 		{"short-ghp", "ghp_tooShort"}, // below the 36-char body bar: must not hit anywhere
 		{"git-sha", "commit " + strings.Repeat("a", 40)},
+		{"kebab-slug", "risk-admin-dashboard-configuration-and-settings-refactor"},
 	}
 
 	// scanAll runs the four real entry points over one input and returns their hit verdicts
