@@ -53,6 +53,7 @@ const (
 	KindGoogleAPIKey  SecretKind = "a Google API key"
 	KindStripeKey     SecretKind = "a Stripe live key"
 	KindGCPServiceKey SecretKind = "a GCP service-account key"
+	KindAtlassian     SecretKind = "an Atlassian token"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -75,6 +76,9 @@ var knownFormats = []struct {
 	{KindGoogleAPIKey, regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
 	{KindStripeKey, regexp.MustCompile(`\b[sr]k_live_[0-9A-Za-z]{16,}\b`)},
 	{KindGCPServiceKey, regexp.MustCompile(`"private_key"\s*:\s*"-----BEGIN`)},
+	// ATATT3 = API token, ATCTT3 = access token. Atlassian publishes neither the prefix nor a
+	// fixed length, so the body bar stays well below the observed 192-char total.
+	{KindAtlassian, regexp.MustCompile(`\bAT[AC]TT3[A-Za-z0-9_=-]{50,}`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)

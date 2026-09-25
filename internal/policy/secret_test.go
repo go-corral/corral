@@ -25,6 +25,8 @@ func TestScanSecretsKnownFormats(t *testing.T) {
 		{"github", "token=ghp_" + strings.Repeat("a", 36)},
 		{"google", "key=AIza" + strings.Repeat("b", 35)},
 		{"stripe", "sk_live_" + strings.Repeat("c", 24)},
+		{"atlassian-api", "ATATT3" + strings.Repeat("g", 177) + "=0A1B2C3D"},
+		{"atlassian-access", "ATCTT3" + strings.Repeat("h", 60)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,6 +44,7 @@ func TestScanSecretsBenign(t *testing.T) {
 		"commit 9f2a1c3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f90", // 40-hex git SHA
 		"550e8400-e29b-41d4-a716-446655440000",            // UUID
 		"https://api.example.com/v1/users?token=refresh",
+		"export JIRA_API_TOKEN=ATATT3xFfGF0...", // doc placeholder
 	}
 	for _, c := range benign {
 		if _, hit := scanSecrets([]byte(c), 0); hit {
