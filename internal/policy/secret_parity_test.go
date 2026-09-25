@@ -34,6 +34,7 @@ func TestSecretScannerParity(t *testing.T) {
 		{"slack", KindSlackToken, "xoxb-" + strings.Repeat("1", 14)},
 		{"google-api", KindGoogleAPIKey, "AIza" + strings.Repeat("d", 35)},
 		{"stripe-live", KindStripeKey, "sk_live_" + strings.Repeat("e", 20)},
+		{"atlassian-api", KindAtlassian, "ATATT3" + strings.Repeat("f", 177) + "=0A1B2C3D"},
 	}
 	benign := []struct {
 		name string
