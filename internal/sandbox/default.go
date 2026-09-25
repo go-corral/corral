@@ -35,7 +35,9 @@ const AuditPathEnvVar = "CORRAL_AUDIT_PATH"
 const BinEnvVar = "CORRAL_BIN"
 
 // PresenceAckEnvVar silences the sandbox-presence warning only. Deliberately
-// not reserved — there is nothing to forge.
+// not reserved — there is nothing to forge. Kept separate from DisableHooksEnvVar
+// on purpose: if the kill switch were the only way to silence the once-per-session
+// warning, users would disable the prompt secret scan along with it.
 const PresenceAckEnvVar = "CORRAL_PRESENCE_ACK"
 
 // DisableHooksEnvVar is the kill switch: set it outside the sandbox and corral

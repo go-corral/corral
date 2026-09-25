@@ -396,8 +396,10 @@ func cmdRun(args []string, version string) int {
 }
 
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the
-// launch directory itself. When it is the user's home, binding it would expose the whole home tree,
-// so a fresh scratch dir is used instead. Not cleaned up (under $TMPDIR, reaped by the OS).
+// launch directory itself. When it is the user's home, binding it would expose the whole home tree
+// and back the always-blocked masks with the real host secret paths, so a fresh scratch dir is used
+// instead. Not cleaned up (under $TMPDIR, reaped by the OS; this also keeps the launcher on the
+// syscall.Exec fast path instead of a cleanup-supervising one).
 func resolveWorkdir(home, project string, dryRun bool) (src string, substituted bool, err error) {
 	if !sameDir(home, project) {
 		return project, false, nil

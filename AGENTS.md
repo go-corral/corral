@@ -9,7 +9,7 @@
 
 ## Architecture
 
-`docs/contributors/architecture.md` explains how Corral is designed. Read before non-trivial work.
+`docs/explanation/design.md` and `docs/explanation/threat-model.md` explain how Corral is designed. Read them before non-trivial work.
 
 - Corrals hook enforcer runs on every tool call and must stay light. Heavy logic belongs in the launcher.
 - Hooks must fail on any error, bad input, or unknown events.

@@ -45,7 +45,9 @@ func Subcommands() []string {
 //
 // The [ -x ] guard makes a missing binary a silent exit 0 outside the sandbox; the elif on
 // CORRAL_SANDBOX makes it exit 2 inside (blocking). The binary path is embedded twice and
-// must be identical. validateBinaryPath rejects shell-active characters.
+// must be identical. validateBinaryPath rejects shell-active characters. `exec` must never
+// become `cmd && ...` or gain a `|| true` suffix: either would swallow the fail-closed exit 2
+// and turn the guard into a no-op.
 const guardedMessage = "corral: policy hook binary missing inside the sandbox - refusing (reinstall corral, then run 'corral sync')"
 
 var guardedCommandRE = regexp.MustCompile(
@@ -395,7 +397,7 @@ func render(existing []byte, mode renderMode, binaryPath, matcher string, timeou
 
 // marshalNoEscape is json.Marshal with HTML escaping off, for every nesting level. Go's
 // default encoder rewrites `<`, `>`, `&` as \u00xx escapes, which would turn the guarded
-// command's `>&2` into noise.
+// command's `>&2` into noise in the settings and the goldens that pin them.
 func marshalNoEscape(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
