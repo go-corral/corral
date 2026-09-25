@@ -3,18 +3,16 @@
 Use a provider when the session needs host access that is not in the default
 filesystem. Enable only what the task needs.
 
-| Provider | What it adds |
-| --- | --- |
-| SSH | [The host SSH agent and selected SSH configuration](#ssh) |
-| Docker | [The host Docker daemon](#docker) |
-| Home | [A persistent private home](#home) |
-| Kubernetes | [A temporary Kubernetes credential](kubernetes.md) |
-| GitLab | [A temporary GitLab token](gitlab.md) |
+| Provider      | What it adds                                               |
+| ------------- | ---------------------------------------------------------- |
+| SSH           | [The host SSH agent and selected SSH configuration](#ssh)  |
+| Docker        | [The host Docker daemon](#docker)                          |
+| Home          | [A persistent private home](#home)                         |
+| Kubernetes    | [A temporary Kubernetes credential](kubernetes.md)         |
+| GitLab        | [A temporary GitLab token](gitlab.md)                      |
 | Session hooks | [Host scripts before or after a session](session-hooks.md) |
 
-The built-in `block`, `aiignore`, `paths`, and `env` providers are documented in the
-[configuration reference](../reference/config.md#providers). `aiignore` and `env` are
-active on every launch; `block` and `paths` apply when configured.
+The built-in `block`, `aiignore`, `paths`, `env`, and `notes` providers are documented in the [configuration reference](../reference/config.md#providers).
 
 Before launching, check the effective settings and host prerequisites:
 

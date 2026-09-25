@@ -20,6 +20,7 @@ import (
 	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/providers/hooks"
 	"github.com/go-corral/corral/internal/providers/kubernetes"
+	"github.com/go-corral/corral/internal/providers/notes"
 	"github.com/go-corral/corral/internal/providers/paths"
 	"github.com/go-corral/corral/internal/providers/ssh"
 )
@@ -89,6 +90,13 @@ var registry = []Registration{
 		Enabled: func(*config.Config) bool { return true },
 		Build: func(c *config.Config, d Deps) providers.Provider {
 			return env.New(c.Providers.Env)
+		},
+	},
+	{
+		Name: "notes", Builtin: true,
+		Enabled: func(c *config.Config) bool { return len(c.Providers.Notes.Agent) > 0 },
+		Build: func(c *config.Config, d Deps) providers.Provider {
+			return notes.New(c.Providers.Notes.Lines())
 		},
 	},
 	{

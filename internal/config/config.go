@@ -27,6 +27,7 @@ import (
 	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/providers/hooks"
 	"github.com/go-corral/corral/internal/providers/kubernetes"
+	"github.com/go-corral/corral/internal/providers/notes"
 	"github.com/go-corral/corral/internal/providers/paths"
 	"github.com/go-corral/corral/internal/providers/ssh"
 	"github.com/go-corral/corral/internal/sandbox/bwrap"
@@ -131,6 +132,7 @@ type Providers struct {
 	AIIgnore   aiignore.Config   `yaml:"aiignore"`
 	Paths      paths.Config      `yaml:"paths"`
 	Env        env.Config        `yaml:"env"`
+	Notes      notes.Config      `yaml:"notes"`
 	Hooks      hooks.Config      `yaml:"hooks"`
 	Docker     docker.Config     `yaml:"docker"`
 	SSH        ssh.Config        `yaml:"ssh"`
@@ -250,6 +252,8 @@ providers:
     # set fixes vars to literal values inside the sandbox (a name may be in passthrough OR
     # set, not both). Overriding a value corral already sets warns + prompts at startup.
     # set: [{name: FOO, value: bar}]
+  # Fixed lines added to the agent's session-start note, one bullet per entry.
+  notes: {agent: []}
   # --- feature providers ---
   # Session hooks are host-side executables around the agent lifecycle. preStart runs
   # before the agent and can abort the launch; postEnd runs after the session or a later
@@ -465,6 +469,9 @@ func (c *Config) Validate(home string) error {
 		return err
 	}
 	if err := c.Providers.Env.Validate(coreReservedEnvNames, reservedEnvNames); err != nil {
+		return err
+	}
+	if err := c.Providers.Notes.Validate(); err != nil {
 		return err
 	}
 	if err := c.Providers.Hooks.Validate(); err != nil {
