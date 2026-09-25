@@ -80,6 +80,7 @@ const (
 	KindRubyGemsKey   SecretKind = "a RubyGems API key"
 	KindDockerToken   SecretKind = "a Docker Hub access token"
 	KindArtifactory   SecretKind = "a JFrog Artifactory API key"
+	KindGitLabToken   SecretKind = "a GitLab token"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -143,6 +144,9 @@ var knownFormats = []struct {
 	{KindDockerToken, regexp.MustCompile(`dckr_(?:pat|oat)_[A-Za-z0-9_-]{27,}`)},
 	// The trailing \b rejects an AKCp run that continues into a longer alphanumeric string.
 	{KindArtifactory, regexp.MustCompile(`AKCp[A-Za-z0-9]{69}\b`)},
+	{KindGitLabToken, regexp.MustCompile(`gl(?:pat|oas|dt|rtr?|cbt|ptt|ft|imt|agent|wt|soat|ffct)-[0-9A-Za-z_-]{20,}`)},
+	{KindGitLabToken, regexp.MustCompile(`GR1348941[0-9A-Za-z_-]{20,}`)},
+	{KindGitLabToken, regexp.MustCompile(`_gitlab_session=[0-9a-z]{32}`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)
