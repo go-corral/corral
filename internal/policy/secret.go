@@ -81,6 +81,12 @@ const (
 	KindDockerToken   SecretKind = "a Docker Hub access token"
 	KindArtifactory   SecretKind = "a JFrog Artifactory API key"
 	KindGitLabToken   SecretKind = "a GitLab token"
+	KindSendGridKey   SecretKind = "a SendGrid API key"
+	KindShopifyToken  SecretKind = "a Shopify token"
+	KindLinearKey     SecretKind = "a Linear API key"
+	KindNotionToken   SecretKind = "a Notion API token"
+	KindPostmanKey    SecretKind = "a Postman API key"
+	KindDynatrace     SecretKind = "a Dynatrace API token"
 	KindHighEntropy   SecretKind = "a high-entropy secret"
 )
 
@@ -147,6 +153,12 @@ var knownFormats = []struct {
 	{KindGitLabToken, regexp.MustCompile(`gl(?:pat|oas|dt|rtr?|cbt|ptt|ft|imt|agent|wt|soat|ffct)-[0-9A-Za-z_-]{20,}`)},
 	{KindGitLabToken, regexp.MustCompile(`GR1348941[0-9A-Za-z_-]{20,}`)},
 	{KindGitLabToken, regexp.MustCompile(`_gitlab_session=[0-9a-z]{32}`)},
+	{KindSendGridKey, regexp.MustCompile(`SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}`)},
+	{KindShopifyToken, regexp.MustCompile(`shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}`)},
+	{KindLinearKey, regexp.MustCompile(`lin_api_[A-Za-z0-9]{40}`)},
+	{KindNotionToken, regexp.MustCompile(`ntn_[0-9]{11}[A-Za-z0-9]{35}`)},
+	{KindPostmanKey, regexp.MustCompile(`PMAK-[a-f0-9]{24}-[a-f0-9]{34}`)},
+	{KindDynatrace, regexp.MustCompile(`dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}`)},
 }
 
 // entropyTokenRe finds base64/base64url-ish runs that are candidate secrets for the (opt-in)

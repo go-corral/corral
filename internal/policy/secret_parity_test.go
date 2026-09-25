@@ -67,6 +67,12 @@ func TestSecretScannerParity(t *testing.T) {
 		{"gitlab-job", KindGitLabToken, "glcbt-" + "64_" + strings.Repeat("g", 20)},
 		{"gitlab-runner-registration", KindGitLabToken, "GR1348941" + strings.Repeat("h", 20)},
 		{"gitlab-session", KindGitLabToken, "_gitlab_session=" + strings.Repeat("0", 32)},
+		{"sendgrid", KindSendGridKey, "SG." + strings.Repeat("f", 22) + "." + strings.Repeat("g", 43)},
+		{"shopify", KindShopifyToken, "shpat_" + strings.Repeat("0", 32)},
+		{"linear", KindLinearKey, "lin_" + "api_" + strings.Repeat("h", 40)},
+		{"notion", KindNotionToken, "ntn_" + strings.Repeat("1", 11) + strings.Repeat("i", 35)},
+		{"postman", KindPostmanKey, "PMAK-" + strings.Repeat("2", 24) + "-" + strings.Repeat("3", 34)},
+		{"dynatrace", KindDynatrace, "dt0c01." + strings.Repeat("j", 24) + "." + strings.Repeat("k", 64)},
 	}
 	benign := []struct {
 		name string
