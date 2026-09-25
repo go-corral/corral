@@ -58,6 +58,11 @@ func TestSecretScannerParity(t *testing.T) {
 		{"1password-secret-key", KindOnePassword, "A3-" + "ABC123-" + "DEF456GHI78-" + "JKL90-" + "MNO12-" + "PQR34"},
 		{"age", KindAgeKey, "AGE-SECRET-" + "KEY-1" + strings.Repeat("Q", 58)},
 		{"sentry-user", KindSentryToken, "sntryu_" + strings.Repeat("6", 64)},
+		{"npm", KindNpmToken, "npm_" + strings.Repeat("f", 36)},
+		{"pypi", KindPyPIToken, "pypi-" + "AgEIcHlwaS5vcmc" + strings.Repeat("g", 60)},
+		{"rubygems", KindRubyGemsKey, "rubygems_" + strings.Repeat("0", 48)},
+		{"docker-pat", KindDockerToken, "dckr_" + "pat_" + strings.Repeat("h", 27)},
+		{"artifactory", KindArtifactory, "AKCp" + strings.Repeat("i", 69)},
 	}
 	benign := []struct {
 		name string
