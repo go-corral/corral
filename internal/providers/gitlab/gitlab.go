@@ -1,5 +1,5 @@
-// Package gitlab implements the GitLab credential-minter provider: a scoped, short-lived
-// personal/project access token minted from the host $GITLAB_TOKEN, revoked on session exit.
+// Package gitlab implements the GitLab credential-minter provider: a short-lived fine-grained
+// personal access token minted from the host $GITLAB_TOKEN, revoked on session exit.
 package gitlab
 
 import (
@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,11 @@ var gitlabForwardEnv = []string{"GITLAB_HOST", "GL_HOST", "GITLAB_CLIENT_ID", "R
 // file, so env-var auth shows as "not logged in" even though glab commands and the API work.
 const gitlabGlabCaveat = "`glab auth status` misreports GITLAB_TOKEN auth as unauthenticated; glab commands and the API work regardless."
 
+const (
+	kindProject = "project"
+	kindGroup   = "group"
+)
+
 // New reads $GITLAB_TOKEN to mint from, resolves the instance from providers.gitlab.host, then
 // $GITLAB_HOST/$GL_HOST, then gitlab.com. The host is never inferred from the workdir's git remote.
 func New(cfg Config, hostEnv map[string]string) spec.Provider {
@@ -54,6 +60,8 @@ func (g *gitlab) Name() string { return "gitlab" }
 
 func (g *gitlab) Available(ctx context.Context) bool { return g.token != "" }
 
+// Mint creates a fine-grained personal access token owned by the host credential's user through
+// the self-service endpoint, which any user may call.
 func (g *gitlab) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.Contribution, error) {
 	if dryRun {
 		return nil, spec.ErrNoDryRun("gitlab", "mint a scoped token without a live API call")
@@ -61,10 +69,42 @@ func (g *gitlab) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spe
 	if g.token == "" {
 		return nil, errors.New("gitlab: no host GITLAB_TOKEN to mint from")
 	}
-	if g.cfg.EffectiveType() == TypePersonal {
-		return g.mintPersonal(ctx, sess)
+	_, username, err := g.currentUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return g.mintProject(ctx, sess)
+	grants, err := g.resolveGrants(ctx, sess.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	expires := expiresTomorrow()
+	// Never send legacy `scopes`: GitLab before 19.2 would ignore granular_scopes.
+	body := map[string]any{
+		"name":            g.tokenName(sess),
+		"description":     "corral session token",
+		"expires_at":      expires,
+		"granular_scopes": granularScopes(grants),
+	}
+	tok, err := g.createToken(ctx, "/api/v4/user/personal_access_tokens", body)
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: create fine-grained personal access token: %w%s", err, createHint(err, grants))
+	}
+	revoke := g.revokeCleanup(fmt.Sprintf("/api/v4/personal_access_tokens/%d", tok.ID))
+	if !tok.Granular {
+		if rerr := revoke(ctx); rerr != nil {
+			return nil, fmt.Errorf("gitlab: GitLab created a token that is not fine-grained, and revoking it failed (%v); it may be live until it expires on %s — revoke it under %s (User settings → Access tokens)", rerr, expires, g.host)
+		}
+		return nil, errors.New("gitlab: GitLab created a token that is not fine-grained; corral revoked it. The gitlab provider needs GitLab 19.2 or later with fine-grained personal access tokens enabled")
+	}
+	return &spec.Contribution{
+		Env: g.contributionEnv(tok.Token),
+		Status: []string{fmt.Sprintf("minted fine-grained personal access token for %s on %s (%s; expires %s)",
+			username, g.host, describeGrants(grants, true), expires)},
+		AgentNotes: []string{fmt.Sprintf("GITLAB_TOKEN holds a fine-grained personal access token for %s on %s (%s; plus read_user and read_personal_access_token on the user's own account; expires %s). Requests outside these permissions return 403 Forbidden; do not retry them with other credentials. %s",
+			username, g.host, describeGrants(grants, false), expires, gitlabGlabCaveat)},
+		CleanupHint: fmt.Sprintf("the minted token may still be live until it expires on %s — revoke it under %s (User settings → Access tokens) if needed", expires, g.host),
+		Cleanup:     revoke,
+	}, nil
 }
 
 // expiresTomorrow is the minted token's expiry: GitLab's minimum granularity is a calendar day.
@@ -72,65 +112,156 @@ func expiresTomorrow() string {
 	return time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 }
 
-func (g *gitlab) mintProject(ctx context.Context, sess spec.Session) (*spec.Contribution, error) {
-	project := g.cfg.Project
-	if project == "" {
-		p, err := detectProject(sess.WorkDir, g.host)
-		if err != nil {
-			return nil, fmt.Errorf("gitlab: %w; set providers.gitlab.project", err)
-		}
-		project = p
-	}
-	esc := escapeProject(project)
-	expires := expiresTomorrow()
-	body := map[string]any{
-		"name":         g.tokenName(sess),
-		"scopes":       g.cfg.EffectiveScopes(),
-		"access_level": g.cfg.EffectiveAccessLevel(),
-		"expires_at":   expires,
-	}
-	id, token, err := g.createToken(ctx, "/api/v4/projects/"+esc+"/access_tokens", body)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: create project access token for %q: %w", project, err)
-	}
-	return &spec.Contribution{
-		Env: g.contributionEnv(token),
-		Status: []string{fmt.Sprintf("minted project access token for %s on %s (scopes: %s; role: %s; expires %s)",
-			project, g.host, strings.Join(g.cfg.EffectiveScopes(), ", "), g.cfg.EffectiveRole(), expires)},
-		AgentNotes: []string{fmt.Sprintf("GITLAB_TOKEN holds a project access token for %s on %s (scopes: %s; role: %s; expires %s). %s",
-			project, g.host, strings.Join(g.cfg.EffectiveScopes(), ", "), g.cfg.EffectiveRole(), expires, gitlabGlabCaveat)},
-		CleanupHint: fmt.Sprintf("the minted token for %s may still be live until it expires on %s — revoke it under the project's Settings → Access Tokens if needed", project, expires),
-		Cleanup:     g.revokeCleanup(fmt.Sprintf("/api/v4/projects/%s/access_tokens/%d", esc, id)),
-	}, nil
+// resolvedGrant is a grant whose target has a numeric ID. name is the target as first named in
+// config (or detected), and preset the broadest preset among its grants, for status text.
+type resolvedGrant struct {
+	kind   string
+	name   string
+	id     int
+	preset string
+	perms  []string
 }
 
-// mintPersonal mints a personal access token owned by the host credential's own user, so created
-// objects attribute to that real user. Uses the admin endpoint POST /users/:id/personal_access_tokens,
-// so the host $GITLAB_TOKEN must carry admin rights; a non-admin token gets a 403 and fails closed.
-func (g *gitlab) mintPersonal(ctx context.Context, sess spec.Session) (*spec.Contribution, error) {
-	uid, username, err := g.currentUser(ctx)
+// resolveGrants resolves each grant's target to its numeric ID and merges grants per target: GitLab
+// silently drops unknown IDs and rejects a second scope for the same namespace.
+func (g *gitlab) resolveGrants(ctx context.Context, workDir string) ([]resolvedGrant, error) {
+	var (
+		out      []resolvedGrant
+		byTarget = map[string]int{} // kind+id → index in out
+		ids      = map[string]int{} // kind+name as written → id
+		detected string
+	)
+	for _, gr := range g.cfg.EffectiveGrants() {
+		kind, name := kindProject, gr.Project
+		if gr.Group != "" {
+			kind, name = kindGroup, gr.Group
+		}
+		if name == "" {
+			if detected == "" {
+				p, err := detectProject(workDir, g.host)
+				if err != nil {
+					return nil, fmt.Errorf("gitlab: %w; set project or group in providers.gitlab.grants", err)
+				}
+				detected = p
+			}
+			name = detected
+		}
+		id, ok := ids[kind+"\x00"+name]
+		if !ok {
+			var err error
+			if id, err = g.resolveTarget(ctx, kind, name); err != nil {
+				return nil, err
+			}
+			ids[kind+"\x00"+name] = id
+		}
+		key := fmt.Sprintf("%s\x00%d", kind, id)
+		i, ok := byTarget[key]
+		if !ok {
+			i = len(out)
+			byTarget[key] = i
+			out = append(out, resolvedGrant{kind: kind, name: name, id: id})
+		}
+		if p := gr.effectivePreset(); p == PresetWrite || out[i].preset == "" {
+			out[i].preset = p
+		}
+		out[i].perms = appendUnique(out[i].perms, gr.EffectivePermissions())
+	}
+	return out, nil
+}
+
+// resolveTarget returns the numeric ID of a project or group given as a path or ID.
+func (g *gitlab) resolveTarget(ctx context.Context, kind, name string) (int, error) {
+	path := "/api/v4/projects/" + escapeProject(name)
+	if kind == kindGroup {
+		path = "/api/v4/groups/" + escapeProject(name) + "?with_projects=false"
+	}
+	resp, err := g.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, err
+		return 0, fmt.Errorf("gitlab: look up %s %q: %w", kind, name, err)
 	}
-	expires := expiresTomorrow()
-	body := map[string]any{
-		"name":       g.tokenName(sess),
-		"scopes":     g.cfg.EffectiveScopes(),
-		"expires_at": expires,
+	defer func() { _ = resp.Body.Close() }()
+	if !is2xx(resp.StatusCode) {
+		return 0, fmt.Errorf("gitlab: look up %s %q: %s: it does not exist or the host GITLAB_TOKEN cannot see it", kind, name, gitlabError(resp))
 	}
-	id, token, err := g.createToken(ctx, fmt.Sprintf("/api/v4/users/%d/personal_access_tokens", uid), body)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: create personal access token (the host GITLAB_TOKEN needs admin rights to mint a PAT): %w", err)
+	var out struct {
+		ID int `json:"id"`
 	}
-	return &spec.Contribution{
-		Env: g.contributionEnv(token),
-		Status: []string{fmt.Sprintf("minted personal access token for %s on %s (scopes: %s; expires %s)",
-			username, g.host, strings.Join(g.cfg.EffectiveScopes(), ", "), expires)},
-		AgentNotes: []string{fmt.Sprintf("GITLAB_TOKEN holds a personal access token for %s on %s (scopes: %s; expires %s). %s",
-			username, g.host, strings.Join(g.cfg.EffectiveScopes(), ", "), expires, gitlabGlabCaveat)},
-		CleanupHint: fmt.Sprintf("the minted personal access token may still be live until it expires on %s — revoke it under %s (User settings → Access tokens) if needed", expires, g.host),
-		Cleanup:     g.revokeCleanup(fmt.Sprintf("/api/v4/personal_access_tokens/%d", id)),
-	}, nil
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("gitlab: decode %s %q: %w", kind, name, err)
+	}
+	return out.ID, nil
+}
+
+// userPermissions is the fixed user-level scope: read_user for GET /user (glab's current-user
+// lookup), read_personal_access_token for GET /personal_access_tokens/self.
+var userPermissions = []string{"read_user", "read_personal_access_token"}
+
+// granularScopes builds one selected_memberships scope per target, then the user scope.
+func granularScopes(grants []resolvedGrant) []map[string]any {
+	scopes := make([]map[string]any, 0, len(grants)+1)
+	for _, r := range grants {
+		idsKey := "project_ids"
+		if r.kind == kindGroup {
+			idsKey = "group_ids"
+		}
+		scopes = append(scopes, map[string]any{
+			"access":      "selected_memberships",
+			idsKey:        []int{r.id},
+			"permissions": r.perms,
+		})
+	}
+	return append(scopes, map[string]any{"access": "user", "permissions": userPermissions})
+}
+
+// describeGrants lists each target with its permissions. byPreset names a target's preset instead of
+// the permissions it holds.
+func describeGrants(grants []resolvedGrant, byPreset bool) string {
+	parts := make([]string, len(grants))
+	for i, r := range grants {
+		perms := strings.Join(r.perms, ", ")
+		if byPreset && r.preset != "" {
+			perms = "preset " + r.preset
+			if extra := slices.DeleteFunc(slices.Clone(r.perms), func(p string) bool {
+				return slices.Contains(presets[r.preset], p)
+			}); len(extra) > 0 {
+				perms += " + " + strings.Join(extra, ", ")
+			}
+		}
+		parts[i] = fmt.Sprintf("%s %s: %s", r.kind, r.name, perms)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// createHint names the requirements behind a rejected create call. It states requirements, not a
+// diagnosed cause.
+func createHint(err error, grants []resolvedGrant) string {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return ""
+	}
+	switch apiErr.status {
+	case http.StatusBadRequest:
+		return "; the gitlab provider needs GitLab 19.2 or later"
+	case http.StatusNotFound:
+		targets := make([]string, len(grants))
+		for i, r := range grants {
+			targets[i] = r.kind + " " + r.name
+		}
+		return fmt.Sprintf("; the gitlab provider needs GitLab 19.2 or later with fine-grained personal access tokens enabled, and the user must be a member of every grant target (%s)", strings.Join(targets, ", "))
+	case http.StatusInternalServerError:
+		// GitLab answers an unknown permission name with a generic 500.
+		return "; every permission in providers.gitlab.grants must be a fine-grained permission name this GitLab instance knows"
+	}
+	return ""
+}
+
+func appendUnique(dst, src []string) []string {
+	for _, s := range src {
+		if !slices.Contains(dst, s) {
+			dst = append(dst, s)
+		}
+	}
+	return dst
 }
 
 func (g *gitlab) tokenName(sess spec.Session) string {
@@ -159,31 +290,42 @@ func (g *gitlab) currentUser(ctx context.Context) (int, string, error) {
 	return u.ID, u.Username, nil
 }
 
-// createToken POSTs a token-create request and returns the new token's id + value. A zero id
-// would make the revoke URL a no-op (it 404s) and let cleanup "succeed" while the token stays live.
-func (g *gitlab) createToken(ctx context.Context, path string, body any) (int, string, error) {
+// apiError is a non-2xx GitLab response, keeping the status for createHint.
+type apiError struct {
+	status int
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
+
+type createdToken struct {
+	ID       int    `json:"id"`
+	Token    string `json:"token"`
+	Granular bool   `json:"granular"`
+}
+
+// createToken POSTs a token-create request and returns the new token. A zero id would make the
+// revoke URL a no-op (it 404s) and let cleanup "succeed" while the token stays live.
+func (g *gitlab) createToken(ctx context.Context, path string, body any) (createdToken, error) {
 	resp, err := g.do(ctx, http.MethodPost, path, body)
 	if err != nil {
-		return 0, "", err
+		return createdToken{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if !is2xx(resp.StatusCode) {
-		return 0, "", errors.New(gitlabError(resp))
+		return createdToken{}, &apiError{status: resp.StatusCode, msg: gitlabError(resp)}
 	}
-	var out struct {
-		ID    int    `json:"id"`
-		Token string `json:"token"`
-	}
+	var out createdToken
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0, "", fmt.Errorf("decode token response: %w", err)
+		return createdToken{}, fmt.Errorf("decode token response: %w", err)
 	}
 	if out.Token == "" {
-		return 0, "", errors.New("server returned an empty token")
+		return createdToken{}, errors.New("server returned an empty token")
 	}
 	if out.ID <= 0 {
-		return 0, "", fmt.Errorf("server returned an invalid token id %d", out.ID)
+		return createdToken{}, fmt.Errorf("server returned an invalid token id %d", out.ID)
 	}
-	return out.ID, out.Token, nil
+	return out, nil
 }
 
 func (g *gitlab) revokeCleanup(path string) func(context.Context) error {
@@ -245,7 +387,7 @@ func firstNonEmpty(vals ...string) string {
 
 // resolveGitlabHost resolves the instance host: config > env ($GITLAB_HOST/$GL_HOST) > gitlab.com.
 // The host is never inferred from the workdir's git remote — the operator must explicitly name the
-// instance so the admin token is never sent to a .git/config-derived destination.
+// instance so the host token is never sent to a .git/config-derived destination.
 func resolveGitlabHost(cfgHost, envHost string) string {
 	h := firstNonEmpty(cfgHost, envHost)
 	if h == "" {
@@ -274,19 +416,19 @@ func gitlabError(resp *http.Response) string {
 	return resp.Status
 }
 
-// detectProject derives the GitLab project path from the workdir's origin remote when
-// providers.gitlab.project is unset. Requires the remote host to match the configured GitLab host.
+// detectProject derives the GitLab project path from the workdir's origin remote for a grant
+// without a target. Requires the remote host to match the configured GitLab host.
 func detectProject(workDir, host string) (string, error) {
 	if workDir == "" {
-		return "", errors.New("no project configured and no workdir to auto-detect from")
+		return "", errors.New("a grant has no target and there is no workdir to detect the origin project from")
 	}
 	data, err := os.ReadFile(filepath.Join(workDir, ".git", "config"))
 	if err != nil {
-		return "", fmt.Errorf("no project configured and cannot read the workdir git config: %w", err)
+		return "", fmt.Errorf("a grant has no target and the workdir git config is unreadable: %w", err)
 	}
 	originURL := parseOriginURL(string(data))
 	if originURL == "" {
-		return "", errors.New("no project configured and the workdir has no origin remote")
+		return "", errors.New("a grant has no target and the workdir has no origin remote")
 	}
 	h, project, err := parseGitlabURL(originURL)
 	if err != nil {

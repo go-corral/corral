@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-corral/corral/internal/providers/env"
+	"github.com/go-corral/corral/internal/providers/gitlab"
 	"github.com/go-corral/corral/internal/providers/kubernetes"
 )
 
@@ -792,23 +794,49 @@ func TestKubernetesTokenLifetimeBounds(t *testing.T) {
 
 func TestGitlabValidation(t *testing.T) {
 	for _, yml := range []string{
-		"providers:\n  gitlab:\n    enabled: true\n    role: superuser\n",                      // not a GitLab role
-		"providers:\n  gitlab:\n    enabled: true\n    expiryDays: 7\n",                        // removed knob → rejected as unknown key
-		"providers:\n  gitlab:\n    enabled: true\n    type: group\n",                          // not a token type (project|personal)
-		"providers:\n  gitlab:\n    enabled: true\n    type: personal\n    role: maintainer\n", // role is meaningless for a PAT → rejected, not silently ignored
+		"providers:\n  gitlab:\n    enabled: true\n    expiryDays: 7\n",                                              // unknown key
+		"providers:\n  gitlab:\n    enabled: true\n    grants:\n      - project: org/app\n        group: org\n",      // two targets in one grant
+		"providers:\n  gitlab:\n    enabled: true\n    grants:\n      - project: org/app\n        role: developer\n", // unknown key in a grant
+		"providers:\n  gitlab:\n    enabled: true\n    grants:\n      - project: org/app\n        preset: admin\n",   // unknown preset
 	} {
 		if _, _, err := loadFrom(t, "/home/u", yml, "", ""); err == nil {
 			t.Errorf("config should be rejected:\n%s", yml)
 		}
 	}
-	yml := "providers:\n  gitlab:\n    enabled: true\n    type: project\n    host: gl.example.com\n    project: g/p\n    scopes: [read_repository, write_repository]\n    role: maintainer\n"
+	yml := "providers:\n  gitlab:\n    enabled: true\n    host: gl.example.com\n    grants:\n" +
+		"      - permissions: [download_code, push_code]\n" +
+		"      - project: org/app\n        preset: write\n" +
+		"      - group: org/libs\n        permissions: [download_code]\n"
 	cfg, _, err := loadFrom(t, "/home/u", yml, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	gl := cfg.Providers.Gitlab
-	if gl.Host != "gl.example.com" || gl.Project != "g/p" || gl.Role != "maintainer" || gl.EffectiveAccessLevel() != 40 || len(gl.Scopes) != 2 {
+	want := []gitlab.Grant{
+		{Permissions: []string{"download_code", "push_code"}},
+		{Project: "org/app", Preset: gitlab.PresetWrite},
+		{Group: "org/libs", Permissions: []string{"download_code"}},
+	}
+	if gl.Host != "gl.example.com" || !reflect.DeepEqual(gl.TokenGrants, want) {
 		t.Errorf("gitlab config not parsed correctly: %+v", gl)
+	}
+}
+
+// Grants from two layers accumulate append-unique; the provider merges entries on the same target
+// at mint time.
+func TestGitlabGrantsMergeAcrossLayers(t *testing.T) {
+	global := "providers:\n  gitlab:\n    grants:\n      - project: org/app\n        permissions: [download_code]\n"
+	project := "providers:\n  gitlab:\n    grants:\n      - project: org/app\n        permissions: [push_code]\n"
+	cfg, _, err := loadFrom(t, "/home/u", global, project, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []gitlab.Grant{
+		{Project: "org/app", Permissions: []string{"download_code"}},
+		{Project: "org/app", Permissions: []string{"push_code"}},
+	}
+	if got := cfg.Providers.Gitlab.TokenGrants; !reflect.DeepEqual(got, want) {
+		t.Errorf("grants = %+v, want both layers' entries %+v", got, want)
 	}
 }
 

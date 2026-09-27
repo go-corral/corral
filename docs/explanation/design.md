@@ -46,7 +46,7 @@ or environment setting:
 - `home` gives the session a persistent private `$HOME` and links allowed host paths
   into it. It is enabled by default.
 - `kubernetes` creates a per-session ServiceAccount and requests a bounded token.
-- `gitlab` creates a short-lived personal or project token from a host token.
+- `gitlab` creates a short-lived fine-grained personal access token from a host token.
 - `hooks` runs approved host executables before or after the agent session.
 
 Temporary Kubernetes and GitLab credentials are created outside the sandbox. The

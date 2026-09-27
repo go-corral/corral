@@ -13,7 +13,7 @@ provider, look up an interface, diagnose a failure, or understand a security dec
 | [Uninstall corral](how-to/uninstall.md)            | Run `corral uninstall`, then remove the binary and config by hand.                |
 | [Provider setup](how-to/providers.md)              | Choose a provider; set up SSH, Docker, or the private home.                       |
 | [Kubernetes credentials](how-to/kubernetes.md)     | Configure managed or pre-provisioned RBAC and verify the session identity.        |
-| [GitLab credentials](how-to/gitlab.md)             | Choose a token type, configure the host credential, and verify the session token. |
+| [GitLab credentials](how-to/gitlab.md)             | Choose grants, configure the host credential, and verify the session token.       |
 | [Set up session hooks](how-to/session-hooks.md)    | Configure host scripts, verify them, and recover from failures.                   |
 | [Troubleshooting & FAQ](how-to/troubleshooting.md) | Blocked commands, provider failures, reading the audit log.                       |
 

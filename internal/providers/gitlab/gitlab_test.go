@@ -7,9 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-corral/corral/internal/providers/spec"
 )
@@ -24,11 +27,11 @@ func TestGitlabAvailable(t *testing.T) {
 }
 
 func TestGitlabContributionEnv(t *testing.T) {
-	// Forwards the usual glab vars present on the host; never CI_* vars or the host's
-	// admin token; the minted token always wins.
+	// Forwards the usual glab vars present on the host; never CI_* vars or the host
+	// token; the minted token always wins.
 	g := &gitlab{
 		hostEnv: map[string]string{
-			"GITLAB_TOKEN":  "glpat-admin",
+			"GITLAB_TOKEN":  "glpat-host",
 			"GL_HOST":       "gitlab.example.com",
 			"REMOTE_ALIAS":  "upstream",
 			"CI_API_V4_URL": "https://ci/api/v4", // CI var → excluded
@@ -59,282 +62,510 @@ func TestGitlabContributionEnv(t *testing.T) {
 	}
 }
 
-// gitlabRecorder is a fake GitLab API: it records the last request and returns a minted
-// token on POST, 204 on DELETE. A mutex guards the fields against the server goroutine.
-type gitlabRecorder struct {
-	mu          sync.Mutex
-	auth        string
-	method      string
-	escapedPath string
-	body        map[string]any
+// fakeGitlab is a fake GitLab API. It records every request and answers GET /user, project and
+// group lookups (ids, keyed by the escaped path after /api/v4/; a missing key is a 404), the token
+// create (createBody, default a fine-grained token), and the revoke (204). fail overrides the status
+// for an escaped path. A mutex guards the fields against the server goroutine.
+type fakeGitlab struct {
+	mu         sync.Mutex
+	reqs       []fakeRequest
+	ids        map[string]int
+	createBody string
+	fail       map[string]int
 }
 
-func (rec *gitlabRecorder) server(t *testing.T) *httptest.Server {
+type fakeRequest struct {
+	method, path, query, auth string
+	body                      map[string]any
+}
+
+const createPath = "/api/v4/user/personal_access_tokens"
+
+func (f *fakeGitlab) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec.mu.Lock()
-		defer rec.mu.Unlock()
-		rec.auth = r.Header.Get("PRIVATE-TOKEN")
-		rec.method = r.Method
-		rec.escapedPath = r.URL.EscapedPath()
-		if r.Method == http.MethodGet { // GET /user — the personal-token path resolves the current user first
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "username": "realuser"})
-			return
-		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		req := fakeRequest{method: r.Method, path: r.URL.EscapedPath(), query: r.URL.RawQuery, auth: r.Header.Get("PRIVATE-TOKEN")}
 		if r.Method == http.MethodPost {
-			_ = json.NewDecoder(r.Body).Decode(&rec.body)
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99, "token": "glpat-minted-xyz"})
+			_ = json.NewDecoder(r.Body).Decode(&req.body)
+		}
+		f.reqs = append(f.reqs, req)
+		if status, ok := f.fail[req.path]; ok {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"message":"` + http.StatusText(status) + ` from fake"}`))
 			return
 		}
-		w.WriteHeader(http.StatusNoContent) // DELETE (revoke)
+		switch {
+		case r.Method == http.MethodGet && req.path == "/api/v4/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "username": "realuser"})
+		case r.Method == http.MethodGet:
+			id, ok := f.ids[strings.TrimPrefix(req.path, "/api/v4/")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"message":"404 Not found"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id})
+		case r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			body := f.createBody
+			if body == "" {
+				body = `{"id":99,"token":"glpat-minted-xyz","scopes":["granular"],"granular":true}`
+			}
+			_, _ = w.Write([]byte(body))
+		default:
+			w.WriteHeader(http.StatusNoContent) // DELETE (revoke)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-func TestGitlabMintAndRevoke(t *testing.T) {
-	rec := &gitlabRecorder{}
-	srv := rec.server(t)
-	g := &gitlab{
-		cfg: Config{
-			Type:    "project",
-			Project: "mygroup/myrepo",
-			Scopes:  []string{"read_repository", "write_repository"},
-			Role:    "maintainer", // → access_level 40
-		},
-		token: "glpat-host-admin",
-		hostEnv: map[string]string{
-			"GITLAB_TOKEN":     "glpat-host-admin", // admin cred — must not be forwarded
-			"GITLAB_HOST":      "https://gitlab.example.com",
-			"GITLAB_CLIENT_ID": "client-123",              // a usual glab var → forwarded
-			"CI_API_V4_URL":    "https://ci-injected/api", // a CI var → must not be forwarded
-		},
+func (f *fakeGitlab) provider(t *testing.T, cfg Config) *gitlab {
+	t.Helper()
+	srv := f.server(t)
+	return &gitlab{
+		cfg:     cfg,
+		token:   "glpat-host",
+		hostEnv: map[string]string{"GITLAB_TOKEN": "glpat-host"},
 		host:    "gitlab.example.com",
 		apiBase: srv.URL,
 		client:  srv.Client(),
 	}
+}
 
-	c, err := g.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+func (f *fakeGitlab) requests() []fakeRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeRequest(nil), f.reqs...)
+}
+
+// createRequest returns the body of the single token-create POST.
+func (f *fakeGitlab) createRequest(t *testing.T) map[string]any {
+	t.Helper()
+	var bodies []map[string]any
+	for _, r := range f.requests() {
+		if r.method == http.MethodPost && r.path == createPath {
+			bodies = append(bodies, r.body)
+		}
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("want exactly one POST %s, got %d", createPath, len(bodies))
+	}
+	return bodies[0]
+}
+
+// selectedScopes returns the selected_memberships entries of the create request, JSON-encoded
+// for comparison, and checks the fixed user entry comes last.
+func (f *fakeGitlab) selectedScopes(t *testing.T) []string {
+	t.Helper()
+	scopes, _ := f.createRequest(t)["granular_scopes"].([]any)
+	if len(scopes) == 0 {
+		t.Fatal("create request has no granular_scopes")
+	}
+	last, _ := json.Marshal(scopes[len(scopes)-1])
+	if string(last) != `{"access":"user","permissions":["read_user","read_personal_access_token"]}` {
+		t.Errorf("last granular scope = %s, want the fixed user scope", last)
+	}
+	out := make([]string, 0, len(scopes)-1)
+	for _, sc := range scopes[:len(scopes)-1] {
+		b, _ := json.Marshal(sc)
+		out = append(out, string(b))
+	}
+	return out
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The minted (scoped) token crosses in — never the host's admin token.
+	return string(b)
+}
+
+func workdirWithOrigin(t *testing.T, origin string) string {
+	t.Helper()
+	work := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(work, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitcfg := "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = " + origin + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+	if err := os.WriteFile(filepath.Join(work, ".git", "config"), []byte(gitcfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return work
+}
+
+// The minimal config mints a fine-grained token with the read-only default on the origin project.
+// The whole request body is pinned: it must never carry legacy `scopes`, which GitLab before 19.2
+// prefers over granular_scopes.
+func TestGitlabMintMinimalConfig(t *testing.T) {
+	f := &fakeGitlab{ids: map[string]int{"projects/org%2Fteam%2Frepo": 42}}
+	g := f.provider(t, Config{})
+	g.hostEnv = map[string]string{
+		"GITLAB_TOKEN":     "glpat-host", // host cred — must not be forwarded
+		"GITLAB_HOST":      "https://gitlab.example.com",
+		"GITLAB_CLIENT_ID": "client-123",              // a usual glab var → forwarded
+		"CI_API_V4_URL":    "https://ci-injected/api", // a CI var → must not be forwarded
+	}
+	work := workdirWithOrigin(t, "git@gitlab.example.com:org/team/repo.git")
+
+	c, err := g.Mint(context.Background(), spec.Session{User: "alice", ID: "s1", WorkDir: work}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if c.Env["GITLAB_TOKEN"] != "glpat-minted-xyz" {
 		t.Errorf("GITLAB_TOKEN must be the minted token, got %q", c.Env["GITLAB_TOKEN"])
 	}
-	// The dev's present glab vars are forwarded verbatim...
-	if c.Env["GITLAB_HOST"] != "https://gitlab.example.com" {
-		t.Errorf("GITLAB_HOST should be forwarded from the host, got %q", c.Env["GITLAB_HOST"])
+	if c.Env["GITLAB_HOST"] != "https://gitlab.example.com" || c.Env["GITLAB_CLIENT_ID"] != "client-123" {
+		t.Errorf("present glab vars must be forwarded: %v", c.Env)
 	}
-	if c.Env["GITLAB_CLIENT_ID"] != "client-123" {
-		t.Errorf("GITLAB_CLIENT_ID should be forwarded, got %q", c.Env["GITLAB_CLIENT_ID"])
-	}
-	// ...but CI_* vars are never forwarded (CI-injected, not a dev-machine var).
 	if _, ok := c.Env["CI_API_V4_URL"]; ok {
 		t.Errorf("CI_API_V4_URL must not be forwarded: %v", c.Env)
 	}
 	if len(c.Mounts) != 0 {
 		t.Errorf("gitlab is env-only, must contribute no mounts: %v", c.Mounts)
 	}
-	if c.Cleanup == nil {
-		t.Fatal("gitlab must register a revoke Cleanup")
+	for _, r := range f.requests() {
+		if r.auth != "glpat-host" {
+			t.Errorf("%s %s: PRIVATE-TOKEN = %q, want the host credential", r.method, r.path, r.auth)
+		}
 	}
-	// Status describes the mint for the banner — and must never carry the token value.
-	if len(c.Status) != 1 {
-		t.Fatalf("expected one Status line, got %v", c.Status)
+
+	body := f.createRequest(t)
+	if _, ok := body["scopes"]; ok {
+		t.Errorf("the create request must not carry legacy scopes: %v", body)
 	}
-	if strings.Contains(c.Status[0], "glpat-minted-xyz") {
-		t.Errorf("Status must not leak the minted token: %q", c.Status[0])
+	expires, _ := body["expires_at"].(string)
+	if _, err := time.Parse("2006-01-02", expires); err != nil {
+		t.Errorf("expires_at = %q, want a YYYY-MM-DD date", expires)
 	}
-	for _, want := range []string{"mygroup/myrepo", "read_repository", "maintainer", "expires"} {
+	delete(body, "expires_at")
+	var want map[string]any
+	if err := json.Unmarshal([]byte(`{
+		"name": "corral-alice-s1",
+		"description": "corral session token",
+		"granular_scopes": [
+			{"access": "selected_memberships", "project_ids": [42], "permissions": `+mustJSON(t, PresetReadPermissions)+`},
+			{"access": "user", "permissions": ["read_user", "read_personal_access_token"]}
+		]
+	}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(body, want) {
+		got, _ := json.Marshal(body)
+		t.Errorf("create request body =\n%s\nwant the minimal fine-grained request", got)
+	}
+
+	if err := c.Cleanup(context.Background()); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	reqs := f.requests()
+	if last := reqs[len(reqs)-1]; last.method != http.MethodDelete || last.path != "/api/v4/personal_access_tokens/99" {
+		t.Errorf("cleanup must DELETE /api/v4/personal_access_tokens/99, got %s %s", last.method, last.path)
+	}
+}
+
+// Several grants become one selected_memberships scope each, in config order, with project_ids or
+// group_ids. Status and note name every target with its permissions and never a token value.
+func TestGitlabMintSeveralGrants(t *testing.T) {
+	f := &fakeGitlab{ids: map[string]int{"projects/org%2Fapp": 42, "groups/org%2Flibs": 7}}
+	g := f.provider(t, Config{TokenGrants: []Grant{
+		{Project: "org/app", Permissions: []string{"download_code", "push_code"}},
+		{Group: "org/libs", Permissions: []string{"download_code"}},
+	}})
+
+	// No .git in the workdir: every grant names its target, so detection must not run.
+	c, err := g.Mint(context.Background(), spec.Session{User: "alice", ID: "s1", WorkDir: t.TempDir()}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{"access":"selected_memberships","permissions":["download_code","push_code"],"project_ids":[42]}`,
+		`{"access":"selected_memberships","group_ids":[7],"permissions":["download_code"]}`,
+	}
+	if got := f.selectedScopes(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("selected scopes =\n%v\nwant\n%v", got, want)
+	}
+	for _, r := range f.requests() {
+		if r.path == "/api/v4/groups/org%2Flibs" && r.query != "with_projects=false" {
+			t.Errorf("group lookup query = %q, want with_projects=false", r.query)
+		}
+	}
+
+	secrets := []string{"glpat-minted-xyz", "glpat-host"}
+	if len(c.Status) != 1 || len(c.AgentNotes) != 1 {
+		t.Fatalf("want one Status and one AgentNotes line, got %v / %v", c.Status, c.AgentNotes)
+	}
+	for _, want := range []string{"fine-grained personal access token", "realuser", "gitlab.example.com", "project org/app: download_code, push_code", "group org/libs: download_code", "expires"} {
 		if !strings.Contains(c.Status[0], want) {
 			t.Errorf("Status should mention %q: %q", want, c.Status[0])
 		}
 	}
-	// The AgentNote tells the model what GITLAB_TOKEN is (kind/scopes/expiry) and carries
-	// the glab quirk (`glab auth status` misreports env-token auth); it must never leak
-	// the token value.
-	if len(c.AgentNotes) != 1 {
-		t.Fatalf("expected one AgentNotes line, got %v", c.AgentNotes)
-	}
-	if strings.Contains(c.AgentNotes[0], "glpat-minted-xyz") {
-		t.Errorf("AgentNotes must not leak the minted token: %q", c.AgentNotes[0])
-	}
-	for _, want := range []string{"GITLAB_TOKEN", "project access token", "mygroup/myrepo", "read_repository", "maintainer", "expires", "glab auth status"} {
+	for _, want := range []string{"GITLAB_TOKEN", "fine-grained personal access token", "realuser", "project org/app: download_code, push_code", "group org/libs: download_code", "read_user", "read_personal_access_token", "expires", "403 Forbidden", "glab auth status"} {
 		if !strings.Contains(c.AgentNotes[0], want) {
 			t.Errorf("AgentNotes should mention %q: %q", want, c.AgentNotes[0])
 		}
-	}
-	// CleanupHint is surfaced only if revoke fails: it names the live-token risk + the
-	// manual remedy, and (like Status) must never carry the token value.
-	if c.CleanupHint == "" {
-		t.Error("gitlab must set a CleanupHint for the no-Reaper revoke-failure case")
-	}
-	if strings.Contains(c.CleanupHint, "glpat-minted-xyz") {
-		t.Errorf("CleanupHint must not leak the minted token: %q", c.CleanupHint)
 	}
 	for _, want := range []string{"may still be live", "revoke", "expires on"} {
 		if !strings.Contains(c.CleanupHint, want) {
 			t.Errorf("CleanupHint should mention %q: %q", want, c.CleanupHint)
 		}
 	}
-
-	rec.mu.Lock()
-	if rec.auth != "glpat-host-admin" {
-		t.Errorf("PRIVATE-TOKEN = %q, want the host credential", rec.auth)
-	}
-	if !strings.Contains(rec.escapedPath, "mygroup%2Fmyrepo/access_tokens") {
-		t.Errorf("project path not URL-encoded: %q", rec.escapedPath)
-	}
-	if lvl, _ := rec.body["access_level"].(float64); lvl != 40 {
-		t.Errorf("access_level = %v, want 40", rec.body["access_level"])
-	}
-	if scopes, _ := rec.body["scopes"].([]any); len(scopes) != 2 {
-		t.Errorf("scopes = %v, want 2", rec.body["scopes"])
-	}
-	if _, ok := rec.body["expires_at"].(string); !ok {
-		t.Errorf("expires_at missing/!string: %v", rec.body["expires_at"])
-	}
-	if name, _ := rec.body["name"].(string); !strings.HasPrefix(name, "corral-alice-") {
-		t.Errorf("token name = %q, want corral-alice-*", name)
-	}
-	rec.mu.Unlock()
-
-	// Cleanup revokes by id.
-	if err := c.Cleanup(context.Background()); err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if rec.method != http.MethodDelete {
-		t.Errorf("cleanup must DELETE, got %q", rec.method)
-	}
-	if !strings.HasSuffix(rec.escapedPath, "/access_tokens/99") {
-		t.Errorf("revoke path must target the token id: %q", rec.escapedPath)
+	for _, s := range secrets {
+		for _, text := range []string{c.Status[0], c.AgentNotes[0], c.CleanupHint} {
+			if strings.Contains(text, s) {
+				t.Errorf("banner/note/hint must not carry a token value: %q", text)
+			}
+		}
 	}
 }
 
-// type: personal mints a PAT via the admin endpoint POST /users/:id/personal_access_tokens,
-// after resolving the host credential's own user via GET /user. The PAT is owned by that
-// real user, so it sends no access_level; the minted token (never the host's) crosses in.
-func TestGitlabMintPersonalToken(t *testing.T) {
-	rec := &gitlabRecorder{}
-	srv := rec.server(t)
-	g := &gitlab{
-		cfg: Config{
-			Type:   "personal",
-			Scopes: []string{"api"}, // opt into write so it can create issues/MRs
-			Role:   "maintainer",    // must be ignored for a PAT (no per-project access_level)
-		},
-		token:   "glpat-host-admin",
-		hostEnv: map[string]string{"GITLAB_TOKEN": "glpat-host-admin"},
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
-	}
-
-	c, err := g.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+// The banner names each target's broadest preset plus the permissions beyond it; the agent note
+// lists every permission.
+func TestGitlabStatusNamesPresets(t *testing.T) {
+	f := &fakeGitlab{ids: map[string]int{"projects/org%2Fapp": 42, "groups/org%2Flibs": 7, "projects/org%2Ftools": 8}}
+	g := f.provider(t, Config{TokenGrants: []Grant{
+		{Project: "org/app", Preset: PresetRead},
+		{Project: "org/app", Preset: PresetWrite, Permissions: []string{"merge_merge_request"}},
+		{Group: "org/libs"},
+		{Project: "org/tools", Permissions: []string{"download_code"}},
+	}})
+	c, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s", WorkDir: t.TempDir()}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Env["GITLAB_TOKEN"] != "glpat-minted-xyz" {
-		t.Errorf("GITLAB_TOKEN must be the minted token, got %q", c.Env["GITLAB_TOKEN"])
+	want := "(project org/app: preset write + merge_merge_request; group org/libs: preset read; project org/tools: download_code; expires "
+	if !strings.Contains(c.Status[0], want) {
+		t.Errorf("Status = %q, want it to contain %q", c.Status[0], want)
 	}
-	// Status names the resolved real user + host (not a project), never a role, never the token.
-	if len(c.Status) != 1 {
-		t.Fatalf("expected one Status line, got %v", c.Status)
-	}
-	for _, want := range []string{"personal access token", "realuser", "gitlab.example.com", "api", "expires"} {
-		if !strings.Contains(c.Status[0], want) {
-			t.Errorf("Status should mention %q: %q", want, c.Status[0])
-		}
-	}
-	if strings.Contains(c.Status[0], "maintainer") {
-		t.Errorf("a PAT has no project role — Status must not mention one: %q", c.Status[0])
-	}
-	if strings.Contains(c.Status[0], "glpat-minted-xyz") {
-		t.Errorf("Status must not leak the minted token: %q", c.Status[0])
-	}
-	// The AgentNote carries the same facts as Status for the model (kind/scopes/expiry) and
-	// adds the glab quirk; like Status it names no role and never the token value.
-	if len(c.AgentNotes) != 1 {
-		t.Fatalf("expected one AgentNotes line, got %v", c.AgentNotes)
-	}
-	for _, want := range []string{"GITLAB_TOKEN", "personal access token", "realuser", "gitlab.example.com", "api", "expires", "glab auth status"} {
-		if !strings.Contains(c.AgentNotes[0], want) {
-			t.Errorf("AgentNotes should mention %q: %q", want, c.AgentNotes[0])
-		}
-	}
-	if strings.Contains(c.AgentNotes[0], "glpat-minted-xyz") {
-		t.Errorf("AgentNotes must not leak the minted token: %q", c.AgentNotes[0])
-	}
-
-	rec.mu.Lock()
-	if !strings.HasSuffix(rec.escapedPath, "/users/42/personal_access_tokens") {
-		t.Errorf("PAT create must POST to /users/<id>/personal_access_tokens, got %q", rec.escapedPath)
-	}
-	if _, ok := rec.body["access_level"]; ok {
-		t.Errorf("a PAT request must not send access_level: %v", rec.body)
-	}
-	if name, _ := rec.body["name"].(string); !strings.HasPrefix(name, "corral-alice-") {
-		t.Errorf("token name = %q, want corral-alice-*", name)
-	}
-	rec.mu.Unlock()
-
-	// Cleanup revokes the PAT by id at the personal endpoint.
-	if err := c.Cleanup(context.Background()); err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if rec.method != http.MethodDelete {
-		t.Errorf("cleanup must DELETE, got %q", rec.method)
-	}
-	if !strings.HasSuffix(rec.escapedPath, "/personal_access_tokens/99") {
-		t.Errorf("revoke path must target the PAT id at the personal endpoint: %q", rec.escapedPath)
+	if strings.Contains(c.AgentNotes[0], "preset") || !strings.Contains(c.AgentNotes[0], "read_wiki") {
+		t.Errorf("AgentNotes must list every permission instead of presets: %q", c.AgentNotes[0])
 	}
 }
 
-// A non-admin host token can resolve GET /user but is rejected (403) by the admin
-// PAT-create endpoint. That must fail closed, not silently fall back.
-func TestGitlabMintPersonalRequiresAdmin(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":42,"username":"realuser"}`))
-			return
-		}
-		w.WriteHeader(http.StatusForbidden) // admin endpoint rejects a non-admin token
-		_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
-	}))
-	defer srv.Close()
-	g := &gitlab{
-		cfg:     Config{Type: "personal"},
-		token:   "glpat-host",
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
+// Grants on the same target merge into one scope with the union of their permissions; GitLab
+// rejects a second scope for a namespace already on the token.
+func TestGitlabGrantMerging(t *testing.T) {
+	origin := "git@gitlab.example.com:org/team/repo.git"
+	for _, tc := range []struct {
+		name    string
+		grants  []Grant
+		origin  string
+		want    []string
+		lookups map[string]int // escaped lookup path → expected GET count
+	}{
+		{
+			name:   "path and numeric ID of one project",
+			grants: []Grant{{Project: "org/app", Permissions: []string{"download_code"}}, {Project: "42", Permissions: []string{"push_code"}}},
+			want:   []string{`{"access":"selected_memberships","permissions":["download_code","push_code"],"project_ids":[42]}`},
+		},
+		{
+			name:   "targetless grant and the detected project named",
+			grants: []Grant{{Permissions: []string{"push_code"}}, {Project: "org/team/repo", Permissions: []string{"download_code"}}},
+			origin: origin,
+			want:   []string{`{"access":"selected_memberships","permissions":["push_code","download_code"],"project_ids":[10]}`},
+		},
+		{
+			name:    "same project from two layers is looked up once",
+			grants:  []Grant{{Project: "org/app", Permissions: []string{"download_code"}}, {Project: "org/app", Permissions: []string{"push_code", "download_code"}}},
+			want:    []string{`{"access":"selected_memberships","permissions":["download_code","push_code"],"project_ids":[42]}`},
+			lookups: map[string]int{"/api/v4/projects/org%2Fapp": 1},
+		},
+		{
+			name:   "project and its parent group stay separate",
+			grants: []Grant{{Project: "org/app", Permissions: []string{"push_code"}}, {Group: "org", Permissions: []string{"download_code"}}},
+			want: []string{
+				`{"access":"selected_memberships","permissions":["push_code"],"project_ids":[42]}`,
+				`{"access":"selected_memberships","group_ids":[1],"permissions":["download_code"]}`,
+			},
+		},
+		{
+			name:   "preset and a permission on the same project",
+			grants: []Grant{{Project: "org/app", Preset: PresetRead}, {Project: "42", Permissions: []string{"push_code", "read_project"}}},
+			want: []string{
+				`{"access":"selected_memberships","permissions":` + mustJSON(t, append(slices.Clone(PresetReadPermissions), "push_code")) + `,"project_ids":[42]}`,
+			},
+		},
+		{
+			name:    "two targetless grants detect once",
+			grants:  []Grant{{Permissions: []string{"download_code"}}, {Permissions: []string{"push_code"}}},
+			origin:  origin,
+			want:    []string{`{"access":"selected_memberships","permissions":["download_code","push_code"],"project_ids":[10]}`},
+			lookups: map[string]int{"/api/v4/projects/org%2Fteam%2Frepo": 1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeGitlab{ids: map[string]int{"projects/org%2Fapp": 42, "projects/42": 42, "projects/org%2Fteam%2Frepo": 10, "groups/org": 1}}
+			g := f.provider(t, Config{TokenGrants: tc.grants})
+			work := t.TempDir()
+			if tc.origin != "" {
+				work = workdirWithOrigin(t, tc.origin)
+			}
+			if _, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s", WorkDir: work}, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.selectedScopes(t); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("selected scopes =\n%v\nwant\n%v", got, tc.want)
+			}
+			for path, n := range tc.lookups {
+				count := 0
+				for _, r := range f.requests() {
+					if r.method == http.MethodGet && r.path == path {
+						count++
+					}
+				}
+				if count != n {
+					t.Errorf("GET %s ran %d times, want %d", path, count, n)
+				}
+			}
+		})
 	}
-	if _, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false); err == nil {
-		t.Fatal("a non-admin host token must fail closed when minting a PAT")
+}
+
+func TestGitlabResolveTarget(t *testing.T) {
+	f := &fakeGitlab{
+		ids:  map[string]int{"groups/org%2Fteam": 7, "projects/42": 42},
+		fail: map[string]int{"/api/v4/projects/broken": http.StatusInternalServerError},
+	}
+	g := f.provider(t, Config{})
+	ctx := context.Background()
+
+	if id, err := g.resolveTarget(ctx, kindGroup, "org/team"); err != nil || id != 7 {
+		t.Errorf("resolveTarget(group org/team) = %d, %v; want 7", id, err)
+	}
+	if id, err := g.resolveTarget(ctx, kindProject, "42"); err != nil || id != 42 {
+		t.Errorf("resolveTarget(project 42) = %d, %v; want 42", id, err)
+	}
+	for _, tc := range []struct{ name, want string }{
+		{"missing", "does not exist or the host GITLAB_TOKEN cannot see it"},
+		{"broken", "500"},
+	} {
+		_, err := g.resolveTarget(ctx, kindProject, tc.name)
+		if err == nil {
+			t.Errorf("resolveTarget(project %s) must fail", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"`+tc.name+`"`) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("resolveTarget(project %s) error = %q, want it to name the target and %q", tc.name, err, tc.want)
+		}
+	}
+	// A target that cannot be resolved stops the launch before any token is created.
+	f2 := &fakeGitlab{}
+	g2 := f2.provider(t, Config{TokenGrants: []Grant{{Project: "org/gone"}}})
+	if _, err := g2.Mint(ctx, spec.Session{User: "u", ID: "s"}, false); err == nil || !strings.Contains(err.Error(), "org/gone") {
+		t.Errorf("Mint with an unknown target = %v, want an error naming org/gone", err)
+	}
+	for _, r := range f2.requests() {
+		if r.method == http.MethodPost {
+			t.Error("no token may be created when a target cannot be resolved")
+		}
+	}
+}
+
+func TestGitlabOriginDetection(t *testing.T) {
+	for _, tc := range []struct {
+		name, origin string
+		want         []string
+	}{
+		{name: "no origin remote", want: []string{"no origin remote", "providers.gitlab.grants"}},
+		{name: "origin on another host", origin: "git@github.com:other/repo.git", want: []string{"github.com", "gitlab.example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := t.TempDir()
+			if tc.origin != "" {
+				work = workdirWithOrigin(t, tc.origin)
+			} else if err := os.MkdirAll(filepath.Join(work, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			} else if err := os.WriteFile(filepath.Join(work, ".git", "config"), []byte("[core]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeGitlab{}
+			g := f.provider(t, Config{})
+			_, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s", WorkDir: work}, false)
+			if err == nil {
+				t.Fatal("Mint must fail when the origin project cannot be detected")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q should mention %q", err, w)
+				}
+			}
+		})
+	}
+}
+
+// GitLab before 19.2 can answer with a legacy token. corral must revoke it and fail, never hand it
+// to the session.
+func TestGitlabMintRejectsLegacyToken(t *testing.T) {
+	legacy := `{"id":99,"token":"glpat-legacy","scopes":["api"]}`
+	f := &fakeGitlab{ids: map[string]int{"projects/org%2Fapp": 42}, createBody: legacy}
+	g := f.provider(t, Config{TokenGrants: []Grant{{Project: "org/app"}}})
+	_, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false)
+	if err == nil || !strings.Contains(err.Error(), "not fine-grained") || strings.Contains(err.Error(), "glpat-legacy") {
+		t.Fatalf("Mint = %v, want a secret-free 'not fine-grained' error", err)
+	}
+	reqs := f.requests()
+	if last := reqs[len(reqs)-1]; last.method != http.MethodDelete || last.path != "/api/v4/personal_access_tokens/99" {
+		t.Errorf("the legacy token must be revoked, last request was %s %s", last.method, last.path)
+	}
+
+	f2 := &fakeGitlab{
+		ids:        map[string]int{"projects/org%2Fapp": 42},
+		createBody: legacy,
+		fail:       map[string]int{"/api/v4/personal_access_tokens/99": http.StatusInternalServerError},
+	}
+	g2 := f2.provider(t, Config{TokenGrants: []Grant{{Project: "org/app"}}})
+	if _, err := g2.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false); err == nil || !strings.Contains(err.Error(), "may be live") {
+		t.Fatalf("Mint with a failed revoke = %v, want an error saying the token may be live", err)
+	}
+}
+
+func TestGitlabCreateErrorHints(t *testing.T) {
+	const version = "GitLab 19.2 or later"
+	for _, tc := range []struct {
+		status        int
+		want, notWant []string
+	}{
+		{status: http.StatusBadRequest, want: []string{"400", "from fake", version}},
+		{status: http.StatusNotFound, want: []string{"404", "from fake", version, "fine-grained personal access tokens enabled", "member of every grant target", "project org/app", "group org"}},
+		{status: http.StatusForbidden, want: []string{"403", "from fake"}, notWant: []string{version}},
+		{status: http.StatusUnprocessableEntity, want: []string{"422", "from fake"}, notWant: []string{version}},
+		{status: http.StatusInternalServerError, want: []string{"500", "from fake", "permission name this GitLab instance knows"}, notWant: []string{version}},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			f := &fakeGitlab{
+				ids:  map[string]int{"projects/org%2Fapp": 42, "groups/org": 1},
+				fail: map[string]int{createPath: tc.status},
+			}
+			g := f.provider(t, Config{TokenGrants: []Grant{{Project: "org/app"}, {Group: "org"}}})
+			_, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false)
+			if err == nil {
+				t.Fatal("Mint must fail when the create request is rejected")
+			}
+			msg := err.Error()
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("error %q should mention %q", msg, w)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(msg, w) {
+					t.Errorf("error %q must not mention %q", msg, w)
+				}
+			}
+			if strings.Index(msg, "from fake") > strings.Index(msg, "; the gitlab provider") && strings.Contains(msg, "; the gitlab provider") {
+				t.Errorf("GitLab's message must come before the hint: %q", msg)
+			}
+		})
 	}
 }
 
 func TestGitlabMintFailsClosed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
-	}))
-	defer srv.Close()
-	g := &gitlab{
-		cfg:     Config{Project: "g/p"},
-		token:   "glpat-host",
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
-	}
+	f := &fakeGitlab{fail: map[string]int{"/api/v4/user": http.StatusForbidden}}
+	g := f.provider(t, Config{TokenGrants: []Grant{{Project: "g/p"}}})
 	if _, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false); err == nil {
 		t.Fatal("Mint must fail closed when the API rejects the request")
 	}
@@ -343,89 +574,28 @@ func TestGitlabMintFailsClosed(t *testing.T) {
 // A POST response with id<=0 (malformed) must fail closed: a 0 id would build a
 // revoke URL that 404s, letting cleanup "succeed" while the token stays live.
 func TestGitlabMintRejectsInvalidTokenID(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":0,"token":"glpat-minted"}`))
-	}))
-	defer srv.Close()
-	g := &gitlab{
-		cfg:     Config{Project: "g/p"},
-		token:   "glpat-host",
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
-	}
-	if _, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false); err == nil {
-		t.Fatal("Mint must fail closed on an invalid token id (cleanup would not revoke)")
+	f := &fakeGitlab{ids: map[string]int{"projects/g%2Fp": 1}, createBody: `{"id":0,"token":"glpat-minted","granular":true}`}
+	g := f.provider(t, Config{TokenGrants: []Grant{{Project: "g/p"}}})
+	_, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false)
+	if err == nil || !strings.Contains(err.Error(), "invalid token id") {
+		t.Fatalf("Mint = %v, want an invalid token id error (cleanup would not revoke)", err)
 	}
 }
 
 // When the revoke (DELETE) fails with a non-2xx, Cleanup must surface the error so the
 // launcher can warn the operator that a token may still be live (it is not silent).
 func TestGitlabRevokeFailsClosed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":99,"token":"glpat-minted"}`))
-			return
-		}
-		w.WriteHeader(http.StatusInternalServerError) // DELETE (revoke) fails
-		_, _ = w.Write([]byte(`{"message":"500 Internal Server Error"}`))
-	}))
-	defer srv.Close()
-	g := &gitlab{
-		cfg:     Config{Type: "project", Project: "g/p"},
-		token:   "glpat-host",
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
+	f := &fakeGitlab{
+		ids:  map[string]int{"projects/g%2Fp": 1},
+		fail: map[string]int{"/api/v4/personal_access_tokens/99": http.StatusInternalServerError},
 	}
+	g := f.provider(t, Config{TokenGrants: []Grant{{Project: "g/p"}}})
 	c, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s"}, false)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
 	if err := c.Cleanup(context.Background()); err == nil {
 		t.Fatal("a failed revoke must return an error from Cleanup, not succeed silently")
-	}
-}
-
-func TestGitlabProjectAutodetect(t *testing.T) {
-	rec := &gitlabRecorder{}
-	srv := rec.server(t)
-	// A workdir whose origin remote points at the configured GitLab host.
-	work := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(work, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gitcfg := "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = git@gitlab.example.com:auto/detected.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
-	if err := os.WriteFile(filepath.Join(work, ".git", "config"), []byte(gitcfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	g := &gitlab{
-		cfg:     Config{Type: "project"}, // no explicit project → autodetect
-		token:   "glpat-host",
-		host:    "gitlab.example.com",
-		apiBase: srv.URL,
-		client:  srv.Client(),
-	}
-	if _, err := g.Mint(context.Background(), spec.Session{User: "u", ID: "s", WorkDir: work}, false); err != nil {
-		t.Fatalf("autodetect Mint: %v", err)
-	}
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	if !strings.Contains(rec.escapedPath, "auto%2Fdetected/access_tokens") {
-		t.Errorf("autodetected project not used in request: %q", rec.escapedPath)
-	}
-}
-
-func TestGitlabAutodetectHostMismatch(t *testing.T) {
-	work := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(work, ".git"), 0o755)
-	_ = os.WriteFile(filepath.Join(work, ".git", "config"),
-		[]byte("[remote \"origin\"]\n\turl = git@github.com:other/repo.git\n"), 0o644)
-	g := &gitlab{cfg: Config{}, token: "t", host: "gitlab.example.com", apiBase: "https://x", client: http.DefaultClient}
-	if _, err := g.Mint(context.Background(), spec.Session{WorkDir: work}, false); err == nil {
-		t.Fatal("an origin on a different host must not auto-resolve a project (fail closed)")
 	}
 }
 
