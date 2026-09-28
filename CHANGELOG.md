@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.23.0](https://github.com/go-corral/corral/compare/v0.22.0...v0.23.0) (2026-09-25)
+
+
+### Features
+
+* **notes:** add notes provider for static agent notes ([#32](https://github.com/go-corral/corral/issues/32)) ([194cfed](https://github.com/go-corral/corral/commit/194cfed8754422b3ee3855de57f94f9b6797d8cb))
+* **policy:** detect AI provider API keys ([#25](https://github.com/go-corral/corral/issues/25)) ([0491031](https://github.com/go-corral/corral/commit/049103116fa602843fbf2913ae28a6a55a4d6371))
+* **policy:** detect Atlassian API tokens ([#24](https://github.com/go-corral/corral/issues/24)) ([3e69ae7](https://github.com/go-corral/corral/commit/3e69ae7708337e96027f3a1e7a8ab53046ab30b8))
+* **policy:** detect GitLab tokens ([#28](https://github.com/go-corral/corral/issues/28)) ([faaea30](https://github.com/go-corral/corral/commit/faaea30f66b2830f0686e2dd91c9c89ab483d15c))
+* **policy:** detect infrastructure service tokens ([#26](https://github.com/go-corral/corral/issues/26)) ([3a2d74c](https://github.com/go-corral/corral/commit/3a2d74cd5df0bab4a1746ca0bc932fedc1258dd0))
+* **policy:** detect more AWS key prefixes and Bedrock API keys ([#30](https://github.com/go-corral/corral/issues/30)) ([3f933ac](https://github.com/go-corral/corral/commit/3f933ac4204924d4713de3d83a4a6ba07be75496))
+* **policy:** detect package registry tokens ([#27](https://github.com/go-corral/corral/issues/27)) ([e897ee9](https://github.com/go-corral/corral/commit/e897ee925d99852d80f7c54300085cd8b5c4975f))
+* **policy:** detect SaaS API tokens ([#29](https://github.com/go-corral/corral/issues/29)) ([4657e6e](https://github.com/go-corral/corral/commit/4657e6e771c3026d039491976009232893aa7c17))
+
 ## [0.22.0](https://github.com/go-corral/corral/compare/v0.21.0...v0.22.0) (2026-09-24)
 
 
