@@ -123,6 +123,15 @@ func cmdRun(args []string, version string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "load config: %v", err)
 	}
+	var applied []string
+	for _, s := range sources {
+		if s.Kind == "profile" {
+			if strings.Contains(s.Path, ",") {
+				return fatalf(os.Stderr, "profile %q: name contains a comma, which is not allowed", s.Path)
+			}
+			applied = append(applied, s.Path)
+		}
+	}
 	// Decide the writable workdir before the trust gate: the gate hashes session-hook
 	// executables whose relative paths anchor to the workdir.
 	projectSrc, substituted, err := resolveWorkdir(*home, *project, *dryRun)
@@ -132,6 +141,13 @@ func cmdRun(args []string, version string) int {
 	if substituted {
 		c.Message(os.Stderr, report.Attention, fmt.Sprintf("launched from home; using a fresh scratch workdir at %s "+
 			"so the whole home tree is not exposed (write your work elsewhere, or cd into a project first)", projectSrc))
+	}
+	// The hook finds project config from the workdir, not from this cwd, so the pinned
+	// profiles must load from there too.
+	if len(applied) > 0 {
+		if _, _, err := config.Load(config.LoadOptions{Profiles: applied, GlobalPath: os.Getenv(sandbox.GlobalConfigEnvVar), ProjectDir: projectSrc}); err != nil {
+			return fatalf(os.Stderr, "profiles %s: the hook in workdir %s cannot load them: %v", strings.Join(applied, ","), projectSrc, err)
+		}
 	}
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
@@ -171,6 +187,10 @@ func cmdRun(args []string, version string) int {
 		spec.SetEnv = map[string]string{}
 	}
 	spec.SetEnv[sandbox.AgentEnvVar] = cfg.EffectiveAgent()
+	// Pin the applied profiles so the in-sandbox hook and commands apply them too.
+	if len(applied) > 0 {
+		spec.SetEnv[sandbox.ProfilesEnvVar] = strings.Join(applied, ",")
+	}
 	// Pin the audit-log path so the in-sandbox hook does not resolve it against the private home.
 	spec.SetEnv[sandbox.AuditPathEnvVar] = configuredAuditPath(cfg, cfg.AgentConfigDir(*home, host))
 

@@ -1263,6 +1263,106 @@ func TestRunDryRunPinsAuditPath(t *testing.T) {
 	}
 }
 
+// TestRunDryRunPinsProfiles: the applied profiles ride into the sandbox in order, and a
+// launch without a profile sets no pin.
+func TestRunDryRunPinsProfiles(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := "profiles:\n  a:\n    hostname: host-a\n  b:\n    hostname: host-b\n"
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	wantEnv := "--setenv " + sandbox.ProfilesEnvVar + " a,b"
+	if runtime.GOOS == "darwin" {
+		wantEnv = sandbox.ProfilesEnvVar + "=a,b"
+	}
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  bool
+	}{
+		{name: "two profiles", flags: []string{"-p", "a", "-p", "b"}, want: true},
+		{name: "no profile", flags: nil, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var code int
+			out := captureStdout(t, func() {
+				code = cmdRun(append([]string{"--dry-run", "--home", home, "--project", proj}, tc.flags...), "dev")
+			})
+			if code != 0 {
+				t.Fatalf("run --dry-run exit=%d", code)
+			}
+			if tc.want && !strings.Contains(out, wantEnv) {
+				t.Errorf("dry-run argv must set %s to a,b:\n%s", sandbox.ProfilesEnvVar, out)
+			}
+			if !tc.want && strings.Contains(out, sandbox.ProfilesEnvVar) {
+				t.Errorf("dry-run argv must not set %s without a profile:\n%s", sandbox.ProfilesEnvVar, out)
+			}
+		})
+	}
+}
+
+// TestRunDryRunRefusesCommaProfile: a profile name with a comma cannot ride in the pin.
+func TestRunDryRunRefusesCommaProfile(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("profiles:\n  \"a,b\":\n    hostname: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "-p", "a,b"}, "dev")
+		})
+	})
+	if code == 0 {
+		t.Fatal("run must refuse a profile name with a comma")
+	}
+	if !strings.Contains(stderr, `"a,b"`) {
+		t.Errorf("the error must name the profile, got:\n%s", stderr)
+	}
+}
+
+// TestRunRefusesProfileMissingInWorkdir: a profile defined only in the cwd config cannot
+// load in a --project workdir without it, so the launch fails instead of the hook.
+func TestRunRefusesProfileMissingInWorkdir(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	other := filepath.Join(home, "other")
+	for _, d := range []string{proj, other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("profiles:\n  a:\n    hostname: host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", other, "-p", "a"}, "dev")
+		})
+	})
+	if code == 0 {
+		t.Fatal("run must refuse a profile that the workdir config does not define")
+	}
+	if !strings.Contains(stderr, `profile "a" not found`) {
+		t.Errorf("the error must name the profile, got:\n%s", stderr)
+	}
+}
+
 // TestRunRefusesAuditPathUnderAlwaysBlocked: the audit-log directory is a read-write grant,
 // so the always-blocked guard refuses it before any provider mints.
 func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {

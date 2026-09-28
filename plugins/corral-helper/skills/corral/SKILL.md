@@ -125,7 +125,7 @@ setting is for:
 | `.corral.local.yml` in the project | The user, in this one project.    | Not ignored by itself; add it to `.gitignore`. |
 
 The global config is the user's own file, so corral never asks for approval. The first real `run` or `corral sync` in a repo asks the user to approve the project config files before it uses them and again when they change.
-When you recommend a layer, say in one short sentence what the file is for. Profiles are extra layers selected at launch with `--profile`. Read [config.md](references/reference/config.md) for exact fields, defaults, constraints, and merge behavior.
+When you recommend a layer, say in one short sentence what the file is for. Profiles are extra layers selected at launch with `--profile`. They also apply to the hook and to corral commands inside the session. Read [config.md](references/reference/config.md) for exact fields, defaults, constraints, and merge behavior.
 
 Before editing:
 

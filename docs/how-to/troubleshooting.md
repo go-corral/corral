@@ -173,20 +173,15 @@ because the resolved SSH directory is masked inside the grant.
 
 ## Config changes seem ignored
 
-- Run `corral validate` to see the built-in, global, `.corral.yml`, and
-  `.corral.local.yml` sources in precedence order. It does not attribute each value to a
-  file, so inspect the listed files when you need to find which one supplied a setting.
-- Lists merge append-unique. A higher layer adds entries; it does not remove entries
-  from a lower layer.
-- Unknown keys and invalid values fail the load. Read the reported field name rather
-  than assuming the key was ignored.
-- Provider, mount, environment, and sandbox changes apply to new sessions. Run
-  `corral validate`, then exit and run `corral run` again.
+- Run `corral validate` to see the built-in, global, `.corral.yml` and `.corral.local.yml` sources ordered by priority.
+- Lists merge append-unique, meaning they can only be extended by later config layers.
+- Provider, mount, environment and sandbox changes apply to new sessions.
+- Inside a session, `echo "$CORRAL_PROFILES"` shows the profiles that the session applies.
+- If the hook blocks every tool call with `profile "<name>" not found`, the config no longer defines a session profile. Restore the profile, or exit and run `corral run` again.
 
 ## Reading the audit log
 
-corral logs each policy decision as one JSON line. The default log is in the agent's
-config directory:
+corral logs each policy decision as one JSON line. The default log is in the agent's config directory:
 
 | Agent       | Default audit log                                                                                     |
 | ----------- | ----------------------------------------------------------------------------------------------------- |

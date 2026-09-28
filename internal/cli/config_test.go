@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
@@ -43,6 +44,70 @@ func TestLoadConfigHonorsPinnedGlobalPath(t *testing.T) {
 	}
 	if !sawGlobal {
 		t.Errorf("pinned path must appear as the global source: %+v", srcs)
+	}
+}
+
+func TestSessionProfiles(t *testing.T) {
+	for _, tc := range []struct {
+		val     string
+		want    []string
+		wantErr bool
+	}{
+		{val: "", want: nil},
+		{val: "a", want: []string{"a"}},
+		{val: "a,b", want: []string{"a", "b"}},
+		{val: "a,,b", wantErr: true},
+	} {
+		t.Run(tc.val, func(t *testing.T) {
+			t.Setenv(sandbox.ProfilesEnvVar, tc.val)
+			got, err := sessionProfiles()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Without -p, loadConfig applies the session profiles; an explicit -p replaces them.
+func TestLoadConfigSessionProfiles(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := "profiles:\n  a:\n    hostname: host-a\n  b:\n    hostname: host-b\n"
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	t.Setenv(sandbox.ProfilesEnvVar, "a")
+
+	for _, tc := range []struct {
+		flags []string
+		want  string
+	}{
+		{flags: nil, want: "a"},
+		{flags: []string{"b"}, want: "b"},
+	} {
+		cfg, srcs, err := loadConfig(tc.flags)
+		if err != nil {
+			t.Fatalf("loadConfig(%q): %v", tc.flags, err)
+		}
+		if cfg.Hostname != "host-"+tc.want {
+			t.Errorf("loadConfig(%q): hostname %q, want host-%s", tc.flags, cfg.Hostname, tc.want)
+		}
+		var profiles []string
+		for _, s := range srcs {
+			if s.Kind == "profile" {
+				profiles = append(profiles, s.Path)
+			}
+		}
+		if !slices.Equal(profiles, []string{tc.want}) {
+			t.Errorf("loadConfig(%q): profile sources %q, want [%s]", tc.flags, profiles, tc.want)
+		}
 	}
 }
 
