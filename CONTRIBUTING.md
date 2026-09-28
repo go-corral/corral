@@ -38,3 +38,4 @@ make test
 - One concern per PR. Split unrelated changes.
 - Do not edit `CHANGELOG.md` or `.release-please-manifest.json`; the release PR maintains both. The plugin version in `plugins/corral-helper/.claude-plugin/plugin.json` is bumped the same way.
 - Dependency bumps arrive via Dependabot; do not open manual bump PRs unless a bump is blocked.
+- Add a `Co-authored-by:` trailer to a commit message only for human co-authors, never for agents.

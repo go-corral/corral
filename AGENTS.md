@@ -6,6 +6,7 @@
 - No fluff or filler text, use technical, direct language
 - No emojis in commits, issues, PR comments, or code
 - Small examples or visualizations are always better than dense, abstract summaries
+- Do not add Co-authored-by: in commit messages
 
 ## Architecture
 
