@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/go-corral/corral/internal/agents"
@@ -28,10 +29,30 @@ func envMap() map[string]string {
 // loadConfig loads the layered config. GlobalPath honors sandbox.GlobalConfigEnvVar
 // so the in-sandbox hook reads the file the launcher pinned.
 func loadConfig(profiles []string) (*config.Config, []config.Source, error) {
+	if len(profiles) == 0 {
+		p, err := sessionProfiles()
+		if err != nil {
+			return nil, nil, err
+		}
+		profiles = p
+	}
 	return config.Load(config.LoadOptions{
 		Profiles:   profiles,
 		GlobalPath: os.Getenv(sandbox.GlobalConfigEnvVar),
 	})
+}
+
+// sessionProfiles parses sandbox.ProfilesEnvVar.
+func sessionProfiles() ([]string, error) {
+	v := os.Getenv(sandbox.ProfilesEnvVar)
+	if v == "" {
+		return nil, nil
+	}
+	names := strings.Split(v, ",")
+	if slices.Contains(names, "") {
+		return nil, fmt.Errorf("%s=%q: empty profile name", sandbox.ProfilesEnvVar, v)
+	}
+	return names, nil
 }
 
 // checkResolvedPathGrants runs the symlink-resolving half of the providers.paths

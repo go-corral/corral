@@ -330,7 +330,7 @@ names to this list.
   - Each `name` must be a valid environment variable name.
   - A name can appear in `passthrough` or `set`, but not both. The default passthrough
     list already claims its names.
-  - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_AUDIT_PATH`,
+  - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_PROFILES`, `CORRAL_AUDIT_PATH`,
     `CORRAL_AGENT`, `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
     and `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
     `ENABLE_CLAUDEAI_MCP_SERVERS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`,
@@ -620,6 +620,7 @@ repository needs no token.
   the built-in, global, project, and local config. Repeat the flag to apply profiles from
   left to right. Later profiles replace scalar values, while lists continue to merge
   append-unique. Selecting one name twice or selecting an unknown name is an error.
+- **Session:** `corral run` sets `CORRAL_PROFILES` in the sandbox to the applied profile names, separated by commas. The hook and the corral commands inside the session apply these profiles when they get no `-p`. A command with `-p` applies only the flagged profiles. A `CORRAL_PROFILES` value that you export on the host acts like `-p` for every corral command. A profile name cannot contain a comma.
 
 ```yaml
 profiles:

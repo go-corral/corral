@@ -110,6 +110,8 @@ run session hooks or create temporary credentials, so those results appear only 
 real launch. For profiles, backend overrides, warning prompts, and every flag, read
 [commands.md](reference/commands.md).
 
+Profiles selected with `corral run -p` also apply to the hook and to corral commands inside the session. `echo "$CORRAL_PROFILES"` inside the session shows them.
+
 Do not automatically add `--yes`. It acknowledges advisory launch warnings, but cannot
 approve repository config or session-hook executables. Let the user review interactive
 approval prompts.

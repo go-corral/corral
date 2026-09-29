@@ -15,6 +15,10 @@ const SandboxEnvVar = "CORRAL_SANDBOX"
 // to a divergent path.
 const GlobalConfigEnvVar = "CORRAL_GLOBAL_CONFIG"
 
+// ProfilesEnvVar pins the comma-separated profiles the launcher applied, so the
+// in-sandbox hook and commands apply the same profiles without -p.
+const ProfilesEnvVar = "CORRAL_PROFILES"
+
 // ProviderNotesEnvVar carries the active providers' secret-free, model-facing
 // notes into the sandbox. Reserved so env.set cannot plant model-facing context.
 const ProviderNotesEnvVar = "CORRAL_PROVIDER_NOTES"
