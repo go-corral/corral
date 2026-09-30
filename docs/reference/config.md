@@ -516,34 +516,62 @@ allows you to continue.
 
 #### `providers.gitlab`
 
-The GitLab provider uses the host's `$GITLAB_TOKEN` to create a scoped, short-lived
-token outside the sandbox. It sets the new token as `GITLAB_TOKEN`, forwards supported
-`glab` connection variables from the host, and revokes the token on normal exit. It adds
-no mounts. See the [GitLab setup guide](../how-to/gitlab.md) for host-token requirements.
+The GitLab provider uses the host's `$GITLAB_TOKEN` to create a short-lived
+fine-grained personal access token outside the sandbox. The token belongs to the host
+token's user and holds only the permissions in `grants`. corral sets the new token as
+`GITLAB_TOKEN`, forwards supported `glab` connection variables from the host, and
+revokes the token on normal exit. It adds no mounts. The provider needs GitLab 19.2 or
+later. See the [GitLab setup guide](../how-to/gitlab.md) for host-token requirements.
 
 - **`enabled`** (boolean, default `false`): enables the provider.
 - **`optional`** (boolean, default `false`): when `true`, a missing host token or provider
   error prints a warning and skips GitLab. When `false`, either error stops the launch.
-- **`type`** (string enum: `personal` or `project`; default `personal`): token type.
-  Other values are rejected.
-  - A `project` token belongs to a synthetic `project_<id>_bot` user, which owns issues,
-    merge requests, comments, and other objects created with the token.
-  - A `personal` token belongs to the user identified by the host token. GitLab's admin
-    endpoint creates it, so the host token must have administrator rights.
 - **`host`** (string without a URL scheme): GitLab instance. Config has no fixed default;
   corral checks `GITLAB_HOST`, then `GL_HOST`, and otherwise uses `gitlab.com`. Set this
   field for a self-hosted instance. corral never infers it from the Git remote.
-- **`project`** (project path or numeric ID): project for a project token. By default,
-  corral reads `origin` from `<workdir>/.git/config`. Auto-detection therefore requires
-  the workdir to be the root of a regular checkout; set this field for a subdirectory or
-  linked worktree. This field is used only when `type` is `project`; personal tokens
-  ignore it.
-- **`scopes`** (list, default `[read_repository, read_api]`): scopes for the session
-  token. Set `[api]` when the session needs to create or change issues and merge requests.
-- **`role`** (string enum: `guest`, `reporter`, `developer`, `maintainer`, or `owner`;
-  default `developer`): maximum project role for a project token. This field is rejected
-  for personal tokens because they use the GitLab user's existing project roles.
+- **`grants`** (list of [grant entries](#gitlab-grant-entries)): the projects and groups
+  the session token reaches, each with its permissions. The default is one grant with
+  the `read` preset on the project detected from `origin`. Once any layer sets
+  `grants`, the default no longer applies.
 - **Token lifetime:** fixed at one day, GitLab's minimum expiry granularity.
+
+##### GitLab grant entries
+
+Each entry names at most one target and its permissions:
+
+- **`project`** (project path or numeric ID): a project the user is a member of.
+- **`group`** (group path or numeric ID): a group the user is a member of. The grant
+  also covers the group's subgroups and their projects.
+- **`preset`** (`read` or `write`, default `read` when `permissions` is empty): a
+  built-in permission set on the target. `read` holds read-only access to code,
+  commits, branches, tags, merge requests, work items, CI/CD, releases, packages,
+  container images, and the wiki. `write` adds `push_code`, `create_branch`,
+  `create_commit`, `create_merge_request`, `update_merge_request`, `create_work_item`,
+  `update_work_item`, `create_pipeline`, `update_pipeline`, `run_job`, and
+  `update_job`. The [GitLab setup guide](../how-to/gitlab.md) lists every name in
+  `read`.
+- **`permissions`** (list of GitLab fine-grained permission names): permissions on the
+  target, added to `preset`. Without `preset`, the entry holds only these names. corral
+  passes the names to GitLab unchanged.
+
+An entry without `project` or `group` targets the project in `origin` from
+`<workdir>/.git/config`. Its host must match the GitLab host. Detection requires the
+workdir to be the root of a regular checkout; name the target for a subdirectory or
+linked worktree. Config validation rejects an entry that sets both `project` and
+`group` or an unknown `preset`.
+
+Entries that resolve to the same project or group combine their permissions, also
+across config layers and when one entry names the project by path and another by ID.
+The token always holds `read_user` and `read_personal_access_token` on the user's own
+account in addition to the grants.
+
+```yaml
+grants:
+  - preset: write           # the origin project
+  - project: org/app        # read preset
+  - group: org/libs
+    permissions: [download_code, read_repository]
+```
 
 ### `policy`
 

@@ -290,8 +290,10 @@ providers:
   kubernetes:
     enabled: false
     tokenLifetime: 8h
-  # Credential-minter: a scoped, short-lived GitLab access token (personal or project),
-  # minted OUTSIDE the sandbox and injected as env. See the gitlab docs for type/scopes/role.
+  # Credential-minter: a short-lived GitLab fine-grained personal access token, minted
+  # OUTSIDE the sandbox and injected as env. grants is left unset here on purpose (the in-code
+  # default is the read-only permission set on the origin project); a YAML default would
+  # force-union into any user list (append-unique merge).
   gitlab:
     enabled: false
 policy:
