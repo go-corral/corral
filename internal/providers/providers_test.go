@@ -318,18 +318,22 @@ func TestCleanupFailureSilentWithoutOnTeardown(t *testing.T) {
 
 // --- session-end hooks (Contribution.PostSession) ---
 
-// Resolve collects PostSession closures, and HasPostSession reports presence — true when a
-// provider registers one, false when none do, and nil-receiver-safe.
-func TestResolveCollectsPostSessionAndHasPostSession(t *testing.T) {
+// Resolve collects PostSession closures, and RunPostSession runs them; it is a no-op when
+// none are registered and nil-receiver-safe.
+func TestResolveCollectsPostSession(t *testing.T) {
+	var fired bool
 	withHook := &fakeProvider{name: "hooks", available: true, contrib: &Contribution{
-		PostSession: func(context.Context, SessionExit) error { return nil },
+		PostSession: func(context.Context, SessionExit) error { fired = true; return nil },
 	}}
 	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: withHook}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.HasPostSession() {
-		t.Error("HasPostSession must be true when a provider registers a PostSession closure")
+	if err := res.RunPostSession(context.Background(), SessionExit{}); err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Error("RunPostSession must run a registered PostSession closure")
 	}
 
 	noHook := &fakeProvider{name: "docker", available: true, contrib: &Contribution{}}
@@ -337,13 +341,13 @@ func TestResolveCollectsPostSessionAndHasPostSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res2.HasPostSession() {
-		t.Error("HasPostSession must be false with no PostSession closure")
+	if err := res2.RunPostSession(context.Background(), SessionExit{}); err != nil {
+		t.Errorf("RunPostSession with no closure must be a no-op: %v", err)
 	}
 
 	var nilRes *Resolved
-	if nilRes.HasPostSession() {
-		t.Error("HasPostSession on a nil *Resolved must be false, not panic")
+	if err := nilRes.RunPostSession(context.Background(), SessionExit{}); err != nil {
+		t.Errorf("RunPostSession on a nil *Resolved must return nil: %v", err)
 	}
 }
 
@@ -529,9 +533,6 @@ func TestResolveHonorsPostSessionFromFailedOptionalMint(t *testing.T) {
 	if len(res.Warnings) != 1 {
 		t.Errorf("the skip must be warned, got %v", res.Warnings)
 	}
-	if !res.HasPostSession() {
-		t.Fatal("the paired session-end hook must be collected even though the Mint failed")
-	}
 	if err := res.RunPostSession(context.Background(), SessionExit{Started: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -543,14 +544,18 @@ func TestResolveHonorsPostSessionFromFailedOptionalMint(t *testing.T) {
 // ResolvePreview must not collect PostSession: a preview mints nothing and must never run
 // a hook (the same reason it collects no cleanups).
 func TestResolvePreviewIgnoresPostSession(t *testing.T) {
+	var fired bool
 	p := &fakeProvider{name: "hooks", available: true, contrib: &Contribution{
-		PostSession: func(context.Context, SessionExit) error { return nil },
+		PostSession: func(context.Context, SessionExit) error { fired = true; return nil },
 	}}
 	res, _, err := ResolvePreview(context.Background(), Session{}, []Active{{Provider: p}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.HasPostSession() {
+	if err := res.RunPostSession(context.Background(), SessionExit{}); err != nil {
+		t.Fatal(err)
+	}
+	if fired {
 		t.Error("ResolvePreview must not collect PostSession (a preview must never run a hook)")
 	}
 }
@@ -632,9 +637,6 @@ func TestCleanupRunsLIFOOnce(t *testing.T) {
 	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: a}, {Provider: b}})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !res.HasCleanup() {
-		t.Fatal("HasCleanup should be true with two cleanup closures")
 	}
 	_ = res.Cleanup(context.Background())
 	_ = res.Cleanup(context.Background()) // idempotent
@@ -932,10 +934,6 @@ func TestResolvePreviewFoldsExpandsNamesAndSkips(t *testing.T) {
 	// The unavailable provider is a skip warning (as Resolve would record).
 	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "docker") {
 		t.Errorf("unavailable provider should be a skip warning, got %v", res.Warnings)
-	}
-	// A preview mints nothing → no teardown.
-	if res.HasCleanup() {
-		t.Error("a preview must register no cleanups")
 	}
 }
 

@@ -21,9 +21,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
-// cleanupProvider is a Provider whose Contribution registers a cleanup closure, so
-// Resolve produces a *Resolved with HasCleanup()==true — the only way to drive the
-// supervised launch path (the real socket-brokers register no cleanup).
+// cleanupProvider is a Provider whose Contribution registers a cleanup closure.
 type cleanupProvider struct {
 	ran *bool
 }
@@ -41,23 +39,7 @@ func resolvedWithCleanup(t *testing.T, ran *bool) *providers.Resolved {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if !res.HasCleanup() {
-		t.Fatal("expected HasCleanup() true")
-	}
 	return res
-}
-
-// postSessionOnlyProvider registers only a session-end hook (no cleanup), so
-// HasPostSession is true while HasCleanup is false — the case that must still force the
-// supervised path.
-type postSessionOnlyProvider struct{}
-
-func (postSessionOnlyProvider) Name() string                   { return "hooks" }
-func (postSessionOnlyProvider) Available(context.Context) bool { return true }
-func (postSessionOnlyProvider) Mint(context.Context, providers.Session, bool) (*providers.Contribution, error) {
-	return &providers.Contribution{
-		PostSession: func(context.Context, providers.SessionExit) error { return nil },
-	}, nil
 }
 
 // postSessionRecorder registers a session-end hook that records the SessionExit it was
@@ -70,32 +52,6 @@ func (p postSessionRecorder) Mint(context.Context, providers.Session, bool) (*pr
 	return &providers.Contribution{
 		PostSession: func(_ context.Context, e providers.SessionExit) error { *p.got = e; return nil },
 	}, nil
-}
-
-// mustSupervise ORs HasCleanup with HasPostSession: a post-session-only config (no
-// cleanup) must still take the supervised path, and a config with neither keeps the
-// syscall.Exec fast path.
-func TestMustSuperviseForksOnPostSessionOnly(t *testing.T) {
-	res, err := providers.Resolve(context.Background(), providers.Session{},
-		[]providers.Active{{Provider: postSessionOnlyProvider{}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.HasCleanup() {
-		t.Fatal("this provider must register no cleanup (the point of the test)")
-	}
-	if !mustSupervise(res) {
-		t.Error("a post-session-only config must take the supervised path, not syscall.Exec")
-	}
-
-	// Neither cleanup nor a hook → the exec fast path.
-	empty, err := providers.Resolve(context.Background(), providers.Session{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mustSupervise(empty) {
-		t.Error("a config with neither cleanup nor a post-session hook must keep the exec fast path")
-	}
 }
 
 // runSupervised runs the session-end hooks after the child exits, handing them a
