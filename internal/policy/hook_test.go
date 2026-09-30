@@ -81,7 +81,7 @@ func TestRunHookMalformedJSONFailsClosed(t *testing.T) {
 
 func TestRunHookOversizedFailsClosed(t *testing.T) {
 	eng, _, _ := hookEngine(t)
-	big := bytes.Repeat([]byte("a"), maxEventBytes+10)
+	big := bytes.Repeat([]byte("a"), MaxEventBytes+10)
 	var errBuf bytes.Buffer
 	if code := RunHook(eng, bytes.NewReader(big), &errBuf); code != ExitBlock {
 		t.Fatalf("oversized input must fail closed (2), got %d", code)
@@ -387,7 +387,7 @@ func TestRunHookOnlyZeroOrTwo(t *testing.T) {
 		{"glob-input-string", []byte(`{"tool_name":"Glob","tool_input":"nope","cwd":"/"}`)},
 		{"multiedit-bad-edits", []byte(`{"tool_name":"MultiEdit","tool_input":{"edits":[123]},"cwd":"/"}`)},
 		{"relative-path-no-cwd", []byte(`{"tool_name":"Read","tool_input":{"file_path":"rel/path"}}`)},
-		{"oversized", bytes.Repeat([]byte("a"), maxEventBytes+1)},
+		{"oversized", bytes.Repeat([]byte("a"), MaxEventBytes+1)},
 		{"valid-allow", valid("Read", map[string]any{"file_path": filepath.Join(home, "ok.txt")})},
 		{"valid-deny-secret", valid("Read", map[string]any{"file_path": filepath.Join(ssh, "id_rsa")})},
 		{"valid-deny-bash", valid("Bash", map[string]any{"command": "rm -rf ~/.ssh"})},

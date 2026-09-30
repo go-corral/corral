@@ -34,6 +34,10 @@ const AgentEnvVar = "CORRAL_AGENT"
 // in-sandbox hook, which would otherwise re-resolve it from the private home.
 const AuditPathEnvVar = "CORRAL_AUDIT_PATH"
 
+// SidecarSocketEnvVar names the unix socket of the launcher's sidecar inside
+// the sandbox.
+const SidecarSocketEnvVar = "CORRAL_SIDECAR_SOCKET"
+
 // BinEnvVar pins the corral binary an agent's in-process policy extension
 // re-invokes. Reserved so nothing can redirect enforcement.
 const BinEnvVar = "CORRAL_BIN"
