@@ -3,13 +3,50 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/go-corral/corral/internal/pathutil"
 )
+
+// FS is the filesystem that event paths name. In a corral session it is the sandbox's view,
+// which can differ from the host's, for example in a private /tmp.
+type FS interface {
+	// EvalSymlinks is filepath.EvalSymlinks.
+	EvalSymlinks(path string) (string, error)
+	// ReadRegular reads at most limit bytes of path. It reads nothing and reports regular
+	// false when path, without following a final symlink, is not a regular file.
+	ReadRegular(path string, limit int64) (data []byte, regular bool, err error)
+}
+
+// OSFS is the filesystem of this process.
+type OSFS struct{}
+
+func (OSFS) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
+
+func (OSFS) ReadRegular(path string, limit int64) ([]byte, bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, false, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
 
 // Canonicalize resolves p to an absolute, symlink-free path suitable for prefix matching. It is
 // the core anti-bypass primitive: it defeats renamed-secret/traversal tricks (via Clean + symlink
@@ -19,11 +56,16 @@ import (
 // ~/.ssh/authorized_keys canonicalizes under ~/.ssh even though the file does not exist yet.
 // Any error other than "does not exist" is returned; callers must fail closed on it.
 func Canonicalize(p, cwd string) (string, error) {
+	return canonicalize(OSFS{}, p, cwd)
+}
+
+// canonicalize is Canonicalize in fsys.
+func canonicalize(fsys FS, p, cwd string) (string, error) {
 	abs, err := lexicalAbs(p, cwd)
 	if err != nil {
 		return "", err
 	}
-	return resolveExistingPrefix(abs)
+	return resolveExistingPrefix(fsys, abs)
 }
 
 // CanonicalizeRoot is Canonicalize for trusted, statically-configured deny roots (the
@@ -38,7 +80,7 @@ func CanonicalizeRoot(p, cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	canon, err := resolveExistingPrefix(abs)
+	canon, err := resolveExistingPrefix(OSFS{}, abs)
 	if err == nil {
 		return canon, nil
 	}
@@ -61,11 +103,11 @@ func lexicalAbs(p, cwd string) (string, error) {
 	return filepath.Clean(p), nil
 }
 
-func resolveExistingPrefix(p string) (string, error) {
+func resolveExistingPrefix(fsys FS, p string) (string, error) {
 	var tail []string // path components, deepest first
 	cur := p
 	for {
-		resolved, err := filepath.EvalSymlinks(cur)
+		resolved, err := fsys.EvalSymlinks(cur)
 		if err == nil {
 			out := resolved
 			for i := len(tail) - 1; i >= 0; i-- {

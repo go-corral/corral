@@ -281,7 +281,7 @@ func TestClassifySensitiveCaseInsensitive(t *testing.T) {
 
 func TestResolveExistingPrefixNoAncestor(t *testing.T) {
 	impossiblePath := "/nonexistent/very/deep/path/to/nonexistent/file"
-	canon, err := resolveExistingPrefix(impossiblePath)
+	canon, err := resolveExistingPrefix(OSFS{}, impossiblePath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -1,11 +1,37 @@
 package policy
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+// fakeFS maps symlinks to their targets and files to their content. Every other path exists
+// as itself.
+type fakeFS struct {
+	links map[string]string
+	files map[string]string
+}
+
+func (f fakeFS) EvalSymlinks(p string) (string, error) {
+	if target, ok := f.links[p]; ok {
+		return target, nil
+	}
+	return p, nil
+}
+
+func (f fakeFS) ReadRegular(p string, limit int64) ([]byte, bool, error) {
+	c, ok := f.files[p]
+	if !ok {
+		return nil, false, &fs.PathError{Op: "lstat", Path: p, Err: fs.ErrNotExist}
+	}
+	if int64(len(c)) > limit {
+		c = c[:limit]
+	}
+	return []byte(c), true, nil
+}
 
 func mustCanon(t *testing.T, p string) string {
 	t.Helper()
@@ -206,5 +232,33 @@ func TestWithin(t *testing.T) {
 		if got := Within(c.p, c.root); got != c.want {
 			t.Errorf("Within(%q,%q)=%v want %v", c.p, c.root, got, c.want)
 		}
+	}
+}
+
+// A symlink that exists only in the event's filesystem resolves there: a write through it into
+// the agent config is denied, while the host view of the same path allows it.
+func TestEventPathsResolveInEventFS(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "e")
+	fsys := fakeFS{links: map[string]string{link: "/home/u/.claude/settings.json"}}
+	eng := NewEngine(
+		&BashRule{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()},
+		&PathPatternRule{AgentConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()},
+	)
+	for _, tc := range []struct {
+		name string
+		ev   *HookEvent
+	}{
+		{"Write", readEvent(t, "Write", map[string]any{"file_path": link, "content": "{}"}, "/")},
+		{"Bash redirect", bashEventCwd(t, "cat payload > "+link, "/")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if d, err := eng.Evaluate(tc.ev); err != nil || d.Action != Allow {
+				t.Fatalf("host view: got %+v, %v; want allow", d, err)
+			}
+			tc.ev.fsys = fsys
+			if d, err := eng.Evaluate(tc.ev); err != nil || d.Action != Deny {
+				t.Errorf("event view: got %+v, %v; want deny", d, err)
+			}
+		})
 	}
 }

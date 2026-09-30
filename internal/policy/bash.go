@@ -51,7 +51,7 @@ func (r *BashRule) Evaluate(ev *HookEvent) (Decision, bool, error) {
 		}, true, nil
 	}
 	sp := selfProtect{configDir: r.ConfigDir, footprint: r.Footprint, allFootprints: r.AllFootprints, hookPaths: r.HookPaths, extraPaths: r.ExtraProtectedPaths, auditLogBase: r.AuditLogBase}
-	if d, hit := pb.check(r.Name(), sp, ev.Cwd); hit {
+	if d, hit := pb.check(r.Name(), sp, ev); hit {
 		return d, true, nil
 	}
 	return Decision{}, false, nil
@@ -241,7 +241,7 @@ func isWriteRedir(op syntax.RedirOperator) bool {
 	return false
 }
 
-func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decision, bool) {
+func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Decision, bool) {
 	deny := func(reason string) (Decision, bool) {
 		return Decision{Action: Deny, Rule: ruleName, Reason: reason}, true
 	}
@@ -269,15 +269,15 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decisi
 		case "":
 			// Command name hidden behind a shell expansion: block only when an argument is a
 			// secret path or corral's own config; a benign expanded command is unaffected.
-			if reason, _, hit := firstSensitiveArg(sc.args(), cwd, sp, true); hit {
+			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
 				return deny(fmt.Sprintf("a command whose name is hidden by a shell expansion targets %s and cannot be verified safe, so it is blocked", reason))
 			}
 		case "rm":
-			if reason, hit := checkRM(sc, sp, cwd); hit {
+			if reason, hit := checkRM(sc, sp, ev); hit {
 				return deny(reason)
 			}
 		case "ln":
-			if reason, hit := checkLn(sc, sp, cwd); hit {
+			if reason, hit := checkLn(sc, sp, ev); hit {
 				return deny(reason)
 			}
 		case "chmod":
@@ -285,11 +285,11 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decisi
 				return deny(reason)
 			}
 		case "shred", "truncate", "wipe":
-			if reason, _, hit := firstSensitiveArg(sc.args(), cwd, sp, true); hit {
+			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
 				return deny(fmt.Sprintf("%s of %s is blocked", sc.name, reason))
 			}
 		case "find":
-			if reason, hit := checkFind(sc, sp, cwd); hit {
+			if reason, hit := checkFind(sc, sp, ev); hit {
 				return deny(reason)
 			}
 		}
@@ -301,7 +301,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decisi
 		}
 
 		if fileReaders[sc.name] {
-			if reason, _, hit := firstSensitiveArg(sc.args(), cwd, sp, false); hit {
+			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, false); hit {
 				return deny(fmt.Sprintf("reading %s via `%s` bypasses the Read gate and is blocked", reason, sc.name))
 			}
 		}
@@ -311,7 +311,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decisi
 		if !rd.write {
 			continue
 		}
-		if reason, self, hit := matchSensitive(rd.target, rd.expanded, cwd, sp, true); hit {
+		if reason, self, hit := matchSensitive(rd.target, rd.expanded, ev, sp, true); hit {
 			if self {
 				return deny(fmt.Sprintf("redirecting output into %s would disable corral and is blocked", reason))
 			}
@@ -323,7 +323,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, cwd string) (Decisi
 }
 
 // checkRM denies a recursive rm targeting a catastrophic or secret path.
-func checkRM(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
+func checkRM(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 	recursive := false
 	var targets []argWord
 	for _, a := range sc.args() {
@@ -350,7 +350,7 @@ func checkRM(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
 		case "", "/", "~", "$HOME", "/*":
 			return fmt.Sprintf("recursive delete of %q", a.text), true
 		}
-		if reason, _, hit := matchSensitive(a.text, a.hasExpansion, cwd, sp, true); hit {
+		if reason, _, hit := matchSensitive(a.text, a.hasExpansion, ev, sp, true); hit {
 			return fmt.Sprintf("recursive delete of %s", reason), true
 		}
 	}
@@ -358,7 +358,7 @@ func checkRM(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
 }
 
 // checkFind denies `find … -delete` targeting a secret/credential path or corral's own config.
-func checkFind(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
+func checkFind(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 	deletes := false
 	for _, a := range sc.args() {
 		if a.text == "-delete" {
@@ -369,7 +369,7 @@ func checkFind(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
 	if !deletes {
 		return "", false
 	}
-	if reason, _, hit := firstSensitiveArg(sc.args(), cwd, sp, true); hit {
+	if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
 		return fmt.Sprintf("find -delete targeting %s is blocked", reason), true
 	}
 	return "", false
@@ -378,12 +378,12 @@ func checkFind(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
 // checkLn denies creating a link whose source or link name is a secret/credential path or
 // corral's own config: `ln -s ~/.ssh /tmp/bridge` builds a symlink bridge, `ln ~/.aws/credentials x`
 // hard-links secret content. Either endpoint being sensitive is enough.
-func checkLn(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
+func checkLn(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 	for _, a := range sc.args() {
 		if strings.HasPrefix(a.text, "-") {
 			continue
 		}
-		if reason, self, hit := matchSensitive(a.text, a.hasExpansion, cwd, sp, true); hit {
+		if reason, self, hit := matchSensitive(a.text, a.hasExpansion, ev, sp, true); hit {
 			if self {
 				return fmt.Sprintf("creating a link to %s would disable corral and is blocked", reason), true
 			}
@@ -396,11 +396,11 @@ func checkLn(sc simpleCommand, sp selfProtect, cwd string) (string, bool) {
 // pathCandidates returns the raw shell token and, for literal paths, its canonical form. The raw
 // token is always retained, so canonicalization can only add a deny. Expansions and unresolvable
 // paths remain raw because this Bash check is a secondary layer.
-func pathCandidates(text string, expanded bool, cwd string) []string {
+func pathCandidates(text string, expanded bool, ev *HookEvent) []string {
 	if expanded || text == "" {
 		return []string{text}
 	}
-	canon, err := Canonicalize(text, cwd)
+	canon, err := ev.canonicalize(text)
 	if err != nil || canon == text {
 		return []string{text}
 	}
@@ -412,8 +412,8 @@ func pathCandidates(text string, expanded bool, cwd string) []string {
 // own protected config (selfConfigMatch). The self return distinguishes the two. classifySensitive
 // is tested before selfConfigMatch; the two never match the same canonical path, so the order does
 // not change which message a token produces.
-func matchSensitive(text string, expanded bool, cwd string, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
-	for _, c := range pathCandidates(text, expanded, cwd) {
+func matchSensitive(text string, expanded bool, ev *HookEvent, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
+	for _, c := range pathCandidates(text, expanded, ev) {
 		if r, h := classifySensitive(c); h {
 			return r, false, true
 		}
@@ -426,9 +426,9 @@ func matchSensitive(text string, expanded bool, cwd string, sp selfProtect, chec
 	return "", false, false
 }
 
-func firstSensitiveArg(args []argWord, cwd string, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
+func firstSensitiveArg(args []argWord, ev *HookEvent, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
 	for _, a := range args {
-		if r, s, h := matchSensitive(a.text, a.hasExpansion, cwd, sp, checkSelf); h {
+		if r, s, h := matchSensitive(a.text, a.hasExpansion, ev, sp, checkSelf); h {
 			return r, s, h
 		}
 	}

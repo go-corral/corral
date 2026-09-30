@@ -296,7 +296,7 @@ func cmdHookPreToolUse(args []string) int {
 		fmt.Fprintf(os.Stderr, "corral: cannot initialize policy, blocking (fail-closed): %v\n", err)
 		return policy.ExitBlock
 	}
-	return policy.RunHookWithAudit(eng, auditFn, os.Stdin, os.Stdout, os.Stderr, present)
+	return policy.RunHookWithAudit(eng, auditFn, policy.OSFS{}, os.Stdin, os.Stdout, os.Stderr, present)
 }
 
 // cmdHookPostToolUse runs the MCP response ingress scan: scans the tool response for secrets

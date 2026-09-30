@@ -313,7 +313,7 @@ func TestRunHookUnknownActionFailsClosed(t *testing.T) {
 	var captured Decision
 	aud := func(_ *HookEvent, dec Decision) { captured = dec }
 	var out, errBuf bytes.Buffer
-	code := RunHookWithAudit(eng, aud, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
+	code := RunHookWithAudit(eng, aud, OSFS{}, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
 
 	if code != ExitBlock {
 		t.Fatalf("an unrecognized (non-Allow) action must fail closed (block, %d), got %d", ExitBlock, code)
@@ -333,7 +333,7 @@ func TestRunHookAuditPanicDoesNotChangeVerdict(t *testing.T) {
 	t.Run("allow survives auditor panic", func(t *testing.T) {
 		payload := mustJSON(map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join(home, "ok.txt")}, "cwd": home})
 		var out, errBuf bytes.Buffer
-		code := RunHookWithAudit(eng, panicAud, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
+		code := RunHookWithAudit(eng, panicAud, OSFS{}, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
 		if code != ExitAllow {
 			t.Fatalf("auditor panic must not flip an allow, got %d", code)
 		}
@@ -345,7 +345,7 @@ func TestRunHookAuditPanicDoesNotChangeVerdict(t *testing.T) {
 	t.Run("deny survives auditor panic", func(t *testing.T) {
 		payload := mustJSON(map[string]any{"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join(ssh, "id_rsa")}, "cwd": home})
 		var out, errBuf bytes.Buffer
-		code := RunHookWithAudit(eng, panicAud, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
+		code := RunHookWithAudit(eng, panicAud, OSFS{}, bytes.NewReader(payload), &out, &errBuf, PresentExit2)
 		if code != ExitBlock {
 			t.Fatalf("auditor panic must not flip a deny, got %d", code)
 		}

@@ -20,6 +20,21 @@ type HookEvent struct {
 	ToolResponse   json.RawMessage `json:"tool_response"`
 	ToolOutput     json.RawMessage `json:"tool_output"`
 	Prompt         string          `json:"prompt"`
+
+	// fsys is the filesystem the event's paths name. Nil is OSFS.
+	fsys FS
+}
+
+func (e *HookEvent) fs() FS {
+	if e.fsys == nil {
+		return OSFS{}
+	}
+	return e.fsys
+}
+
+// canonicalize is Canonicalize of p against the event's cwd in the event's filesystem.
+func (e *HookEvent) canonicalize(p string) (string, error) {
+	return canonicalize(e.fs(), p, e.Cwd)
 }
 
 // ParseEvent decodes a hook event. Unknown fields are tolerated: the protocol gains fields over
