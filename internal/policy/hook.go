@@ -43,12 +43,13 @@ func RunHook(eng *Engine, r io.Reader, errw io.Writer) int {
 }
 
 func RunHookWith(eng *Engine, r io.Reader, out, errw io.Writer, present Presentation) int {
-	return RunHookWithAudit(eng, nil, r, out, errw, present)
+	return RunHookWithAudit(eng, nil, OSFS{}, r, out, errw, present)
 }
 
-// RunHookWithAudit never returns a code other than ExitAllow or ExitBlock (fail-closed). It
-// installs no signal handlers and does not call os.Exit, so it is testable.
-func RunHookWithAudit(eng *Engine, aud AuditFunc, r io.Reader, out, errw io.Writer, present Presentation) (code int) {
+// RunHookWithAudit evaluates the event's paths in fsys. It never returns a code other than
+// ExitAllow or ExitBlock (fail-closed). It installs no signal handlers and does not call os.Exit,
+// so it is testable.
+func RunHookWithAudit(eng *Engine, aud AuditFunc, fsys FS, r io.Reader, out, errw io.Writer, present Presentation) (code int) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			fmt.Fprintf(errw, "corral: internal error, blocking (fail-closed): %v\n", rec)
@@ -71,6 +72,7 @@ func RunHookWithAudit(eng *Engine, aud AuditFunc, r io.Reader, out, errw io.Writ
 		fmt.Fprintf(errw, "corral: cannot parse hook event, blocking: %v\n", err)
 		return ExitBlock
 	}
+	ev.fsys = fsys
 
 	dec, err := eng.Evaluate(ev)
 	if err != nil {

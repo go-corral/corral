@@ -3,9 +3,7 @@ package policy
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math"
-	"os"
 	"regexp"
 	"unicode/utf8"
 )
@@ -407,14 +405,14 @@ func (r *SecretScanRule) evalRead(ev *HookEvent) (Decision, bool, error) {
 		return Decision{}, false, err
 	}
 	for _, raw := range paths {
-		canon, err := Canonicalize(raw, ev.Cwd)
+		canon, err := ev.canonicalize(raw)
 		if err != nil {
 			return Decision{}, false, err
 		}
 		if r.skip(canon) {
 			continue
 		}
-		res, hit, serr := r.scanFile(canon)
+		res, hit, serr := r.scanFile(ev.fs(), canon)
 		if serr != nil {
 			// The Read itself will surface the same error; do not block on a non-policy I/O failure.
 			continue
@@ -439,23 +437,10 @@ func (r *SecretScanRule) skip(canon string) bool {
 	return false
 }
 
-// scanFile reads up to the byte cap from a regular file and scans it. Non-regular files are skipped.
-func (r *SecretScanRule) scanFile(path string) (scanResult, bool, error) {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return scanResult{}, false, err
-	}
-	if !fi.Mode().IsRegular() {
-		return scanResult{}, false, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return scanResult{}, false, err
-	}
-	defer func() { _ = f.Close() }()
-
-	data, err := io.ReadAll(io.LimitReader(f, scanLimit(r.MaxScanBytes)))
-	if err != nil {
+// scanFile reads up to the byte cap from a regular file in fsys and scans it. Non-regular files are skipped.
+func (r *SecretScanRule) scanFile(fsys FS, path string) (scanResult, bool, error) {
+	data, regular, err := fsys.ReadRegular(path, scanLimit(r.MaxScanBytes))
+	if err != nil || !regular {
 		return scanResult{}, false, err
 	}
 	res, hit := scanSecrets(data, r.EntropyThreshold)

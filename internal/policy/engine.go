@@ -73,7 +73,7 @@ func (r *BlockedPathRule) Evaluate(ev *HookEvent) (Decision, bool, error) {
 		return Decision{}, false, err
 	}
 	for _, raw := range paths {
-		canon, err := Canonicalize(raw, ev.Cwd)
+		canon, err := ev.canonicalize(raw)
 		if err != nil {
 			return Decision{}, false, err
 		}

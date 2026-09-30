@@ -74,7 +74,7 @@ func (r *PathPatternRule) evalPaths(ev *HookEvent) (Decision, bool, error) {
 	}
 	write := writeStyleTools[ev.ToolName]
 	for _, raw := range paths {
-		canon, err := Canonicalize(raw, ev.Cwd)
+		canon, err := ev.canonicalize(raw)
 		if err != nil {
 			return Decision{}, false, err
 		}

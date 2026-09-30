@@ -142,3 +142,17 @@ func TestSecretScanRuleSkipRoots(t *testing.T) {
 		t.Errorf("a file under a skip-root must not be scanned (matched=%v err=%v)", matched, err)
 	}
 }
+
+// The Read scan reads the file from the event's filesystem, not the host's.
+func TestReadScanUsesEventFS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "result.txt")
+	r := &SecretScanRule{}
+	ev := toolEvent(t, "Read", map[string]any{"file_path": path})
+	if _, matched, err := r.Evaluate(ev); err != nil || matched {
+		t.Fatalf("host view: matched %v, err %v; want no match", matched, err)
+	}
+	ev.fsys = fakeFS{files: map[string]string{path: "id=" + "AKIA" + strings.Repeat("Q", 16)}}
+	if d, matched, err := r.Evaluate(ev); err != nil || !matched || d.Action != Deny {
+		t.Errorf("event view: got %+v, matched %v, err %v; want deny", d, matched, err)
+	}
+}
