@@ -389,15 +389,6 @@ func (r *Resolved) Cleanup(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// HasCleanup reports whether any provider registered a teardown. The launcher
-// picks its strategy from it: none -> syscall.Exec; some -> supervise the child.
-func (r *Resolved) HasCleanup() bool { return r != nil && len(r.cleanups) > 0 }
-
-// HasPostSession reports whether any provider registered a session-end hook.
-// The launcher ORs it with HasCleanup: a hook but no cleanup still needs the
-// supervised path.
-func (r *Resolved) HasPostSession() bool { return r != nil && len(r.postSessions) > 0 }
-
 // RunPostSession runs the session-end hooks in declaration order, joining errors
 // with per-provider attribution. Idempotent and nil-safe. Failure is warn-only.
 func (r *Resolved) RunPostSession(ctx context.Context, exit SessionExit) error {
