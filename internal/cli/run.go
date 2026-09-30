@@ -183,11 +183,9 @@ func cmdRun(args []string, version string) int {
 	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
 	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
-	// Name the agent actually launched for commands inside the sandbox.
 	if spec.SetEnv == nil {
 		spec.SetEnv = map[string]string{}
 	}
-	spec.SetEnv[sandbox.AgentEnvVar] = cfg.EffectiveAgent()
 	// Pin the applied profiles so commands inside the sandbox apply them too.
 	if len(applied) > 0 {
 		spec.SetEnv[sandbox.ProfilesEnvVar] = strings.Join(applied, ",")

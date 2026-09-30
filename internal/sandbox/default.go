@@ -26,8 +26,8 @@ const ProviderNotesEnvVar = "CORRAL_PROVIDER_NOTES"
 // BackendNotesEnvVar is the backend dual of ProviderNotesEnvVar.
 const BackendNotesEnvVar = "CORRAL_BACKEND_NOTES"
 
-// AgentEnvVar names the launched agent inside the sandbox. Reserved so
-// env.set cannot forge it.
+// AgentEnvVar is the name of the variable the session-hooks provider exports to
+// session hook scripts. Reserved so env.set cannot forge it.
 const AgentEnvVar = "CORRAL_AGENT"
 
 // AuditPathEnvVar pins the launcher-resolved audit-log path inside the

@@ -14,7 +14,6 @@ import (
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv(sandbox.AuditPathEnvVar)
 	_ = os.Unsetenv(sandbox.SidecarSocketEnvVar)
-	_ = os.Unsetenv(sandbox.AgentEnvVar)
 	_ = os.Unsetenv(sandbox.ProfilesEnvVar)
 	_ = os.Setenv("LC_ALL", "C.UTF-8")
 	_ = os.Unsetenv("NO_COLOR")
