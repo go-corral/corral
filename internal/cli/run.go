@@ -369,7 +369,7 @@ func cmdRun(args []string, version string) int {
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
 
-	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-exec
+	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-launch
 	// chdir.
 	prep, err = backend.Prepare(&spec, warnLines)
 	warnLines.Flush()
@@ -386,7 +386,7 @@ func cmdRun(args []string, version string) int {
 		return fatalf(os.Stderr, "%s", backend.UnavailableHint())
 	}
 
-	// Resolve the sandbox launcher (argv[0]: bwrap or sandbox-exec) to an absolute path for exec.
+	// Resolve the sandbox launcher (argv[0]: bwrap or sandbox-exec) to an absolute path.
 	launcherAbs, err := exec.LookPath(argv[0])
 	if err != nil {
 		return fatalf(os.Stderr, "resolve %s path: %v", backend.Name(), err)
@@ -402,24 +402,14 @@ func cmdRun(args []string, version string) int {
 	// Blank line so corral's banner is separated from claude's own UI.
 	fmt.Fprintln(os.Stderr)
 
-	// Launch strategy: syscall.Exec (fast path) when no teardown is needed, otherwise supervise.
-	// Empty env: bwrap is PID 1 and its environ is readable via /proc/1/environ.
-	if mustSupervise(res) {
-		// We outlive the child; the deferred teardown reclaims backend resources.
-		return runSupervised(launcherAbs, argv, res)
-	}
-	if err := syscall.Exec(launcherAbs, argv, []string{}); err != nil {
-		return fatalf(os.Stderr, "launch sandbox: %v", err)
-	}
-	// On success the process is replaced, so the deferred teardown never runs.
-	return 0
+	// We outlive the child; the deferred teardown reclaims backend resources.
+	return runSupervised(launcherAbs, argv, res)
 }
 
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the
 // launch directory itself. When it is the user's home, binding it would expose the whole home tree
 // and back the always-blocked masks with the real host secret paths, so a fresh scratch dir is used
-// instead. Not cleaned up (under $TMPDIR, reaped by the OS; this also keeps the launcher on the
-// syscall.Exec fast path instead of a cleanup-supervising one).
+// instead. Not cleaned up (under $TMPDIR, reaped by the OS).
 func resolveWorkdir(home, project string, dryRun bool) (src string, substituted bool, err error) {
 	if !sameDir(home, project) {
 		return project, false, nil
@@ -455,7 +445,9 @@ func runSupervised(launcherAbs string, argv []string, res *providers.Resolved) i
 
 	cmd := exec.Command(launcherAbs, argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = []string{} // empty, not nil: nil would re-inherit os.Environ()
+	// Empty, not nil (nil would re-inherit os.Environ()): bwrap is PID 1 and its environ is
+	// readable via /proc/1/environ.
+	cmd.Env = []string{}
 	if err := cmd.Start(); err != nil {
 		// The child never started — fire the session-end hooks with a zero SessionExit.
 		runPostSessionHooks(res, providers.SessionExit{})
@@ -538,11 +530,6 @@ func waitStatus(err error) (code int, signaled bool) {
 func exitCode(err error) int {
 	code, _ := waitStatus(err)
 	return code
-}
-
-// mustSupervise reports whether the launcher must outlive the child.
-func mustSupervise(res *providers.Resolved) bool {
-	return res.HasCleanup() || res.HasPostSession()
 }
 
 // shellQuote renders argv as a copy-pasteable shell command, for display only. Delegates to

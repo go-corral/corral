@@ -78,11 +78,10 @@ type SandboxSpec struct {
 // ceremony captured so the launcher orchestrates every backend uniformly.
 type LaunchPrep struct {
 	// Cleanup releases any resource Prepare acquired. Always non-nil — a
-	// no-op for backends that acquire nothing. On a successful syscall.Exec
-	// the process is replaced and Cleanup never runs.
+	// no-op for backends that acquire nothing.
 	Cleanup func()
 	// Chdir, when non-empty, is a directory the launcher must chdir into before
-	// exec. Seatbelt has no in-sandbox working-directory control; bwrap returns "".
+	// launch. Seatbelt has no in-sandbox working-directory control; bwrap returns "".
 	Chdir string
 }
 
