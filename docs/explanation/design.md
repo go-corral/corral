@@ -1,27 +1,17 @@
 # How corral works
 
-corral combines an OS sandbox with policy checks on the coding agent's tools. The
-sandbox limits which host files the process can reach. The policy code can reject a
-specific command, file operation, prompt, or tool result.
+corral combines an OS sandbox with policy checks on the coding agent's tools. The sandbox limits which host files the process can reach. The policy code can reject a specific command, file operation, prompt, or tool result.
 
-## Prepare the session once, check each event
+## Session start and hooks
 
-The `corral` binary has two execution paths:
+The `corral` binary has two modes:
 
-- `corral run` prepares one session. It loads and validates config, asks for any
-  required approval, checks providers, creates temporary credentials, builds the
-  sandbox command, and starts the agent.
-- `corral hook` evaluates the events sent by the agent, so it must start quickly. A
-  malformed or failed `PreToolUse` check blocks the tool call. A failed `PostToolUse`
-  scan replaces the result with a withheld marker. `UserPromptSubmit` scanning is
-  advisory and allows the prompt on an internal failure; `SessionStart` can only add a
-  note and cannot block.
+- `corral run` prepares a session. It loads and validates config, asks for required approvals, checks providers, creates temporary credentials, builds the sandbox command, and starts the agent.
+- `corral hook` receives the events sent by the agent. Inside a `corral run` session it forwards each event to the sidecar to ask for a policy decision. A failed `PreToolUse` check blocks the tool call. A failed `PostToolUse` scan replaces the result with a withheld marker. `UserPromptSubmit` scanning is advisory and allows the prompt on an internal failure, `SessionStart` can only add a note.
 
-Work that needs host access or user interaction belongs in `corral run`; the policy
-hook never calls a provider or asks the user a question. A config error therefore stops
-the launch. Tool calls and selected tool results follow the
-[fail-closed rules](threat-model.md#2-the-hook-fails-closed); prompt warnings and the
-session-start note do not.
+The sidecar is a service in the `corral run` process that the sandbox reaches through a unix socket. The launcher binds the socket directory read-only into the sandbox. The sidecar builds the policy at the session start from the config and selected profiles. It evaluates `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` events against that policy and logs the decisions to the audit log. A config or profile edit by the agent during the session only takes effect on the next launch after approval.
+
+A session that starts without `corral run` has no sidecar. The hook then evaluates events directly, which is a bit slower and offer less protection.
 
 ## Start with the filesystem corral provides
 

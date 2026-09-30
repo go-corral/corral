@@ -110,7 +110,7 @@ run session hooks or create temporary credentials, so those results appear only 
 real launch. For profiles, backend overrides, warning prompts, and every flag, read
 [commands.md](reference/commands.md).
 
-Profiles selected with `corral run -p` also apply to the hook and to corral commands inside the session. `echo "$CORRAL_PROFILES"` inside the session shows them.
+Profiles selected with `corral run -p` also apply to the sidecar and to corral commands inside the session. `echo "$CORRAL_PROFILES"` inside the session shows them. A config or profile edit takes effect on the next `corral run`. `CORRAL_SIDECAR_SOCKET` is reserved and names the sidecar socket. If every tool call is blocked with `cannot evaluate policy`, tell the user to restart the session with `corral run`, also after a corral upgrade.
 
 Do not automatically add `--yes`. It acknowledges advisory launch warnings, but cannot
 approve repository config or session-hook executables. Let the user review interactive
