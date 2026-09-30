@@ -56,11 +56,11 @@ func (OSFS) ReadRegular(path string, limit int64) ([]byte, bool, error) {
 // ~/.ssh/authorized_keys canonicalizes under ~/.ssh even though the file does not exist yet.
 // Any error other than "does not exist" is returned; callers must fail closed on it.
 func Canonicalize(p, cwd string) (string, error) {
-	return canonicalize(OSFS{}, p, cwd)
+	return CanonicalizeIn(OSFS{}, p, cwd)
 }
 
-// canonicalize is Canonicalize in fsys.
-func canonicalize(fsys FS, p, cwd string) (string, error) {
+// CanonicalizeIn is Canonicalize in fsys.
+func CanonicalizeIn(fsys FS, p, cwd string) (string, error) {
 	abs, err := lexicalAbs(p, cwd)
 	if err != nil {
 		return "", err
@@ -76,11 +76,17 @@ func canonicalize(fsys FS, p, cwd string) (string, error) {
 // can only deny more, never less, and any event reaching under an unresolvable ancestor still fails
 // closed on its own (strict) canonicalization. Only trusted deny roots, never event paths, relax.
 func CanonicalizeRoot(p, cwd string) (string, error) {
+	return CanonicalizeRootIn(OSFS{}, p, cwd)
+}
+
+// CanonicalizeRootIn is CanonicalizeRoot in fsys. A deny root must resolve in the filesystem
+// the event paths resolve in, else the two can differ for the same file.
+func CanonicalizeRootIn(fsys FS, p, cwd string) (string, error) {
 	abs, err := lexicalAbs(p, cwd)
 	if err != nil {
 		return "", err
 	}
-	canon, err := resolveExistingPrefix(OSFS{}, abs)
+	canon, err := resolveExistingPrefix(fsys, abs)
 	if err == nil {
 		return canon, nil
 	}

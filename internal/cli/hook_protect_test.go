@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/policy"
 )
 
-// TestAgentProtectedPaths covers the cli-level wrapper around the agent seam: it
+// TestCanonicalHookPaths covers the cli-level half of the agent seam: it
 // resolves the active agent, then canonicalizes and de-duplicates the raw paths the agent
 // derives from its live config under configDir. The agent-specific parsing itself is tested with
 // each implementation (e.g. internal/agents/claude); here we pin the canonicalize+dedup step and
 // the agent resolution (including the defensive fallback for an unknown agent).
-func TestAgentProtectedPaths(t *testing.T) {
+func TestCanonicalHookPaths(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
@@ -45,10 +46,10 @@ func TestAgentProtectedPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := agentProtectedPaths(&config.Config{Agent: tc.agent}, dir)
+			got := canonicalHookPaths(activeAgent(&config.Config{Agent: tc.agent}).ProtectedPaths(dir), policy.OSFS{})
 			sort.Strings(got)
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("agentProtectedPaths = %v, want %v", got, tc.want)
+				t.Errorf("canonicalHookPaths = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -20,6 +20,8 @@ const WalkCap = 200_000
 
 // Discovery is the discovered repo-level ignore state for one launch/hook init.
 type Discovery struct {
+	// Dir is the directory that holds the sources, Root its canonical form.
+	Dir          string
 	Root         string
 	Patterns     []string
 	Files        []string
@@ -77,7 +79,7 @@ func Discover(startDir string, sources []string) Discovery {
 			if err != nil {
 				root = filepath.Clean(cur)
 			}
-			return Discovery{Root: root, Patterns: patterns, Files: files, ProtectFiles: protect}
+			return Discovery{Dir: cur, Root: root, Patterns: patterns, Files: files, ProtectFiles: protect}
 		}
 		// Repo boundary: do not search above .git.
 		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
@@ -142,12 +144,12 @@ func ConcreteMasks(root string, patterns []string) (dirs, files []string) {
 	return dirs, files
 }
 
-// ProtectedPaths returns the canonical paths of the given ignore source files
-// mapped to a self-protect reason. Callers pass only native sources.
-func ProtectedPaths(files []string) map[string]string {
+// ProtectedPaths returns the paths of the given ignore source files, canonical in
+// fsys, mapped to a self-protect reason. Callers pass only native sources.
+func ProtectedPaths(files []string, fsys policy.FS) map[string]string {
 	out := map[string]string{}
 	for _, f := range files {
-		if canon, err := policy.CanonicalizeRoot(f, ""); err == nil {
+		if canon, err := policy.CanonicalizeRootIn(fsys, f, ""); err == nil {
 			out[canon] = "a repo AI ignore file"
 		}
 	}

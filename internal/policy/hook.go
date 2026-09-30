@@ -300,6 +300,23 @@ func (g *PostToolUseGate) Replace(marker string) int {
 	return g.code
 }
 
+// Forward writes payload, an already rendered answer, verbatim and returns code.
+// It shares the write-once rule with Replace. An empty payload writes nothing but still
+// counts as the write.
+func (g *PostToolUseGate) Forward(payload string, code int) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.written {
+		return g.code
+	}
+	g.written = true
+	g.code = code
+	if payload != "" {
+		_, _ = io.WriteString(g.out, payload)
+	}
+	return g.code
+}
+
 // InstallPostToolUseSignals makes a termination signal withhold the tool response instead of
 // leaking it. PostToolUse has no blocking exit code: Go's default handler exits 128+signo and exit 2
 // is equally non-blocking, so both let the original unscanned response through. The only way to

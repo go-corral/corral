@@ -25,6 +25,7 @@ import (
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
+	"github.com/go-corral/corral/internal/sidecar"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -180,18 +181,19 @@ func cmdRun(args []string, version string) int {
 
 	host := envMap()
 	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
-	// Pin the exact global config so the in-sandbox hook reads the same file.
+	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
-	// Pin the agent actually launched so the in-sandbox hook self-protects the right config dir.
+	// Name the agent actually launched for commands inside the sandbox.
 	if spec.SetEnv == nil {
 		spec.SetEnv = map[string]string{}
 	}
 	spec.SetEnv[sandbox.AgentEnvVar] = cfg.EffectiveAgent()
-	// Pin the applied profiles so the in-sandbox hook and commands apply them too.
+	// Pin the applied profiles so commands inside the sandbox apply them too.
 	if len(applied) > 0 {
 		spec.SetEnv[sandbox.ProfilesEnvVar] = strings.Join(applied, ",")
 	}
-	// Pin the audit-log path so the in-sandbox hook does not resolve it against the private home.
+	// Pin the audit-log path so the sidecar and commands inside the sandbox do not resolve it
+	// against the private home.
 	spec.SetEnv[sandbox.AuditPathEnvVar] = configuredAuditPath(cfg, cfg.AgentConfigDir(*home, host))
 
 	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
@@ -369,6 +371,33 @@ func cmdRun(args []string, version string) int {
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
 
+	// The sidecar evaluates the session's hook events against a policy fixed here, built from
+	// what the sandbox sees: its HOME, environment, and working directory.
+	if spec.SetEnv["HOME"] == "" {
+		return fatalf(os.Stderr, "policy: HOME is empty in the sandbox environment")
+	}
+	handler, err := policyHandler(engineInputs{
+		cfg:       cfg,
+		home:      spec.SetEnv["HOME"],
+		env:       spec.SetEnv,
+		workDir:   spec.WorkDir,
+		auditPath: spec.SetEnv[sandbox.AuditPathEnvVar],
+	})
+	if err != nil {
+		return fatalf(os.Stderr, "policy: %v", err)
+	}
+	srv, err := sidecar.Start(handler)
+	if err != nil {
+		return fatalf(os.Stderr, "sidecar: %v", err)
+	}
+	// Registered after the teardown, so it runs first on an abort and, on a launch, after
+	// runSupervised has run the session-end hooks.
+	defer func() { _ = srv.Close() }()
+	spec.SetEnv[sandbox.SidecarSocketEnvVar] = srv.Path()
+	// An overlay comes after every read-write bind and blocked-path mask, so neither a writable
+	// ancestor nor a masked ancestor of the directory covers it.
+	spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: srv.Dir(), ReadOnly: true, Overlay: true})
+
 	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-launch
 	// chdir.
 	prep, err = backend.Prepare(&spec, warnLines)
@@ -402,7 +431,7 @@ func cmdRun(args []string, version string) int {
 	// Blank line so corral's banner is separated from claude's own UI.
 	fmt.Fprintln(os.Stderr)
 
-	// We outlive the child; the deferred teardown reclaims backend resources.
+	// We outlive the child to serve the sidecar; the deferred teardown reclaims backend resources.
 	return runSupervised(launcherAbs, argv, res)
 }
 

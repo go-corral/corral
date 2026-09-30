@@ -17,9 +17,7 @@ func TestBuildAuditorLogsAllowAndDenyWithInput(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "audit.jsonl")
 
-	cfg := &config.Config{}
-	cfg.Policy.Audit.Path = logPath
-	aud := buildAuditor(cfg, dir)
+	aud := buildAuditor(&config.Config{}, logPath)
 
 	readEv := &policy.HookEvent{
 		SessionID: "s1",

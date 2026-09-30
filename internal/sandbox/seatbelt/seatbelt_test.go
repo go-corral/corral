@@ -538,6 +538,34 @@ func TestSeatbeltProfileNetOpenHasNoNetworkDeny(t *testing.T) {
 	}
 }
 
+// The sidecar socket rules come after the write grants and the network deny, so they win
+// over a writable ancestor and net: none.
+func TestSeatbeltProfileSidecarSocket(t *testing.T) {
+	spec := fixedMacSpec()
+	spec.Net = sandbox.NetNone
+	spec.SetEnv = map[string]string{sandbox.SidecarSocketEnvVar: "/var/folders/xy/T/corral-sidecar-1/sock"}
+	spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: "/var/folders/xy/T"})
+	profile, err := macBackend().profile(withTok(spec, macTestTokens()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := max(strings.Index(profile, "(allow file-write*\n"), strings.Index(profile, "(deny network*)"))
+	for _, rule := range []string{
+		`(deny file-write* (subpath "/private/var/folders/xy/T/corral-sidecar-1"))`,
+		`(allow file-write-data (literal "/private/var/folders/xy/T/corral-sidecar-1/sock"))`,
+		`(allow network-outbound (remote unix-socket (path-literal "/private/var/folders/xy/T/corral-sidecar-1/sock")))`,
+	} {
+		i := strings.Index(profile, rule)
+		if i < 0 {
+			t.Fatalf("profile is missing %s:\n%s", rule, profile)
+		}
+		if i < last {
+			t.Errorf("%s must come after the write grants and the network deny", rule)
+		}
+		last = i
+	}
+}
+
 // TestMacOSConformance: every macOS rule yields exactly one read directive, and every
 // shared (arch-less) concrete rule appears in the macOS compile as its
 // /private-normalized path. The Linux half of this cross-platform invariant — that the

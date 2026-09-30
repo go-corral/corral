@@ -209,6 +209,33 @@ func TestPostToolUseGateConcurrentReplaceWritesOnce(t *testing.T) {
 	decodeUpdatedToolOutput(t, out.String()) // must be parseable, not interleaved
 }
 
+// Forward shares the write-once rule with Replace: after the first write, both are no-ops
+// that return the first code. An empty payload counts as the write.
+func TestPostToolUseGateForwardWritesOnce(t *testing.T) {
+	var out bytes.Buffer
+	g := NewPostToolUseGate(&out)
+	if code := g.Forward("first\n", ExitAllow); code != ExitAllow {
+		t.Fatalf("first Forward = %d, want %d", code, ExitAllow)
+	}
+	if code := g.Forward("second\n", ExitBlock); code != ExitAllow {
+		t.Errorf("second Forward = %d, want the first code %d", code, ExitAllow)
+	}
+	if code := g.Replace("[corral] withheld"); code != ExitAllow {
+		t.Errorf("Replace after Forward = %d, want the first code %d", code, ExitAllow)
+	}
+	if out.String() != "first\n" {
+		t.Errorf("output = %q, want only the first payload", out.String())
+	}
+
+	out.Reset()
+	g = NewPostToolUseGate(&out)
+	g.Forward("", ExitAllow)
+	g.Replace("[corral] withheld")
+	if out.Len() != 0 {
+		t.Errorf("an empty Forward must mark the gate written, got %q", out.String())
+	}
+}
+
 // Observe must not let a best-effort probe erase a better-known value: a later empty
 // tool name or response keeps whatever the gate already learned, so the replacement shape
 // stays correct.

@@ -168,6 +168,7 @@ func TestSessionStartHookInjectsBackendNotes(t *testing.T) {
 // Inside the sandbox, the presence warning stays silent — there is nothing to warn about.
 func TestUserPromptSubmitSilentWhenSandboxed(t *testing.T) {
 	t.Setenv(sandbox.SandboxEnvVar, "1") // sandboxed
+	t.Setenv(sandbox.SidecarSocketEnvVar, "")
 
 	var buf strings.Builder
 	if code := runUserPromptSubmitHook(strings.NewReader(`{"session_id":"s1","prompt":"hi"}`), &buf); code != 0 {
@@ -181,8 +182,8 @@ func TestUserPromptSubmitSilentWhenSandboxed(t *testing.T) {
 // When not sandboxed, the first prompt of a session is swallowed with a bright warning; a later
 // prompt in the same session proceeds (resubmit-once via the per-session marker).
 func TestUserPromptSubmitWarnsOnceWhenUnsandboxed(t *testing.T) {
-	t.Setenv(sandbox.SandboxEnvVar, "") // not sandboxed
-	t.Setenv("TMPDIR", t.TempDir())     // isolate the per-session marker
+	bareSession(t)                  // not sandboxed
+	t.Setenv("TMPDIR", t.TempDir()) // isolate the per-session marker
 	event := `{"session_id":"sess-abc","prompt":"do a thing"}`
 
 	var first strings.Builder
@@ -223,7 +224,7 @@ func TestHookBlocksConfiguredPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("providers: {block: {directories: [/data/vault]}}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	isolateConfigEnv(t, home, proj)
+	startTestSidecar(t, home, proj)
 
 	var code int
 	withStdin(t, preToolUseEvent(t, proj, "/data/vault/creds"), func() {
@@ -252,6 +253,7 @@ func TestHookMalformedConfigFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	isolateConfigEnv(t, home, proj)
+	bareSession(t)
 
 	var code int
 	withStdin(t, preToolUseEvent(t, proj, filepath.Join(proj, "anything")), func() {

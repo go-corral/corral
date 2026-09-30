@@ -1219,6 +1219,95 @@ func TestRunDryRunPinsAuditPath(t *testing.T) {
 	}
 }
 
+// A dry run starts no sidecar: the argv has neither its socket variable nor its directory.
+func TestRunDryRunStartsNoSidecar(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	for _, unwanted := range []string{sandbox.SidecarSocketEnvVar, "corral-sidecar-"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("dry-run argv must not contain %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+// A real launch serves the sidecar socket to the sandbox through a read-only bind and removes its
+// directory after the session. The fake bwrap finds the socket in its argv, checks it, and exits 5.
+func TestRunServesSidecarForTheSession(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("drives the bwrap backend")
+	}
+	// A long TMPDIR could push the socket path over the unix socket limit.
+	t.Setenv("TMPDIR", "")
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCorralYML(t, proj, "providers:\n  home:\n    enabled: false\n")
+	isolateConfigEnv(t, home, proj)
+	stubUpdateCheck(t)
+	origConfirm := confirmProceed
+	t.Cleanup(func() { confirmProceed = origConfirm })
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true }
+
+	marker := filepath.Join(home, "socket-path")
+	argvFile := filepath.Join(home, "argv")
+	fakeBwrap := filepath.Join(home, "fake-bwrap")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + argvFile + "\n" +
+		"while [ $# -gt 0 ]; do\n" +
+		"  if [ \"$1\" = " + sandbox.SidecarSocketEnvVar + " ]; then\n" +
+		"    printf %s \"$2\" > " + marker + "\n" +
+		"    test -S \"$2\" || exit 9\n" +
+		"    exit 5\n" +
+		"  fi\n" +
+		"  shift\n" +
+		"done\n" +
+		"exit 8\n"
+	if err := os.WriteFile(fakeBwrap, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdRun([]string{"--home", home, "--project", proj, "--backend", "bwrap", "--bwrap", fakeBwrap, "--command", "/bin/true"}, "dev")
+	})
+	if code != 5 {
+		t.Fatalf("cmdRun = %d, want 5 (8: no socket variable in argv, 9: no socket at the path)\n%s", code, stderr)
+	}
+	socket, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(string(socket))
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the sidecar directory %s must be gone after the session, stat err: %v", dir, err)
+	}
+	argv, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bind := strings.Index(string(argv), "--ro-bind\n"+dir+"\n"+dir+"\n")
+	if bind < 0 {
+		t.Fatalf("the sidecar directory must be bound read-only, argv:\n%s", argv)
+	}
+	if strings.Index(string(argv), "--bind\n"+proj+"\n") > bind || strings.LastIndex(string(argv), "--tmpfs\n") > bind {
+		t.Errorf("the sidecar bind must come after the project bind and the blocked-path masks, argv:\n%s", argv)
+	}
+}
+
 // TestRunDryRunPinsProfiles: the applied profiles ride into the sandbox in order, and a
 // launch without a profile sets no pin.
 func TestRunDryRunPinsProfiles(t *testing.T) {
