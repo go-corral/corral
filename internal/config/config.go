@@ -288,6 +288,8 @@ providers:
   # mode (managed | preProvisioned) and serviceAccountNamespace are likewise unset here:
   # both have in-code defaults (managed, corral), and a YAML default for the namespace
   # would make the key never-empty — preProvisioned mode requires it explicitly.
+  # clusters has no default here: a later layer cannot remove a map key, so a default
+  # cluster would stay in every config. The implicit current cluster is built in code.
   kubernetes:
     enabled: false
     tokenLifetime: 8h
@@ -601,6 +603,10 @@ func (c *Config) expandPaths(home string) {
 				m[k] = h
 			}
 		}
+	}
+	for k, cl := range c.Providers.Kubernetes.Clusters {
+		cl.Kubeconfig.Path = expandTilde(cl.Kubeconfig.Path, home)
+		c.Providers.Kubernetes.Clusters[k] = cl
 	}
 }
 
