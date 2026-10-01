@@ -13,7 +13,7 @@ import (
 // sandbox constants so a rename there can't silently let env.set claim a control var.
 // (A test file can import sandbox: sandbox does not import config, so there is no cycle.)
 func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames is missing the sandbox marker %q — env.set could set it", name)
 		}
@@ -63,6 +63,15 @@ func TestAgentViewEnvSetRejected(t *testing.T) {
 	want := `providers.env.set: "CLAUDE_CODE_DISABLE_AGENT_VIEW" is reserved by corral and cannot be set`
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("env.set naming CLAUDE_CODE_DISABLE_AGENT_VIEW: got err %v, want it to contain %q", err, want)
+	}
+}
+
+func TestSidecarSocketEnvSetRejected(t *testing.T) {
+	_, _, err := loadFrom(t, "",
+		"providers:\n  env:\n    set:\n      - {name: CORRAL_SIDECAR_SOCKET, value: /tmp/x}", "", "")
+	want := `providers.env.set: "CORRAL_SIDECAR_SOCKET" is reserved by corral and cannot be set`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("env.set naming CORRAL_SIDECAR_SOCKET: got err %v, want it to contain %q", err, want)
 	}
 }
 

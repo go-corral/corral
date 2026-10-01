@@ -27,8 +27,7 @@ func TestAuditProtectedPathsIncludesBackups(t *testing.T) {
 		}
 	}
 
-	cfg := &config.Config{}
-	got := auditProtectedPaths(cfg, dir)
+	got := auditProtectedPaths(base, policy.OSFS{})
 
 	// Expect: base + its directory + 2 backups = 4 protected paths; the .lock is excluded.
 	if len(got) != 4 {

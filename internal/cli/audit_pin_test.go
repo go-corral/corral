@@ -10,10 +10,11 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
-// isolateAuditPin points the hook at a temp home and clears the global-config pin, so
-// each test sets only the pin it exercises.
+// isolateAuditPin points the bare-session hook at a temp home and clears the global-config
+// pin, so each test sets only the pin it exercises.
 func isolateAuditPin(t *testing.T) string {
 	t.Helper()
+	bareSession(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")

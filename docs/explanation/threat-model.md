@@ -49,17 +49,11 @@ those files.
 
 ### 2. The hook fails closed
 
-The `corral hook` policy path returns only allow or block for a tool call. Malformed
-input, an unknown event, a rule error, or another evaluation failure blocks rather than
-allowing the operation.
+The `corral hook` policy path returns only allow or block for a tool call. Malformed input, an unknown event, a rule error, or another evaluation failure result in blocks. Inside a `corral run` session, the hook forwards each event to the sidecar. If the sidecar is missing, unreachable, silent or failing, `PreToolUse` blocks with `cannot evaluate policy, blocking (fail-closed)`. `PostToolUse` withholds the result. `UserPromptSubmit` scans the prompt and warns once asking for a resubmit when it recognizes a credential.
 
-A post-tool response requires different mechanics because blocking after execution
-cannot remove data already returned by the tool. If response parsing or scanning fails,
-corral replaces the response with a withheld marker in the shape the agent expects. It
-does not pass the original response through.
+A post-tool response requires different mechanics because blocking after execution cannot remove data already returned by the tool. If response parsing or scanning fails, corral replaces the response with a withheld marker. It does not pass the original response through.
 
-The deliberate `CORRAL_DISABLE_HOOKS=1` opt-out applies only outside a corral sandbox.
-Inside the sandbox it is ignored, and config cannot set it.
+Setting `CORRAL_DISABLE_HOOKS=1` disables the hooks and only works outside of the sandbox.
 
 ### 3. Filesystem access starts from a deny-by-default baseline
 
@@ -112,8 +106,9 @@ deliberate `claude mcp add` command remains available.
 
 Policy blocks tool calls that write or remove corral config, agent hook registration,
 installed hook scripts, protected policy extensions, and other enforcement state. This
-prevents the agent from weakening the next policy decision or a later session. It does
-not prevent the operator from changing those files outside the sandbox.
+prevents the agent from weakening the next policy decision or a later session. The
+sidecar fixes the policy after the trust gate, so a config edit takes effect on the next
+launch. It does not prevent the operator from changing those files outside the sandbox.
 
 ### 7. Repository config requires approval
 
@@ -186,10 +181,10 @@ launch, not prove that an adversarial process is sandboxed.
 These environment variables control Claude Code's registered corral hooks outside the
 sandbox:
 
-| Variable | Effect |
-| --- | --- |
-| `CORRAL_PRESENCE_ACK=1` | Silences the bare-session warning. Prompt scanning and tool policy remain active. |
-| `CORRAL_DISABLE_HOOKS=1` | Disables the registered policy hooks and scans for that bare session. |
+| Variable                 | Effect                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `CORRAL_PRESENCE_ACK=1`  | Silences the bare-session warning. Prompt scanning and tool policy remain active. |
+| `CORRAL_DISABLE_HOOKS=1` | Disables the registered policy hooks and scans for that bare session.             |
 
 Only `1` or `true`, case-insensitively, activates either value. The disable variable is
 ignored inside `corral run`, cannot be assigned with `providers.env.set`, and is not

@@ -270,6 +270,16 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 		sb.WriteString("(deny network*)\n\n")
 	}
 
+	if sock := spec.SetEnv[sandbox.SidecarSocketEnvVar]; sock != "" {
+		sock = normalizeMacPath(sock)
+		sb.WriteString(";; Policy sidecar socket: the hook connects to it, which needs file-write-data on the\n")
+		sb.WriteString(";; socket node and network-outbound to it. The directory stays unwritable even under a\n")
+		sb.WriteString(";; writable grant, so the socket cannot be removed or replaced.\n")
+		fmt.Fprintf(&sb, "(deny file-write* (subpath \"%s\"))\n", sbplEscape(path.Dir(sock)))
+		fmt.Fprintf(&sb, "(allow file-write-data (literal \"%s\"))\n", sbplEscape(sock))
+		fmt.Fprintf(&sb, "(allow network-outbound (remote unix-socket (path-literal \"%s\")))\n\n", sbplEscape(sock))
+	}
+
 	sb.WriteString(";; Process isolation — keep a compromised session from inspecting or controlling\n")
 	sb.WriteString(";; other processes. process-info* covers the proc_info syscall family;\n")
 	sb.WriteString(";; mach-task-read/mach-task-name cover the read/name task ports behind\n")

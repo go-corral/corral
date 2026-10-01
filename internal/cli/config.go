@@ -27,7 +27,7 @@ func envMap() map[string]string {
 }
 
 // loadConfig loads the layered config. GlobalPath honors sandbox.GlobalConfigEnvVar
-// so the in-sandbox hook reads the file the launcher pinned.
+// so commands inside the sandbox read the file the launcher pinned.
 func loadConfig(profiles []string) (*config.Config, []config.Source, error) {
 	if len(profiles) == 0 {
 		p, err := sessionProfiles()
@@ -61,8 +61,8 @@ func checkResolvedPathGrants(cfg *config.Config, home string) error {
 	return cfg.Providers.Paths.ValidateResolved(config.AlwaysBlockedExpanded(home))
 }
 
-// pinGlobalConfig pins the resolved global config path into the sandbox env so the
-// in-sandbox hook reads the same file the launcher loaded. Grants it read-only.
+// pinGlobalConfig pins the resolved global config path into the sandbox env so
+// commands inside the sandbox read the same file the launcher loaded. Grants it read-only.
 func pinGlobalConfig(spec *sandbox.SandboxSpec, sources []config.Source) {
 	for _, s := range sources {
 		if s.Kind == "global" && s.Path != "" {

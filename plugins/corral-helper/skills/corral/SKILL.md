@@ -80,10 +80,12 @@ byte-counted. See [audit-log.md](references/reference/audit-log.md).
 
 corral has two execution paths:
 
-- `corral run` builds the OS sandbox, sets up enabled providers, and starts Claude Code
-  or pi.
-- `corral hook` is the fast policy enforcer invoked for tool calls, prompts, and selected
-  results. Policy errors fail closed.
+- `corral run` builds the OS sandbox, sets up enabled providers, starts Claude Code or
+  pi, and stays alive for the session. Its sidecar evaluates the policy, fixed after the
+  trust gate, and writes the audit log.
+- `corral hook` is the fast client invoked for tool calls, prompts, and selected results.
+  It forwards each event to the sidecar. Without `corral run` it evaluates in its own
+  process. Policy errors fail closed.
 
 Session hooks under `providers.hooks` are different: they are operator-approved host
 programs run around a session. Do not confuse them with `corral hook`.
@@ -125,7 +127,7 @@ setting is for:
 | `.corral.local.yml` in the project | The user, in this one project.    | Not ignored by itself; add it to `.gitignore`. |
 
 The global config is the user's own file, so corral never asks for approval. The first real `run` or `corral sync` in a repo asks the user to approve the project config files before it uses them and again when they change.
-When you recommend a layer, say in one short sentence what the file is for. Profiles are extra layers selected at launch with `--profile`. They also apply to the hook and to corral commands inside the session. Read [config.md](references/reference/config.md) for exact fields, defaults, constraints, and merge behavior.
+When you recommend a layer, say in one short sentence what the file is for. Profiles are extra layers selected at launch with `--profile`. They also apply to the sidecar and to corral commands inside the session. Read [config.md](references/reference/config.md) for exact fields, defaults, constraints, and merge behavior.
 
 Before editing:
 

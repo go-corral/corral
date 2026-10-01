@@ -34,7 +34,7 @@ func (e *HookEvent) fs() FS {
 
 // canonicalize is Canonicalize of p against the event's cwd in the event's filesystem.
 func (e *HookEvent) canonicalize(p string) (string, error) {
-	return canonicalize(e.fs(), p, e.Cwd)
+	return CanonicalizeIn(e.fs(), p, e.Cwd)
 }
 
 // ParseEvent decodes a hook event. Unknown fields are tolerated: the protocol gains fields over

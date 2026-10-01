@@ -10,7 +10,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
-// The in-sandbox hook must read the same global config the launcher loaded, even when it
+// Commands inside the sandbox must read the same global config the launcher loaded, even when it
 // lives outside the default ~/.config/corral (e.g. under a host $XDG_CONFIG_HOME the
 // sandbox does not forward). The launcher pins the resolved path via sandbox.GlobalConfigEnvVar;
 // loadConfig must honor it as the global path rather than re-resolving.
@@ -134,7 +134,7 @@ func TestPinGlobalConfig(t *testing.T) {
 		t.Errorf("global config file must be granted read-only + optional, got %+v", spec.Mounts)
 	}
 
-	// No global source (only defaults/project) → pin nothing: the in-sandbox hook's own
+	// No global source (only defaults/project) → pin nothing: a sandboxed command's own
 	// default resolution also finds no global config, so the two stay consistent.
 	bare := &sandbox.SandboxSpec{SetEnv: map[string]string{}}
 	pinGlobalConfig(bare, []config.Source{{Kind: "defaults"}, {Kind: "project", Path: "/p/.corral.yml"}})

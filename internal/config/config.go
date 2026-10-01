@@ -156,7 +156,7 @@ type SecretScan struct {
 
 // coreReservedEnvNames are the env vars corral's own machinery controls. env.set
 // may not name them, so a config typo can never unset the sandbox marker, retarget
-// the pinned global-config path, profiles, audit-log path or agent id, or redirect the corral binary.
+// the pinned global-config path, profiles, audit-log path, sidecar socket or agent id, or redirect the corral binary.
 // CORRAL_DISABLE_HOOKS is reserved so a repo-shipped .corral.yml can't plant an
 // enforcement-off value. CORRAL_PRESENCE_ACK is deliberately not reserved: it
 // only silences a warning, so there is nothing to forge.
@@ -165,6 +165,7 @@ var coreReservedEnvNames = []string{
 	"CORRAL_GLOBAL_CONFIG",
 	"CORRAL_PROFILES",
 	"CORRAL_AUDIT_PATH",
+	"CORRAL_SIDECAR_SOCKET",
 	"CORRAL_AGENT",
 	"CORRAL_BIN",
 	"CORRAL_PROVIDER_NOTES",

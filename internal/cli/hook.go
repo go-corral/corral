@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/providers/aiignore"
 	"github.com/go-corral/corral/internal/sandbox"
+	"github.com/go-corral/corral/internal/sidecar"
 )
 
 // hookDispatch maps each hook event to its handler. cmdHook fails closed on unknown events.
@@ -76,8 +78,18 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 	ev, _ := policy.ParseEvent(data) // best-effort; the checks below are nil-safe
 
 	// The prompt secret scan runs sandboxed or not. Soft warn-and-resubmit, keyed per prompt.
-	if code, handled := promptSecretWarn(ev, stdout); handled {
-		return code
+	// When the policy cannot be evaluated, it scans for known credential formats only.
+	resp := evaluate(sidecar.Request{Type: "user-prompt-submit"}, data)
+	if resp.Error != "" {
+		if code, handled := promptSecretWarn(ev, 0, policy.IncidentHint, nil, stdout); handled {
+			return code
+		}
+	} else {
+		fmt.Fprint(os.Stderr, resp.Stderr)
+		if resp.Stdout != "" {
+			_, _ = io.WriteString(stdout, resp.Stdout)
+			return resp.Code
+		}
 	}
 
 	if sandbox.InsideCorral() {
@@ -86,6 +98,12 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 	// Not sandboxed: CORRAL_PRESENCE_ACK silences the warning only (secret scan still ran).
 	if sandbox.PresenceAcked() {
 		return policy.ExitAllow
+	}
+	// A resubmitted secret-bearing prompt proceeds without the presence warning.
+	if ev != nil && ev.Prompt != "" {
+		if _, err := os.Stat(promptSecretMarkerPath(ev.SessionID, ev.Prompt)); err == nil {
+			return policy.ExitAllow
+		}
 	}
 	// Once-per-session marker keyed on the session id.
 	sid := ""
@@ -104,19 +122,11 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 }
 
 // promptSecretWarn scans the submitted prompt for secret material. On a hit it emits a soft
-// warn-and-resubmit notice and audit-logs the decision (kind only, never the prompt or value).
-// Advisory, not a gate: degrades to known-formats-only on internal failure.
-func promptSecretWarn(ev *policy.HookEvent, stdout io.Writer) (int, bool) {
+// warn-and-resubmit notice and audit-logs the decision through aud when set (kind only, never
+// the prompt or value). An empty hint selects the built-in one.
+func promptSecretWarn(ev *policy.HookEvent, entropy float64, hint string, aud policy.AuditFunc, stdout io.Writer) (int, bool) {
 	if ev == nil || ev.Prompt == "" {
 		return policy.ExitAllow, false
-	}
-	entropy := 0.0
-	hint := ""
-	var aud policy.AuditFunc
-	if cfg, configDir, err := loadHookConfig(nil); err == nil {
-		entropy = cfg.Policy.SecretScan.EntropyThreshold
-		hint = cfg.Policy.IncidentHint
-		aud = buildAuditor(cfg, configDir)
 	}
 	kind, hit := policy.ScanPromptText([]byte(ev.Prompt), entropy, 0)
 	if !hit {
@@ -170,11 +180,11 @@ func noteHooksDisabled(event string) {
 	}
 	_ = f.Close()
 
-	cfg, configDir, err := loadHookConfig(nil)
+	in, err := localEngineInputs()
 	if err != nil {
 		return
 	}
-	_ = audit.New(cfg.Policy.Audit, effectiveAuditPath(cfg, configDir)).Log(audit.Record{
+	_ = audit.New(in.cfg.Policy.Audit, in.auditPath).Log(audit.Record{
 		Action: policy.Allow.String(),
 
 		Rule:   "hooks-disabled",
@@ -268,13 +278,10 @@ func (s *stringSlice) Set(v string) error {
 	return nil
 }
 
-// cmdHookPreToolUse runs the PreToolUse gate: install fail-closed signal handling, build
-// the engine, evaluate stdin, exit 0 or 2. --block-path adds extra blocked roots.
+// cmdHookPreToolUse runs the PreToolUse gate: install fail-closed signal handling, evaluate
+// stdin, reproduce the answer, exit 0 or 2.
 func cmdHookPreToolUse(args []string) int {
-	var extraRoots stringSlice
 	fs := flag.NewFlagSet("pre-tool-use", flag.ContinueOnError)
-	fs.Var(&extraRoots, "block-path", "additional path to block (repeatable)")
-	profiles := addProfileFlags(fs)
 	decision := fs.String("decision", "json", "how to report a block: \"json\" (clean policy decision) or \"exit2\"")
 	if err := fs.Parse(args); err != nil {
 		// A gate that can't parse its own flags must block.
@@ -282,21 +289,31 @@ func cmdHookPreToolUse(args []string) int {
 		return policy.ExitBlock
 	}
 
-	present := policy.PresentJSON
-	if *decision == "exit2" {
-		present = policy.PresentExit2
-	}
-
 	stop := policy.InstallFailClosedSignals(os.Stderr)
 	defer stop()
 
-	eng, auditFn, err := buildEngine([]string(*profiles), extraRoots)
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, policy.MaxEventBytes+1))
 	if err != nil {
-		// If we cannot construct the policy, block.
-		fmt.Fprintf(os.Stderr, "corral: cannot initialize policy, blocking (fail-closed): %v\n", err)
+		fmt.Fprintf(os.Stderr, "corral: cannot read hook input, blocking: %v\n", err)
 		return policy.ExitBlock
 	}
-	return policy.RunHookWithAudit(eng, auditFn, policy.OSFS{}, os.Stdin, os.Stdout, os.Stderr, present)
+	resp := evaluate(sidecar.Request{Type: "pre-tool-use", Decision: *decision}, data)
+	if resp.Error != "" {
+		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, blocking (fail-closed): %s\n", resp.Error)
+		return policy.ExitBlock
+	}
+	if resp.Stdout != "" {
+		if _, err := io.WriteString(os.Stdout, resp.Stdout); err != nil {
+			// A deny JSON that never reached the agent must not become an allow.
+			fmt.Fprintf(os.Stderr, "corral: cannot write the policy decision, blocking: %v\n", err)
+			return policy.ExitBlock
+		}
+	}
+	fmt.Fprint(os.Stderr, resp.Stderr)
+	if resp.Code == policy.ExitAllow {
+		return policy.ExitAllow
+	}
+	return policy.ExitBlock
 }
 
 // cmdHookPostToolUse runs the MCP response ingress scan: scans the tool response for secrets
@@ -317,116 +334,200 @@ func cmdHookPostToolUse(args []string) (code int) {
 	}()
 
 	fs := flag.NewFlagSet("post-tool-use", flag.ContinueOnError)
-	profiles := addProfileFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		// Learn the tool name before withholding: otherwise pre-parse paths fall back to the
 		// Bash schema, which an mcp__* caller silently ignores.
 		gate.ObserveShapeFrom(os.Stdin)
 		return gate.Replace("[corral] tool response withheld — bad hook arguments (fail-closed)")
 	}
-	cfg, configDir, err := loadHookConfig([]string(*profiles))
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, policy.MaxEventBytes+1))
 	if err != nil {
-		gate.ObserveShapeFrom(os.Stdin)
-		return gate.Replace("[corral] tool response withheld — could not initialize policy (fail-closed)")
+		return gate.Replace("[corral] tool response withheld — could not read it to scan (fail-closed)")
 	}
-	aud := buildAuditor(cfg, configDir)
-	return policy.RunPostToolUseHook(cfg.Policy.SecretScan.EntropyThreshold, 0, cfg.Policy.IncidentHint, aud, os.Stdin, gate, os.Stderr)
+	if ev, err := policy.ParseEvent(data); err == nil {
+		gate.Observe(ev.ToolName, ev.ResponseBytes())
+	} else {
+		gate.ObserveShapeFrom(bytes.NewReader(data))
+	}
+	resp := evaluate(sidecar.Request{Type: "post-tool-use"}, data)
+	if resp.Error != "" {
+		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, withholding the tool response (fail-closed): %s\n", resp.Error)
+		return gate.Replace("[corral] tool response withheld — could not evaluate policy (fail-closed)")
+	}
+	fmt.Fprint(os.Stderr, resp.Stderr)
+	return gate.Forward(resp.Stdout, resp.Code)
 }
 
-// loadHookConfig loads config and the canonical effective agent config dir for a hook
-// invocation. A failure is returned so the caller can fail closed.
-func loadHookConfig(profiles []string) (*config.Config, string, error) {
+// engineInputs is what the policy is built from: the config, and the home directory,
+// environment, working directory, and audit-log path of the agent's session.
+type engineInputs struct {
+	cfg       *config.Config
+	home      string
+	env       map[string]string
+	workDir   string
+	auditPath string
+}
+
+// localEngineInputs resolves the engine inputs from this process: a bare session's hook.
+func localEngineInputs() (engineInputs, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve home: %w", err)
+		return engineInputs{}, fmt.Errorf("resolve home: %w", err)
 	}
-	cfg, _, err := loadConfig(profiles)
+	cfg, _, err := loadConfig(nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("load config: %w", err)
+		return engineInputs{}, fmt.Errorf("load config: %w", err)
 	}
-	applyHookAgent(cfg)
-	configDir, err := canonicalAgentConfigDir(cfg, home)
+	env := envMap()
+	configDir, err := canonicalAgentConfigDir(cfg, home, env, policy.OSFS{})
 	if err != nil {
-		return nil, "", err
+		return engineInputs{}, err
 	}
-	return cfg, configDir, nil
+	wd, _ := os.Getwd()
+	return engineInputs{cfg: cfg, home: home, env: env, workDir: wd, auditPath: effectiveAuditPath(cfg, configDir)}, nil
 }
 
-// applyHookAgent overrides cfg.Agent with the agent the launcher pinned, so the in-sandbox
-// hook self-protects the agent actually launched. Honored only for a registered agent.
-func applyHookAgent(cfg *config.Config) {
-	if name := os.Getenv(sandbox.AgentEnvVar); name != "" {
-		if _, ok := agents.Lookup(name); ok {
-			cfg.Agent = name
+// evaluate answers one hook event. With a sidecar it forwards the event. Inside the sandbox
+// without one it refuses, so nothing in the sandbox can bypass the policy fixed at launch.
+// Otherwise it evaluates in-process from this process's own config.
+func evaluate(req sidecar.Request, payload []byte) sidecar.Response {
+	if path := os.Getenv(sandbox.SidecarSocketEnvVar); path != "" {
+		return sidecar.Call(path, req, payload, policy.OSFS{})
+	}
+	if sandbox.InsideCorral() {
+		return sidecar.Response{Error: "no sidecar: " + sandbox.SidecarSocketEnvVar + " is not set inside the sandbox"}
+	}
+	in, err := localEngineInputs()
+	if err != nil {
+		return sidecar.Response{Error: err.Error()}
+	}
+	return eventHandler(in, func(fsys policy.FS) (*policy.Engine, error) {
+		return newEngine(in, readPolicyFiles(in), fsys)
+	})(req, payload, policy.OSFS{})
+}
+
+// policyHandler reads the policy files once, checks that the engine builds, and answers each
+// hook event with the exit code, stdout, and stderr the hook must reproduce. It is safe for
+// concurrent use.
+func policyHandler(in engineInputs) (sidecar.Handler, error) {
+	files := readPolicyFiles(in)
+	if _, err := newEngine(in, files, policy.OSFS{}); err != nil {
+		return nil, err
+	}
+	return eventHandler(in, func(fsys policy.FS) (*policy.Engine, error) {
+		return newEngine(in, files, fsys)
+	}), nil
+}
+
+// eventHandler answers hook events. Pre-tool-use builds the engine in fsys for each event, so
+// the protected paths resolve in the filesystem the event paths resolve in.
+func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, error)) sidecar.Handler {
+	aud := buildAuditor(in.cfg, in.auditPath)
+	entropy := in.cfg.Policy.SecretScan.EntropyThreshold
+	hint := in.cfg.Policy.IncidentHint
+	return func(req sidecar.Request, payload []byte, fsys policy.FS) sidecar.Response {
+		var stdout, stderr bytes.Buffer
+		var code int
+		switch req.Type {
+		case "pre-tool-use":
+			eng, err := build(fsys)
+			if err != nil {
+				return sidecar.Response{Error: err.Error()}
+			}
+			present := policy.PresentJSON
+			if req.Decision == "exit2" {
+				present = policy.PresentExit2
+			}
+			code = policy.RunHookWithAudit(eng, aud, fsys, bytes.NewReader(payload), &stdout, &stderr, present)
+		case "post-tool-use":
+			code = policy.RunPostToolUseHook(entropy, 0, hint, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
+		case "user-prompt-submit":
+			ev, _ := policy.ParseEvent(payload)
+			code, _ = promptSecretWarn(ev, entropy, hint, aud, &stdout)
+		default:
+			return sidecar.Response{Error: fmt.Sprintf("unknown request type %q", req.Type)}
 		}
+		return sidecar.Response{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
 	}
 }
 
-// canonicalAgentConfigDir resolves and canonicalizes the selected agent's config dir.
-func canonicalAgentConfigDir(cfg *config.Config, home string) (string, error) {
-	configDir, err := policy.Canonicalize(cfg.AgentConfigDir(home, envMap()), "")
+// canonicalAgentConfigDir resolves and canonicalizes the selected agent's config dir in fsys.
+func canonicalAgentConfigDir(cfg *config.Config, home string, env map[string]string, fsys policy.FS) (string, error) {
+	configDir, err := policy.CanonicalizeIn(fsys, cfg.AgentConfigDir(home, env), "")
 	if err != nil {
 		return "", fmt.Errorf("canonicalize config dir: %w", err)
 	}
 	return configDir, nil
 }
 
-// buildEngine constructs the policy engine: blocked paths plus --block-path roots, and the
-// Bash, path-pattern, and content-secret-scan rules. A load failure fails the hook closed.
-func buildEngine(profiles []string, extraRoots []string) (*policy.Engine, policy.AuditFunc, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolve home: %w", err)
-	}
-	cfg, _, err := loadConfig(profiles)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load config: %w", err)
-	}
-	applyHookAgent(cfg)
+// policyFiles is what the policy reads from files: the hook scripts named in the active agent's
+// settings, and the repo AI ignore files.
+type policyFiles struct {
+	hookPaths []string
+	ai        aiignore.Discovery
+}
 
-	raw := append(cfg.EffectiveBlockedPaths(home), extraRoots...)
-	roots, err := canonicalizeAll(raw)
+// readPolicyFiles reads the policy files on the host. Best-effort: an unreadable file
+// contributes nothing.
+func readPolicyFiles(in engineInputs) policyFiles {
+	return policyFiles{
+		hookPaths: activeAgent(in.cfg).ProtectedPaths(in.cfg.AgentConfigDir(in.home, in.env)),
+		// Configured sources discovered by walking up from the working directory.
+		ai: aiignore.Discover(in.workDir, in.cfg.Providers.AIIgnore.EffectiveSources()),
+	}
+}
+
+// newEngine constructs the policy engine: blocked paths, and the Bash, path-pattern, and
+// content-secret-scan rules. It canonicalizes the protected paths in fsys, the filesystem the
+// event paths resolve in. It reads no process environment and no cwd.
+func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engine, error) {
+	cfg := in.cfg
+	roots, err := canonicalizeAll(cfg.EffectiveBlockedPaths(in.home), fsys)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Self-protect target + content-scan skip list, both canonicalized.
-	configDir, err := canonicalAgentConfigDir(cfg, home)
+	configDir, err := canonicalAgentConfigDir(cfg, in.home, in.env, fsys)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	skip, err := canonicalizeAll(cfg.Policy.SecretScan.SkipPaths)
+	skip, err := canonicalizeAll(cfg.Policy.SecretScan.SkipPaths, fsys)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Derive non-corral hook script paths from the active agent's live config. Best-effort.
-	hookPaths := agentProtectedPaths(cfg, configDir)
+	// Non-corral hook script paths from the active agent's settings. Best-effort.
+	hookPaths := canonicalHookPaths(files.hookPaths, fsys)
 
 	// Per-agent self-protect footprint: the active agent's anchors the configDir checks;
 	// every registered agent's drives the defense-in-depth path-segment scan.
 	footprint, allFootprints := agentFootprints(cfg)
 
-	// Repo-level AI ignore: configured sources discovered by walking up from cwd, compiled
-	// into deny globs. Best-effort.
-	wd, _ := os.Getwd()
-	ai := aiignore.Discover(wd, cfg.Providers.AIIgnore.EffectiveSources())
+	// Repo-level AI ignore globs, rooted at the directory that holds the sources. Best-effort.
+	ai := files.ai
+	aiRoot := ""
+	if ai.Dir != "" {
+		if aiRoot, err = policy.CanonicalizeRootIn(fsys, ai.Dir, ""); err != nil {
+			aiRoot = filepath.Clean(ai.Dir)
+		}
+	}
 
 	// Extra runtime artifacts the self-protect gate guards: the audit log and its rotation
 	// backups, and the native repo AI ignore files.
-	extraProtected := auditProtectedPaths(cfg, configDir)
-	for canon, reason := range aiignore.ProtectedPaths(ai.ProtectFiles) {
+	extraProtected := auditProtectedPaths(in.auditPath, fsys)
+	for canon, reason := range aiignore.ProtectedPaths(ai.ProtectFiles, fsys) {
 		extraProtected[canon] = reason
 	}
 
 	// Canonical audit-log base: the live log and all its rotated backups are prefix-protected.
 	// Best-effort: an unresolvable path degrades to the exact-match entries.
-	auditBase, _ := policy.CanonicalizeRoot(effectiveAuditPath(cfg, configDir), "")
+	auditBase, _ := policy.CanonicalizeRootIn(fsys, in.auditPath, "")
 
 	eng := policy.NewEngine(
 		&policy.BlockedPathRule{RuleName: "blocked-path", Roots: roots},
 		// Repo AI ignore globs: additive deny (no negation).
-		&policy.AIIgnoreRule{Root: ai.Root, Patterns: ai.Patterns},
+		&policy.AIIgnoreRule{Root: aiRoot, Patterns: ai.Patterns},
 		&policy.BashRule{ConfigDir: configDir, Footprint: footprint, AllFootprints: allFootprints, HookPaths: hookPaths, ExtraProtectedPaths: extraProtected, AuditLogBase: auditBase},
 		// Name-based gate before the costlier content scan.
 		&policy.PathPatternRule{AgentConfigDir: configDir, Footprint: footprint, AllFootprints: allFootprints, HookPaths: hookPaths, ExtraProtectedPaths: extraProtected, AuditLogBase: auditBase},
@@ -437,20 +538,20 @@ func buildEngine(profiles []string, extraRoots []string) (*policy.Engine, policy
 			IncidentHint:     cfg.Policy.IncidentHint,
 		},
 	)
-	return eng, buildAuditor(cfg, configDir), nil
+	return eng, nil
 }
 
-// agentProtectedPaths returns the canonical absolute paths of the extra host artifacts the active
+// canonicalHookPaths canonicalizes in fsys and de-duplicates the extra host artifacts the active
 // agent needs the fail-closed hook to self-protect — for claude, the non-corral command hook scripts
 // across its merged settings, whose code runs host-side next session. The agent supplies raw paths
-// (it does not import policy); this canonicalizes and de-duplicates them. Best-effort: an unknown
-// agent falls back to the default, and any unresolvable input contributes nothing. Never errors, so a
-// broken config degrades to the static .claude/hooks assumption rather than breaking policy init.
-func agentProtectedPaths(cfg *config.Config, configDir string) []string {
+// (it does not import policy). Best-effort: any unresolvable input contributes nothing. Never
+// errors, so a broken config degrades to the static .claude/hooks assumption rather than breaking
+// policy init.
+func canonicalHookPaths(paths []string, fsys policy.FS) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, p := range activeAgent(cfg).ProtectedPaths(configDir) {
-		canon, err := policy.Canonicalize(p, "")
+	for _, p := range paths {
+		canon, err := policy.CanonicalizeIn(fsys, p, "")
 		if err != nil || seen[canon] {
 			continue
 		}
@@ -460,7 +561,7 @@ func agentProtectedPaths(cfg *config.Config, configDir string) []string {
 	return out
 }
 
-// activeAgent resolves the active agent's adapter: the configured (launcher-pinned) agent, else the
+// activeAgent resolves the active agent's adapter: the configured agent, else the
 // default for an unregistered name — defensive, since the fail-closed hook must never nil-deref.
 func activeAgent(cfg *config.Config) agents.Agent {
 	if a, ok := agents.Lookup(cfg.EffectiveAgent()); ok {
@@ -518,10 +619,11 @@ func configuredAuditPath(cfg *config.Config, configDir string) string {
 
 // buildAuditor returns the always-on audit callback. Tool-call decisions are logged unconditionally,
 // so it is non-disableable — no nil/off path. The default log lives under the effective agent config
-// dir (for claude, $CLAUDE_CONFIG_DIR or ~/.claude), bound read-write into the sandbox. Writing is
-// best-effort: a logging error is swallowed, never changing a verdict or failing the hook.
-func buildAuditor(cfg *config.Config, configDir string) policy.AuditFunc {
-	logger := audit.New(cfg.Policy.Audit, effectiveAuditPath(cfg, configDir))
+// dir (for claude, $CLAUDE_CONFIG_DIR or ~/.claude). In a corral session the sidecar writes it from
+// the host. Writing is best-effort: a logging error is swallowed, never changing a verdict or failing
+// the hook.
+func buildAuditor(cfg *config.Config, auditPath string) policy.AuditFunc {
+	logger := audit.New(cfg.Policy.Audit, auditPath)
 	return func(ev *policy.HookEvent, dec policy.Decision) {
 		_ = logger.Log(audit.Record{
 			SessionID: ev.SessionID,
@@ -537,13 +639,12 @@ func buildAuditor(cfg *config.Config, configDir string) policy.AuditFunc {
 	}
 }
 
-// auditProtectedPaths returns self-protect entries for the audit log and its backups.
-// Canonicalized leniently: unresolvable paths are skipped.
-func auditProtectedPaths(cfg *config.Config, configDir string) map[string]string {
-	base := effectiveAuditPath(cfg, configDir)
+// auditProtectedPaths returns self-protect entries for the audit log at base and its backups,
+// canonicalized in fsys. Canonicalized leniently: unresolvable paths are skipped.
+func auditProtectedPaths(base string, fsys policy.FS) map[string]string {
 	out := map[string]string{}
 	add := func(p, reason string) {
-		if canon, err := policy.CanonicalizeRoot(p, ""); err == nil {
+		if canon, err := policy.CanonicalizeRootIn(fsys, p, ""); err == nil {
 			out[canon] = reason
 		}
 	}
@@ -555,12 +656,12 @@ func auditProtectedPaths(cfg *config.Config, configDir string) map[string]string
 	return out
 }
 
-// canonicalizeAll canonicalizes trusted deny roots, failing closed on any error except a
-// permission error on the root itself.
-func canonicalizeAll(paths []string) ([]string, error) {
+// canonicalizeAll canonicalizes trusted deny roots in fsys, failing closed on any error except
+// a permission error on the root itself.
+func canonicalizeAll(paths []string, fsys policy.FS) ([]string, error) {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		canon, err := policy.CanonicalizeRoot(p, "")
+		canon, err := policy.CanonicalizeRootIn(fsys, p, "")
 		if err != nil {
 			return nil, fmt.Errorf("canonicalize %q: %w", p, err)
 		}

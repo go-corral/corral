@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/policy"
-	"github.com/go-corral/corral/internal/sandbox"
 )
 
 // Path separators and special chars in the presence-marker ID are sanitized.
@@ -88,94 +88,64 @@ func TestPresenceMarkerPathLongID(t *testing.T) {
 	}
 }
 
-// A loadConfig error returns (nil, nil, error).
-func TestBuildEngineConfigLoadError(t *testing.T) {
-	// The real test: if loadConfig errors, buildEngine returns the error.
-	// A missing config file is not an error (defaults apply), so trigger a real
-	// failure: an invalid .corral.yml in the project directory causes a YAML parse error.
-
+// A loadConfig error is returned: an invalid .corral.yml in the project directory causes a
+// YAML parse error (a missing config file is not an error, defaults apply).
+func TestLocalEngineInputsConfigLoadError(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(proj)
-	t.Setenv("HOME", home)
-
-	// Write invalid YAML to .corral.yml
-	if err := os.WriteFile(".corral.yml", []byte("invalid: yaml: [syntax"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("invalid: yaml: [syntax"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	isolateConfigEnv(t, home, proj)
 
-	// buildEngine should return error when config parsing fails
-	eng, auditFn, err := buildEngine(nil, []string{})
-	if err == nil {
-		t.Skipf("buildEngine did not error on invalid config (may be deferred or handled differently)")
-	}
-	if eng != nil || auditFn != nil {
-		t.Errorf("buildEngine on error must return (nil, nil, error), got (%v, %v, %v)", eng, auditFn, err)
+	if _, err := localEngineInputs(); err == nil || !strings.Contains(err.Error(), "load config") {
+		t.Errorf("localEngineInputs with an invalid config: got %v, want a load config error", err)
 	}
 }
 
 // An os.UserHomeDir failure returns an error.
-func TestBuildEngineHomeLookuupError(t *testing.T) {
+func TestLocalEngineInputsHomeLookupError(t *testing.T) {
 	// os.UserHomeDir() reads $HOME and errors when it is empty on unix; t.Setenv restores it.
 	t.Setenv("HOME", "")
 
-	eng, auditFn, err := buildEngine(nil, []string{})
-	if err == nil {
-		t.Errorf("buildEngine with no HOME: expected error, got nil")
-	}
-	if eng != nil || auditFn != nil {
-		t.Errorf("buildEngine on error must return (nil, nil, error), got (%v, %v, %v)", eng, auditFn, err)
-	}
-	// Verify the error message mentions 'home' or 'resolve home' to confirm it's the expected error
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "home") {
-		t.Errorf("error should mention 'home' or home resolution, got: %q", errMsg)
+	if _, err := localEngineInputs(); err == nil || !strings.Contains(err.Error(), "home") {
+		t.Errorf("localEngineInputs with no HOME: got %v, want a home resolution error", err)
 	}
 }
 
-// The always-blocked paths are unioned with config block.directories/block.files.
-func TestBuildEngineAlwaysBlockedUnion(t *testing.T) {
+// The always-blocked paths are unioned with config block.directories/block.files. newEngine
+// builds from its inputs alone: the process HOME and cwd point elsewhere.
+func TestNewEngineAlwaysBlockedUnion(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv(sandbox.GlobalConfigEnvVar, "") // ignore a dev-sandbox pin to the real global config
-	// This test verifies that buildEngine combines the always-blocked paths with config paths.
-	// The always-blocked set includes ~/.ssh, ~/.gnupg, ~/.aws.
-	// We test this indirectly by calling buildEngine, then running a hook against
-	// a tool call targeting an always-blocked path (e.g., Read of ~/.ssh/id_rsa)
-	// and asserting it is blocked.
+	t.Setenv("HOME", t.TempDir())
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	// Create the always-blocked directories to test against
 	sshDir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-
-	// Create a minimal config with a custom blocked path
 	projDir := filepath.Join(home, "proj")
 	if err := os.MkdirAll(projDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(projDir)
 
 	customBlocked := filepath.Join(home, "custom-blocked")
-	configFile := filepath.Join(projDir, ".corral.yml")
-	if err := os.WriteFile(configFile,
-		[]byte("providers:\n  block:\n    directories:\n      - "+customBlocked+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	cfg := &config.Config{}
+	cfg.Providers.Block.Directories = []string{customBlocked}
 
-	// Build the engine
-	eng, _, err := buildEngine(nil, []string{})
-	if err != nil {
-		t.Fatalf("buildEngine must succeed with a valid config and home; got %v", err)
+	in := engineInputs{
+		cfg:       cfg,
+		home:      home,
+		env:       map[string]string{"HOME": home},
+		workDir:   projDir,
+		auditPath: filepath.Join(home, ".claude", "corral-audit.jsonl"),
 	}
-	if eng == nil {
-		t.Fatal("buildEngine returned nil engine")
+	eng, err := newEngine(in, readPolicyFiles(in), policy.OSFS{})
+	if err != nil {
+		t.Fatalf("newEngine must succeed with a valid config and home; got %v", err)
 	}
 
 	// Test 1: Verify that the always-blocked path ~/.ssh/id_rsa is blocked

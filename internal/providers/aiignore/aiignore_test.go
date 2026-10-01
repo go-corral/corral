@@ -170,7 +170,7 @@ func TestAIIgnoreFilesSelfProtected(t *testing.T) {
 	f := filepath.Join(repo, ".aiignore")
 	writeIgnoreFile(t, f, "secrets.env\n")
 
-	prot := ProtectedPaths([]string{f})
+	prot := ProtectedPaths([]string{f}, policy.OSFS{})
 	canon, err := policy.CanonicalizeRoot(f, "")
 	if err != nil {
 		t.Fatal(err)

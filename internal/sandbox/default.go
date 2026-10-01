@@ -10,13 +10,13 @@ import (
 // injects the sandbox note only when sandboxed.
 const SandboxEnvVar = "CORRAL_SANDBOX"
 
-// GlobalConfigEnvVar pins the launcher-resolved global config path for the
-// in-sandbox hook, which drops $XDG_CONFIG_HOME and would otherwise re-resolve
-// to a divergent path.
+// GlobalConfigEnvVar pins the launcher-resolved global config path for
+// commands inside the sandbox, which drops $XDG_CONFIG_HOME, so they would
+// otherwise re-resolve to a divergent path.
 const GlobalConfigEnvVar = "CORRAL_GLOBAL_CONFIG"
 
-// ProfilesEnvVar pins the comma-separated profiles the launcher applied, so the
-// in-sandbox hook and commands apply the same profiles without -p.
+// ProfilesEnvVar pins the comma-separated profiles the launcher applied, so
+// commands inside the sandbox apply the same profiles without -p.
 const ProfilesEnvVar = "CORRAL_PROFILES"
 
 // ProviderNotesEnvVar carries the active providers' secret-free, model-facing
@@ -26,13 +26,17 @@ const ProviderNotesEnvVar = "CORRAL_PROVIDER_NOTES"
 // BackendNotesEnvVar is the backend dual of ProviderNotesEnvVar.
 const BackendNotesEnvVar = "CORRAL_BACKEND_NOTES"
 
-// AgentEnvVar pins the launched agent for the in-sandbox hook. Reserved so
-// env.set cannot forge it.
+// AgentEnvVar is the name of the variable the session-hooks provider exports to
+// session hook scripts. Reserved so env.set cannot forge it.
 const AgentEnvVar = "CORRAL_AGENT"
 
-// AuditPathEnvVar pins the launcher-resolved audit-log path for the
-// in-sandbox hook, which would otherwise re-resolve it from the private home.
+// AuditPathEnvVar pins the launcher-resolved audit-log path inside the
+// sandbox, which would otherwise re-resolve it from the private home.
 const AuditPathEnvVar = "CORRAL_AUDIT_PATH"
+
+// SidecarSocketEnvVar names the unix socket of the launcher's sidecar inside
+// the sandbox.
+const SidecarSocketEnvVar = "CORRAL_SIDECAR_SOCKET"
 
 // BinEnvVar pins the corral binary an agent's in-process policy extension
 // re-invokes. Reserved so nothing can redirect enforcement.
@@ -51,8 +55,8 @@ const PresenceAckEnvVar = "CORRAL_PRESENCE_ACK"
 const DisableHooksEnvVar = "CORRAL_DISABLE_HOOKS"
 
 // InsideCorral reports whether the process runs inside a corral sandbox.
-// Deliberately spoofable: it backs only the presence warning and the
-// SessionStart note.
+// Deliberately spoofable: it backs the presence warning, the SessionStart
+// note, and the hook's refusal to evaluate policy in-process without a sidecar.
 func InsideCorral() bool { return os.Getenv(SandboxEnvVar) != "" }
 
 // EnvEnabled reports whether an opt-in var is switched on: only "1"/"true"

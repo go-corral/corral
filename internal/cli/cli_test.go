@@ -70,6 +70,7 @@ func TestCmdHookUnknownEventBlocks(t *testing.T) {
 }
 
 func TestCmdHookPostToolUseAllowsBenign(t *testing.T) {
+	bareSession(t)
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"mcp__docs__search","tool_response":[{"type":"text","text":"no secrets here"}]}`
 	var code int
 	withStdin(t, ev, func() { code = cmdHook([]string{"post-tool-use"}) })
@@ -84,20 +85,12 @@ func TestCmdHookPreToolUseBadFlagBlocks(t *testing.T) {
 	}
 }
 
-func TestCmdHookPreToolUseBadBlockPathBlocks(t *testing.T) {
-	// A relative --block-path cannot be canonicalized (no cwd) → engine build
-	// fails → block.
-	t.Setenv("HOME", t.TempDir())
-	if got := cmdHook([]string{"pre-tool-use", "--block-path", "relative/dir"}); got != policy.ExitBlock {
-		t.Errorf("uncanonicalizable block-path must fail closed: got %d", got)
-	}
-}
-
 func TestCmdHookPreToolUseBlocksAndAllows(t *testing.T) {
 	// Hermetic cwd: the hook walks up from the process cwd for project config —
 	// without this it would read the repo's own .corral(.local).yml.
 	t.Chdir(t.TempDir())
 	t.Setenv(sandbox.GlobalConfigEnvVar, "") // ignore a dev-sandbox pin to the real global config
+	bareSession(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	ssh := filepath.Join(home, ".ssh")
@@ -127,6 +120,7 @@ func TestCmdHookPreToolUseJSONDecision(t *testing.T) {
 	// without this it would read the repo's own .corral(.local).yml.
 	t.Chdir(t.TempDir())
 	t.Setenv(sandbox.GlobalConfigEnvVar, "") // ignore a dev-sandbox pin to the real global config
+	bareSession(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	ssh := filepath.Join(home, ".ssh")
@@ -157,6 +151,7 @@ func TestCmdHookBlocksDangerousBash(t *testing.T) {
 	// without this it would read the repo's own .corral(.local).yml.
 	t.Chdir(t.TempDir())
 	t.Setenv(sandbox.GlobalConfigEnvVar, "") // ignore a dev-sandbox pin to the real global config
+	bareSession(t)
 	t.Setenv("HOME", t.TempDir())
 
 	var code int
@@ -180,6 +175,7 @@ func TestCmdHookWritesAuditLog(t *testing.T) {
 	// without this it would read the repo's own .corral(.local).yml.
 	t.Chdir(t.TempDir())
 	t.Setenv(sandbox.GlobalConfigEnvVar, "") // ignore a dev-sandbox pin to the real global config
+	bareSession(t)
 	home := t.TempDir()
 	cfgDir := filepath.Join(home, "cfg")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -229,6 +225,7 @@ func TestCmdHookWritesAuditLog(t *testing.T) {
 func TestSyncThenHookEndToEnd(t *testing.T) {
 	home := t.TempDir()
 	isolateConfigEnv(t, home, home) // chdir to a clean temp home so the trust gate finds no repo config
+	bareSession(t)
 	ssh := filepath.Join(home, ".ssh")
 	if err := os.Mkdir(ssh, 0o700); err != nil {
 		t.Fatal(err)
@@ -328,6 +325,7 @@ func TestCmdHookOutputStaysPlain(t *testing.T) {
 
 	t.Chdir(t.TempDir())
 	t.Setenv(sandbox.GlobalConfigEnvVar, "")
+	bareSession(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	var stderr string

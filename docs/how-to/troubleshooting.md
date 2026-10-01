@@ -46,6 +46,12 @@ than allowing it.
 The [threat model](../explanation/threat-model.md) describes rules that cannot be
 relaxed by configuration.
 
+## Every tool call is blocked with `cannot evaluate policy`
+
+The hook in the session cannot reach the sidecar of `corral run`, so it blocks each call. The message ends with the cause. Exit the agent and start a new session with `corral run`.
+
+After a corral upgrade the hook could become incompatible, restarting the session will help then.
+
 ## The kubeconfig `Read` block
 
 **Symptom:** the agent's `Read` of the temporary kubeconfig is refused while
@@ -175,9 +181,10 @@ because the resolved SSH directory is masked inside the grant.
 
 - Run `corral validate` to see the built-in, global, `.corral.yml` and `.corral.local.yml` sources ordered by priority.
 - Lists merge append-unique, meaning they can only be extended by later config layers.
+- A config or profile edit takes effect on the next launch. Exit the agent and run `corral run` again.
 - Provider, mount, environment and sandbox changes apply to new sessions.
 - Inside a session, `echo "$CORRAL_PROFILES"` shows the profiles that the session applies.
-- If the hook blocks every tool call with `profile "<name>" not found`, the config no longer defines a session profile. Restore the profile, or exit and run `corral run` again.
+- In a session started without `corral run`, a block with `profile "<name>" not found` means the config no longer defines a selected profile. Restore the profile, or restart the session.
 
 ## Reading the audit log
 

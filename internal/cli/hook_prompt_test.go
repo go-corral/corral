@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -21,17 +22,15 @@ func promptEvent(sessionID, prompt string) string {
 	return string(b)
 }
 
-// isolatePromptHook points the per-prompt marker ($TMPDIR) and the audit log
-// (CLAUDE_CONFIG_DIR) at a throwaway dir so the test neither collides with real markers
-// nor writes a real audit line. Sandboxed so the presence-warning path stays out of the way —
-// the secret scan runs regardless of sandbox state.
+// isolatePromptHook points the per-prompt marker ($TMPDIR), the config, and the audit log
+// ($HOME) at a throwaway dir so the test neither collides with real markers nor writes a real
+// audit line. Served by a test sidecar, as inside the sandbox, so the presence-warning path
+// stays out of the way — the secret scan runs regardless of sandbox state.
 func isolatePromptHook(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv(sandbox.SandboxEnvVar, "1")
 	t.Setenv("TMPDIR", dir)
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	t.Setenv(sandbox.GlobalConfigEnvVar, "")
+	startTestSidecar(t, dir, dir)
 }
 
 // A prompt carrying a secret is swallowed with a warning that names the kind and the
@@ -95,6 +94,53 @@ func TestUserPromptSubmitDifferentSecretWarnsAgain(t *testing.T) {
 	}
 }
 
+// Inside the sandbox without a reachable sidecar, the scan still runs with its default
+// settings: a recognized secret is blocked with the built-in hint, a clean prompt is allowed.
+func TestUserPromptSubmitDeadSidecarScansDefaults(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv(sandbox.SandboxEnvVar, "1")
+	t.Setenv(sandbox.SidecarSocketEnvVar, filepath.Join(t.TempDir(), "sock"))
+
+	var secret strings.Builder
+	if code := runUserPromptSubmitHook(strings.NewReader(promptEvent("s1", "key "+promptAWSKey)), &secret); code != 0 {
+		t.Fatalf("the warning rides in JSON → exit 0, got %d", code)
+	}
+	for _, want := range []string{`"block"`, "AWS access key id", policy.IncidentHint} {
+		if !strings.Contains(secret.String(), want) {
+			t.Errorf("a secret-bearing prompt must warn (missing %q):\n%s", want, secret.String())
+		}
+	}
+
+	var clean strings.Builder
+	if code := runUserPromptSubmitHook(strings.NewReader(promptEvent("s1", "please refactor the parser")), &clean); code != 0 {
+		t.Fatalf("clean prompt → exit 0, got %d", code)
+	}
+	if clean.String() != "" {
+		t.Errorf("a clean prompt must be allowed silently, got %q", clean.String())
+	}
+}
+
+// In a bare session, resubmitting a secret-bearing prompt proceeds: the presence warning does
+// not swallow it a second time.
+func TestUserPromptSubmitResubmitSkipsPresenceWarning(t *testing.T) {
+	dir := t.TempDir()
+	isolateConfigEnv(t, dir, dir)
+	bareSession(t)
+	t.Setenv("TMPDIR", dir)
+	t.Setenv(sandbox.PresenceAckEnvVar, "")
+	ev := promptEvent("s1", "key "+promptAWSKey)
+
+	var first strings.Builder
+	runUserPromptSubmitHook(strings.NewReader(ev), &first)
+	if !strings.Contains(first.String(), "AWS access key id") {
+		t.Fatalf("first submit must warn about the secret, got %q", first.String())
+	}
+	var second strings.Builder
+	if code := runUserPromptSubmitHook(strings.NewReader(ev), &second); code != 0 || second.String() != "" {
+		t.Errorf("resubmit must proceed silently, got code %d and %q", code, second.String())
+	}
+}
+
 // A clean prompt is never caught by the secret scan: sandboxed → falls through to silence.
 func TestUserPromptSubmitCleanPromptNotFlagged(t *testing.T) {
 	isolatePromptHook(t)
@@ -115,7 +161,7 @@ func TestPresenceAckSilencesWarningButKeepsScan(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	t.Setenv(sandbox.SandboxEnvVar, "") // not sandboxed
+	bareSession(t) // not sandboxed
 	t.Setenv(sandbox.PresenceAckEnvVar, "1")
 
 	// A clean prompt: silently allowed, and nothing is persisted for it.
@@ -156,7 +202,7 @@ func TestPresenceAckStrictValues(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("TMPDIR", dir)
 			t.Setenv("CLAUDE_CONFIG_DIR", dir)
-			t.Setenv(sandbox.SandboxEnvVar, "")
+			bareSession(t)
 			t.Setenv(sandbox.PresenceAckEnvVar, tc.value)
 
 			var out strings.Builder

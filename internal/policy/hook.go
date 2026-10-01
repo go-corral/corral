@@ -20,7 +20,9 @@ const (
 	ExitBlock = 2
 )
 
-const maxEventBytes = 16 << 20 // 16 MiB; exceeding it fails closed
+// MaxEventBytes caps a hook event. An event over the cap fails closed, so a reader that
+// forwards an event reads at most MaxEventBytes+1 bytes to keep the overflow visible.
+const MaxEventBytes = 16 << 20
 
 // Presentation selects how an intentional policy Deny is reported. Error paths always use the
 // exit-2 fail-closed path regardless of presentation.
@@ -57,13 +59,13 @@ func RunHookWithAudit(eng *Engine, aud AuditFunc, fsys FS, r io.Reader, out, err
 		}
 	}()
 
-	data, err := io.ReadAll(io.LimitReader(r, maxEventBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, MaxEventBytes+1))
 	if err != nil {
 		fmt.Fprintf(errw, "corral: cannot read hook input, blocking: %v\n", err)
 		return ExitBlock
 	}
-	if len(data) > maxEventBytes {
-		fmt.Fprintf(errw, "corral: hook input exceeds %d bytes, blocking\n", maxEventBytes)
+	if len(data) > MaxEventBytes {
+		fmt.Fprintf(errw, "corral: hook input exceeds %d bytes, blocking\n", MaxEventBytes)
 		return ExitBlock
 	}
 
@@ -279,7 +281,7 @@ func (g *PostToolUseGate) Observe(toolName string, origResp []byte) {
 // silently ignores — the withhold would not apply. Best-effort: on any error the gate keeps what
 // it already had.
 func (g *PostToolUseGate) ObserveShapeFrom(r io.Reader) {
-	data, err := io.ReadAll(io.LimitReader(r, maxEventBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, MaxEventBytes+1))
 	if err != nil || len(data) == 0 {
 		return
 	}
@@ -295,6 +297,23 @@ func (g *PostToolUseGate) Replace(marker string) int {
 	}
 	g.written = true
 	g.code = WritePostToolUseReplace(g.out, g.toolName, g.origResp, marker)
+	return g.code
+}
+
+// Forward writes payload, an already rendered answer, verbatim and returns code.
+// It shares the write-once rule with Replace. An empty payload writes nothing but still
+// counts as the write.
+func (g *PostToolUseGate) Forward(payload string, code int) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.written {
+		return g.code
+	}
+	g.written = true
+	g.code = code
+	if payload != "" {
+		_, _ = io.WriteString(g.out, payload)
+	}
 	return g.code
 }
 
@@ -331,11 +350,11 @@ func RunPostToolUseHook(entropyThreshold float64, maxScanBytes int64, incidentHi
 		}
 	}()
 
-	data, err := io.ReadAll(io.LimitReader(r, maxEventBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, MaxEventBytes+1))
 	if err != nil {
 		return gate.Replace("[corral] tool response withheld — could not read it to scan (fail-closed)")
 	}
-	if len(data) > maxEventBytes {
+	if len(data) > MaxEventBytes {
 		gate.Observe(probeToolName(data), nil)
 		return gate.Replace("[corral] tool response withheld — exceeds the scan size cap (fail-closed)")
 	}
