@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -222,5 +223,118 @@ func TestKubernetesTokenLifetimeVarious(t *testing.T) {
 		if got := k.EffectiveTokenLifetime(); got != tc.want {
 			t.Errorf("TokenLifetime: %q = %v, want %v", tc.val, got, tc.want)
 		}
+	}
+}
+
+// --- clusters: inherit-or-replace ---
+
+func TestEffectiveClusters(t *testing.T) {
+	top := []Permission{{NamespaceSelector: &LabelSelector{MatchLabels: map[string]string{"team": "platform"}}, ClusterRole: "edit"}}
+	own := []Permission{{ClusterWide: true, ClusterRole: "view"}}
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want []ResolvedCluster
+	}{
+		{"no clusters gives current", Config{Enabled: true, Mode: ModeManaged, Permissions: top},
+			[]ResolvedCluster{{Key: ImplicitCluster, Implicit: true, Default: true, Config: Config{Enabled: true, Mode: ModeManaged, Permissions: top}}}},
+		{"cluster permissions replace the top-level list", Config{Permissions: top, Clusters: map[string]Cluster{"prod": {Permissions: own}}},
+			[]ResolvedCluster{{Key: "prod", Config: Config{Permissions: own}}}},
+		{"cluster without permissions inherits them", Config{Permissions: top, Mode: ModeManaged, Clusters: map[string]Cluster{"staging": {Default: true}}},
+			[]ResolvedCluster{{Key: "staging", Default: true, Config: Config{Permissions: top, Mode: ModeManaged}}}},
+		{"enabled and optional inherit when unset", Config{Enabled: true, Optional: true, Clusters: map[string]Cluster{"a": {}}},
+			[]ResolvedCluster{{Key: "a", Config: Config{Enabled: true, Optional: true}}}},
+		{"enabled and optional override when set", Config{Enabled: true, Optional: false, Clusters: map[string]Cluster{"a": {Enabled: new(false), Optional: new(true)}}},
+			[]ResolvedCluster{{Key: "a", Config: Config{Enabled: false, Optional: true}}}},
+		{"a declared cluster is the default only when it sets default", Config{Clusters: map[string]Cluster{"a": {Kubeconfig: Kubeconfig{Path: "/k", Context: "c"}, Mode: ModePreProvisioned, ServiceAccountNamespace: "ns"}}},
+			[]ResolvedCluster{{Key: "a", Kubeconfig: Kubeconfig{Path: "/k", Context: "c"}, Config: Config{Mode: ModePreProvisioned, ServiceAccountNamespace: "ns"}}}},
+		{"sorted by key", Config{Clusters: map[string]Cluster{"zeta": {}, "alpha": {}, "mid": {}}},
+			[]ResolvedCluster{{Key: "alpha"}, {Key: "mid"}, {Key: "zeta"}}},
+	} {
+		if got := tc.cfg.EffectiveClusters(); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: EffectiveClusters() = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestKubeconfigResolvedPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"":             "",
+		"kube/dev.yml": "/src/app/kube/dev.yml",
+		"/etc/../k":    "/k",
+	} {
+		if got := (Kubeconfig{Path: in}).ResolvedPath("/src/app"); got != want {
+			t.Errorf("ResolvedPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestClustersValidate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want string // exact error; "" = must validate
+	}{
+		{"inherited preProvisioned mode with cluster permissions",
+			Config{Mode: ModePreProvisioned, ServiceAccountNamespace: "corral-team-a", Clusters: map[string]Cluster{"prod": {Permissions: []Permission{{ClusterWide: true, ClusterRole: "view"}}}}},
+			"providers.kubernetes.clusters.prod.permissions: not allowed in mode preProvisioned — corral does not manage RBAC in this mode (a cluster admin binds the target-namespace roles to group system:serviceaccounts:<serviceAccountNamespace>); remove the list or switch to mode managed"},
+		{"inherited preProvisioned mode and namespace", Config{Mode: ModePreProvisioned, ServiceAccountNamespace: "corral-team-a", Clusters: map[string]Cluster{"prod": {}}}, ""},
+		{"cluster overrides the top-level mode", Config{Mode: ModePreProvisioned, Clusters: map[string]Cluster{"prod": {Mode: ModeManaged}}}, ""},
+		{"cluster permission names the cluster key",
+			Config{Clusters: map[string]Cluster{"prod": {Permissions: []Permission{{ClusterRole: "view"}}}}},
+			"providers.kubernetes.clusters.prod.permissions[0]: set either clusterWide: true or namespaceSelector"},
+		{"cluster tokenLifetime names the cluster key", Config{Clusters: map[string]Cluster{"prod": {TokenLifetime: "48h"}}},
+			`providers.kubernetes.clusters.prod.tokenLifetime: "48h" exceeds the 24h maximum`},
+		{"same kubeconfig source twice",
+			Config{Clusters: map[string]Cluster{"a": {Kubeconfig: Kubeconfig{Path: "/home/u/.kube/config"}}, "b": {Kubeconfig: Kubeconfig{Path: "/home/u/.kube/./config"}}}},
+			"providers.kubernetes.clusters: a and b use the same kubeconfig.path and kubeconfig.context; set a different source for one of them"},
+		{"same path, other context", Config{Clusters: map[string]Cluster{"a": {Kubeconfig: Kubeconfig{Path: "/k"}}, "b": {Kubeconfig: Kubeconfig{Path: "/k", Context: "dev"}}}}, ""},
+		{"two defaults", Config{Clusters: map[string]Cluster{"staging": {Default: true, Kubeconfig: Kubeconfig{Context: "s"}}, "prod": {Default: true, Kubeconfig: Kubeconfig{Context: "p"}}}},
+			"providers.kubernetes.clusters: more than one cluster sets default: true (prod, staging); set it on at most one"},
+		{"disabled cluster still counts as a default", Config{Clusters: map[string]Cluster{
+			"prod":    {Enabled: new(false), Default: true, Kubeconfig: Kubeconfig{Context: "p"}},
+			"staging": {Enabled: new(true), Default: true, Kubeconfig: Kubeconfig{Context: "s"}},
+		}}, "providers.kubernetes.clusters: more than one cluster sets default: true (prod, staging); set it on at most one"},
+	} {
+		err := tc.cfg.Validate()
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: should validate, got %v", tc.name, err)
+		case tc.want != "" && (err == nil || err.Error() != tc.want):
+			t.Errorf("%s: error = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestWarningsNameTheCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {},
+		"staging": {Permissions: []Permission{{ClusterWide: true, ClusterRole: "edit"}}},
+	}}
+	want := []health.Check{{State: health.Warn, Label: "kubernetes/staging", Value: `role "edit" is not a known read-only role`,
+		Reason: "confirm it grants no write or delete access, or add it to providers.kubernetes.clusters.staging.readOnlyRoles"}}
+	if w := cfg.Warnings(); !slices.Equal(w, want) {
+		t.Errorf("Warnings() = %+v, want %+v", w, want)
+	}
+}
+
+func TestWarningsSkipDisabledCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"staging": {Enabled: new(false), Permissions: []Permission{{ClusterWide: true, ClusterRole: "edit"}}},
+	}}
+	if w := cfg.Warnings(); len(w) != 0 {
+		t.Errorf("a disabled cluster must not warn, got %v", w)
+	}
+}
+
+func TestGrantsDescribeClusters(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {},
+		"staging": {Mode: ModePreProvisioned, ServiceAccountNamespace: "corral-team-a"},
+		"old":     {Enabled: new(false)},
+	}}
+	want := "per-session ServiceAccount + a scoped kubeconfig token on 2 clusters (prod: managed, staging: preProvisioned)"
+	if g := cfg.Grants(); g != want {
+		t.Errorf("Grants() = %q, want %q", g, want)
 	}
 }

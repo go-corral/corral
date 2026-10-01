@@ -792,6 +792,30 @@ func TestKubernetesTokenLifetimeBounds(t *testing.T) {
 	}
 }
 
+// A cluster kubeconfig's ~ expands at load; a relative path stays relative and resolves against
+// the directory the caller passes.
+func TestKubernetesClusterKubeconfigPath(t *testing.T) {
+	yml := "providers:\n  kubernetes:\n    clusters:\n      a:\n        kubeconfig:\n          path: ~/.kube/a\n      dev:\n        kubeconfig:\n          path: kube/dev.yml\n"
+	cfg, _, err := loadFrom(t, "/home/u", yml, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := cfg.Providers.Kubernetes.Clusters
+	if got := cl["a"].Kubeconfig.Path; got != "/home/u/.kube/a" {
+		t.Errorf("~ must expand at load, got %q", got)
+	}
+	if got := cl["dev"].Kubeconfig.ResolvedPath("/src/app"); got != "/src/app/kube/dev.yml" {
+		t.Errorf("a relative path must resolve against the given directory, got %q", got)
+	}
+}
+
+func TestKubernetesTopLevelKubeconfigRejected(t *testing.T) {
+	_, _, err := loadFrom(t, "/home/u", "providers:\n  kubernetes:\n    kubeconfig:\n      path: ~/.kube/a\n", "", "")
+	if err == nil || !strings.Contains(err.Error(), "field kubeconfig not found") {
+		t.Fatalf("providers.kubernetes.kubeconfig must fail as an unknown key, got %v", err)
+	}
+}
+
 func TestGitlabValidation(t *testing.T) {
 	for _, yml := range []string{
 		"providers:\n  gitlab:\n    enabled: true\n    expiryDays: 7\n",                                              // unknown key
