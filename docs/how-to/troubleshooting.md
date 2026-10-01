@@ -161,6 +161,37 @@ home is not being deleted between runs. Setting
 host home location instead, so writes to granted home paths are no longer isolated.
 The always-blocked directories remain masked.
 
+## A macOS tool fails under `/Library`
+
+On macOS the sandbox exposes only the parts of `/Library` that hold code: `Apple`,
+`Developer`, `Frameworks`, `Java`, `Perl`, `Python`, `Ruby`, `TeX`, and `Fonts`, plus the
+Xcode license file `Preferences/com.apple.dt.Xcode.plist`. See the
+[macOS baseline](../reference/sandbox-permissions.md#macos--seatbelt). The rest of
+`/Library`, such as `Preferences`, `Keychains`, `Application Support`, and `Logs`, holds
+host data and is denied. A tool that reads it fails with `Operation not permitted` on
+the `/Library` path.
+
+Grant the path the tool needs:
+
+```yaml
+providers:
+  paths:
+    ro:
+      - "/Library/Application Support/<vendor>"
+```
+
+If TLS verification fails in a tool that reads root certificates from the system
+keychain file itself, such as Node.js or Bun with `--use-system-ca`, the tool does not
+see root CAs that an administrator installed there. Export the root CA to a PEM file
+under a granted path and point the tool at it with `providers.env.set`:
+`NODE_EXTRA_CA_CERTS` for Node.js and Bun, or `SSL_CERT_FILE` for OpenSSL-based tools.
+`SSL_CERT_FILE` replaces the default bundle, so append the root CA to a copy of
+`/etc/ssl/cert.pem`. Alternatively, grant `/Library/Keychains/System.keychain` in
+`providers.paths.ro`; that file also exposes the names of system keychain entries, such
+as Wi-Fi networks.
+
+`providers.paths.ro: [/Library]` restores read access to all of `/Library`.
+
 ## `providers.paths` resolves through an always-blocked path
 
 corral resolves a symlinked grant before mounting it. It refuses the grant if the
