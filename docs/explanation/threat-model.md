@@ -63,6 +63,17 @@ Seatbelt on macOS. See the
 `providers.paths.rw` and `providers.paths.ro` entries add grants; config cannot remove or
 loosen baseline rules.
 
+On macOS the baseline exposes the code under `/Library`, such as toolchains, frameworks,
+and language runtimes, but not its data: preferences, keychains, logs, and application
+support files stay denied. Two limits apply:
+
+- A denied path returns `Operation not permitted`, and a missing one returns
+  `No such file or directory`. An agent that guesses a path can therefore confirm that
+  it exists, but cannot list or read it.
+- Seatbelt rules cover files. An XPC service can return some of the same data. The
+  preferences service `cfprefsd` applies the same file rules, and the default strict
+  mach-lookup mode limits which other services the session can reach.
+
 ### 4. Temporary credentials are scoped and expire
 
 The Kubernetes and GitLab providers create scoped credentials outside the sandbox,
