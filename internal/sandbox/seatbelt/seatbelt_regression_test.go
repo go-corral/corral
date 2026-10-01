@@ -812,12 +812,6 @@ func TestArgvSortsEnvKeys(t *testing.T) {
 	}
 }
 
-// The strict-containment check seatbelt uses for $HOME ancestor derivation
-// (pathutil.Under) is locked canonically by pathutil.TestUnder — including the seatbelt
-// /Users/u equal/under/sibling cases. The behavioral guarantee that only paths strictly
-// under $HOME become ancestors is covered by the homePaths assertion in
-// TestCompileMacOSBaselineBehavior and the golden SBPL profiles.
-
 // TestProfileMountUnderHomeMetadata verifies a profile with a mount under $HOME includes
 // the mount and its ancestors in metadata.
 func TestProfileMountUnderHomeMetadata(t *testing.T) {
