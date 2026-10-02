@@ -151,10 +151,19 @@ func cmdRun(args []string, version string) int {
 		}
 	}
 
+	// A `corral run <agent>` positional overrides the configured agent. Set before the trust
+	// gate, because the private home path depends on the agent.
+	if agentName != "" {
+		cfg.Agent = agentName
+	}
+	host := envMap()
+	privHome, homeOn := homeDir(cfg, *home, host)
+
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
-	// executable a session hook would run. Runs before any consumption or mint. --yes is
-	// refused here; --dry-run is exempt.
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, c) {
+	// executable a session hook would run and every kubeconfig in a sandbox-writable location.
+	// Runs before any consumption or mint. --yes is refused here; --dry-run is exempt.
+	kubes := collectKubeconfigs(cfg, projectSrc, privHome)
+	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, *yes, os.Stdin, os.Stderr, c) {
 		return 1
 	}
 	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
@@ -163,10 +172,6 @@ func cmdRun(args []string, version string) int {
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
 	if err := checkResolvedPathGrants(cfg, *home); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
-	}
-	// A `corral run <agent>` positional overrides the configured agent.
-	if agentName != "" {
-		cfg.Agent = agentName
 	}
 
 	// Resolve the program to run: the configured agent's binary on PATH, or -command to override.
@@ -179,7 +184,6 @@ func cmdRun(args []string, version string) int {
 		commandBin = resolveAgentBinary(agent)
 	}
 
-	host := envMap()
 	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
 	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
@@ -244,7 +248,8 @@ func cmdRun(args []string, version string) int {
 	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
 	// Registered before the teardown, so it runs after the session-end hooks.
 	defer hookLog.Flush()
-	active := activeProviders(cfg, *home, host, projectSrc, bannerSessionHookPresenter(os.Stderr, c), hookLog)
+	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
+	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
 	command = append(command, fs.Args()...)
 
@@ -258,7 +263,6 @@ func cmdRun(args []string, version string) int {
 	homeArch := baselineArch(backendKind)
 	keep := cfg.Providers.Home.KeepRel()
 	guardDir := hookGuardDir(cfg, *home, host)
-	privHome, homeOn := homeDir(cfg, *home, host)
 	var shadows []string
 	if homeOn {
 		pre := spec // shallow copy: linkHome only reads
@@ -290,7 +294,7 @@ func cmdRun(args []string, version string) int {
 		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
 		writeStartupBanner(os.Stderr, c, cfg, banner, checks, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
-		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc))
+		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc), kubes)
 		prep, err := backend.Prepare(&spec, warnLines)
 		warnLines.Flush()
 		if err != nil {

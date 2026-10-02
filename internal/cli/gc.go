@@ -46,7 +46,7 @@ func cmdGC(args []string) int {
 func gcCandidates(cfg *config.Config, home string, host map[string]string) []providers.Provider {
 	var out []providers.Provider
 	// gc inspects orphans from past sessions, not the current project.
-	for _, a := range activeProviders(cfg, home, host, "", nil, nil) {
+	for _, a := range activeProviders(cfg, home, host, "", nil, nil, nil) {
 		out = append(out, a.Provider)
 	}
 	return out
