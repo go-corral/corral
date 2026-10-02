@@ -2,11 +2,19 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-corral/corral/internal/cli/report"
+	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/hooks"
+	"github.com/go-corral/corral/internal/trust"
 )
 
 // cliFakeReaper implements providers.Provider + providers.Reaper for runGC tests.
@@ -134,5 +142,73 @@ func TestRunGCDeclined(t *testing.T) {
 		"Reap these 1 resource(s)? [y/N]     nothing deleted\n"
 	if out.String() != want {
 		t.Errorf("output = %q, want %q", out.String(), want)
+	}
+}
+
+// gc does not prompt: it loads a kubeconfig in the workdir only when its current content is
+// approved, and it never contacts the server of a changed one.
+func TestGCGatedKubeconfig(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		home, work := t.TempDir(), t.TempDir()
+		t.Setenv("XDG_STATE_HOME", "")
+		contacted := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			contacted = true
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/serviceaccounts":
+				fmt.Fprint(w, `{"kind":"ServiceAccountList","apiVersion":"v1","items":[{"metadata":{"name":"corral-alice-s1","namespace":"corral",`+
+					`"labels":{"corral.dev/managed":"true","corral.dev/user":"alice","corral.dev/session":"s1"}}}]}`)
+			case "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings":
+				fmt.Fprint(w, `{"kind":"ClusterRoleBindingList","apiVersion":"rbac.authorization.k8s.io/v1","items":[]}`)
+			case "/apis/rbac.authorization.k8s.io/v1/rolebindings":
+				fmt.Fprint(w, `{"kind":"RoleBindingList","apiVersion":"rbac.authorization.k8s.io/v1","items":[]}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		kubeconfig := func(user string) []byte {
+			return []byte("apiVersion: v1\nkind: Config\ncurrent-context: c\n" +
+				"clusters:\n- name: c\n  cluster:\n    server: " + srv.URL + "\n" +
+				"contexts:\n- name: c\n  context:\n    cluster: c\n    user: " + user + "\n" +
+				"users:\n- name: " + user + "\n  user:\n    token: t\n")
+		}
+		path := filepath.Join(work, "kube", "dev.yml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, kubeconfig("a"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sum, err := hooks.HashFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := trust.NewStore(trust.DefaultDir(home)).Approve([]trust.Entry{{Path: path, SHA256: sum}}); err != nil {
+			t.Fatal(err)
+		}
+		if changed {
+			if err := os.WriteFile(path, kubeconfig("b"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("KUBECONFIG", path)
+
+		cfg := &config.Config{}
+		cfg.Providers.Kubernetes.Enabled = true
+		reapers := providers.Reapers(gcCandidates(cfg, home, nil, work))
+		var out strings.Builder
+		runGC(context.Background(), reapers, gcOptions{DryRun: true, Colors: report.NewStyle(false, false)}, strings.NewReader(""), &out)
+		srv.Close()
+
+		if changed {
+			if !strings.Contains(out.String(), "load kubeconfig: "+path+" is not approved") || contacted {
+				t.Errorf("a changed kubeconfig must not load (server contacted: %v):\n%s", contacted, out.String())
+			}
+			continue
+		}
+		if !strings.Contains(out.String(), "ServiceAccount corral/corral-alice-s1") {
+			t.Errorf("an approved kubeconfig must load and list the orphan:\n%s", out.String())
+		}
 	}
 }
