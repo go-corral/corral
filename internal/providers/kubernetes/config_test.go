@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -336,5 +337,19 @@ func TestGrantsDescribeClusters(t *testing.T) {
 	want := "per-session ServiceAccount + a scoped kubeconfig token on 2 clusters (prod: managed, staging: preProvisioned)"
 	if g := cfg.Grants(); g != want {
 		t.Errorf("Grants() = %q, want %q", g, want)
+	}
+}
+
+// Files returns the resolved Path, or the absolute $KUBECONFIG files without empty entries.
+func TestKubeconfigFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	list := string(filepath.ListSeparator)
+	t.Setenv("KUBECONFIG", "a.yml"+list+list+"/abs/b.yml"+list)
+	if got, want := (Kubeconfig{}).Files(""), []string{filepath.Join(dir, "a.yml"), "/abs/b.yml"}; !slices.Equal(got, want) {
+		t.Errorf("Files() = %v, want %v", got, want)
+	}
+	if got, want := (Kubeconfig{Path: "kube/dev.yml"}).Files("/work"), []string{"/work/kube/dev.yml"}; !slices.Equal(got, want) {
+		t.Errorf("Files(/work) = %v, want %v", got, want)
 	}
 }
