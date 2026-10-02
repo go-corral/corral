@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/trust"
 )
 
 // cmdGC collects and (after approval) reaps orphaned out-of-process provider
@@ -37,19 +39,38 @@ func cmdGC(args []string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "cannot resolve home: %v", err)
 	}
-	reapers := providers.Reapers(gcCandidates(cfg, home, envMap()))
+	wd, err := os.Getwd()
+	if err != nil {
+		return fatalf(os.Stderr, "cannot resolve working directory: %v", err)
+	}
+	reapers := providers.Reapers(gcCandidates(cfg, home, envMap(), wd))
 
 	return runGC(context.Background(), reapers, gcOptions{DryRun: *dryRun, Yes: *yes, Title: true, Colors: report.StyleFor(os.Stdout)}, os.Stdin, os.Stdout)
 }
 
-// gcCandidates returns the providers `corral gc` should query for orphans.
-func gcCandidates(cfg *config.Config, home string, host map[string]string) []providers.Provider {
+// gcCandidates returns the providers `corral gc` should query for orphans. workDir is the
+// sandbox-writable workdir for the kubeconfig gate.
+func gcCandidates(cfg *config.Config, home string, host map[string]string, workDir string) []providers.Provider {
+	privHome, _ := homeDir(cfg, home, host)
+	approved := gcApprovedKubeconfigs(cfg, workDir, privHome, trust.NewStore(trust.DefaultDir(home)))
 	var out []providers.Provider
 	// gc inspects orphans from past sessions, not the current project.
-	for _, a := range activeProviders(cfg, home, host, "", nil, nil) {
+	for _, a := range activeProviders(cfg, home, host, "", approved, nil, nil) {
 		out = append(out, a.Provider)
 	}
 	return out
+}
+
+// gcApprovedKubeconfigs gates the kubeconfigs without a prompt: only content the store reports as
+// approved loads, every other gated kubeconfig maps to "".
+func gcApprovedKubeconfigs(cfg *config.Config, workDir, privHome string, store *trust.Store) map[string]string {
+	kubes := collectKubeconfigs(cfg, workDir, privHome)
+	states := map[string]trust.State{}
+	for _, r := range store.Check(kubes.entries) {
+		states[r.Path] = r.State
+	}
+	kubes.entries = slices.DeleteFunc(kubes.entries, func(e trust.Entry) bool { return states[e.Path] != trust.StateApproved })
+	return kubes.approved()
 }
 
 type gcOptions struct {

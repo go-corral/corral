@@ -2,6 +2,8 @@ package kubernetes
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -845,7 +847,7 @@ func TestKubernetesReapRemovesStaleKubeconfig(t *testing.T) {
 }
 
 func TestKubernetesImplementsReaper(t *testing.T) {
-	if _, ok := New(Config{}, t.TempDir()).(spec.Reaper); !ok {
+	if _, ok := New(Config{}, t.TempDir(), nil).(spec.Reaper); !ok {
 		t.Error("kubernetes provider must implement Reaper so `corral gc` can collect its orphans")
 	}
 }
@@ -853,7 +855,7 @@ func TestKubernetesImplementsReaper(t *testing.T) {
 func TestKubernetesAvailable(t *testing.T) {
 	// No discoverable kubeconfig → unavailable (skip safely, never error).
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
-	if New(Config{}, t.TempDir()).Available(context.Background()) {
+	if New(Config{}, t.TempDir(), nil).Available(context.Background()) {
 		t.Error("no kubeconfig → provider must be unavailable")
 	}
 	// A kubeconfig that defines a cluster → available.
@@ -869,7 +871,7 @@ func TestKubernetesAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("KUBECONFIG", path)
-	if !New(Config{}, dir).Available(context.Background()) {
+	if !New(Config{}, dir, nil).Available(context.Background()) {
 		t.Error("a kubeconfig with a cluster → provider must be available")
 	}
 }
@@ -903,5 +905,128 @@ func TestKubernetesMintRejectsSideEffectFree(t *testing.T) {
 	// The guard must return before any cluster mutation — no SA/token actions recorded.
 	if acts := cs.Actions(); len(acts) != 0 {
 		t.Errorf("a side-effect-free Mint must make no API calls, got %d actions", len(acts))
+	}
+}
+
+// --- loading a gated kubeconfig ---
+
+// writeHostKubeconfig writes a kubeconfig with one context per name, each on server
+// https://<name>:6443, the first as current-context. The clusters reference a CA file relative to
+// the kubeconfig.
+func writeHostKubeconfig(t *testing.T, path string, names ...string) {
+	t.Helper()
+	kc := clientcmdapi.NewConfig()
+	for _, n := range names {
+		kc.Clusters[n] = &clientcmdapi.Cluster{Server: "https://" + n + ":6443", CertificateAuthority: "ca.crt"}
+		kc.AuthInfos[n] = &clientcmdapi.AuthInfo{Token: "host-token"}
+		kc.Contexts[n] = &clientcmdapi.Context{Cluster: n, AuthInfo: n}
+	}
+	kc.CurrentContext = names[0]
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "ca.crt"), []byte("CA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientcmd.WriteToFile(*kc, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hashFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestKubernetesRestConfigApprovedBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kube", "dev.yml")
+	writeHostKubeconfig(t, path, "a", "b")
+	t.Setenv("KUBECONFIG", path)
+
+	fromDisk, err := (&k8s{}).restConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := &k8s{cfg: Config{As: "admin"}, approved: map[string]string{path: hashFile(t, path)}}
+	rc, err := k.restConfig()
+	if err != nil {
+		t.Fatalf("approved bytes must load: %v", err)
+	}
+	if rc.Host != "https://a:6443" || rc.Impersonate.UserName != "admin" {
+		t.Errorf("approved load must apply the current context and as: host %q as %q", rc.Host, rc.Impersonate.UserName)
+	}
+	if want := filepath.Join(filepath.Dir(path), "ca.crt"); rc.CAFile != want || fromDisk.CAFile != want {
+		t.Errorf("a relative CA file must resolve against the kubeconfig's directory: approved %q, from disk %q, want %q", rc.CAFile, fromDisk.CAFile, want)
+	}
+
+	writeHostKubeconfig(t, path, "b", "a")
+	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), path+" changed after it was approved") {
+		t.Errorf("bytes changed after approval must fail to load: %v", err)
+	}
+}
+
+// A gated file without an approved hash fails with the approval hint, an unreadable gated file
+// fails to load, and a gated file among several KUBECONFIG files fails to load.
+func TestKubernetesRestConfigGatedFiles(t *testing.T) {
+	dir := t.TempDir()
+	path, other := filepath.Join(dir, "dev.yml"), filepath.Join(dir, "other.yml")
+	writeHostKubeconfig(t, path, "a")
+	writeHostKubeconfig(t, other, "b")
+	k := &k8s{approved: map[string]string{path: ""}}
+
+	t.Setenv("KUBECONFIG", path)
+	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), path+" is not approved") {
+		t.Errorf("a gated file without approval must not load from disk: %v", err)
+	}
+	k.approved[path] = hashFile(t, path)
+	if rc, err := k.restConfig(); err != nil || rc.Host != "https://a:6443" {
+		t.Errorf("a gated file must load its approved bytes: %v", err)
+	}
+	t.Setenv("KUBECONFIG", path+string(filepath.ListSeparator)+other)
+	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), "KUBECONFIG names several files and "+path) {
+		t.Errorf("a gated file among several KUBECONFIG files must fail to load: %v", err)
+	}
+	if rc, err := (&k8s{}).restConfig(); err != nil || rc.Host != "https://a:6443" {
+		t.Errorf("several ungated KUBECONFIG files must load merged from disk: %v", err)
+	}
+
+	missing := filepath.Join(dir, "missing.yml")
+	t.Setenv("KUBECONFIG", missing)
+	k.approved[missing] = ""
+	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), "unreadable") {
+		t.Errorf("an unreadable gated file must fail to load: %v", err)
+	}
+}
+
+// Mint and GC with a gated kubeconfig that changed after approval fail before any API call.
+func TestKubernetesApprovedKubeconfigChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dev.yml")
+	writeHostKubeconfig(t, path, "dev")
+	sum := hashFile(t, path)
+	writeHostKubeconfig(t, path, "dev", "other")
+	t.Setenv("KUBECONFIG", path)
+
+	cs := fake.NewClientset()
+	k := &k8s{home: t.TempDir(), approved: map[string]string{path: sum}}
+	k.connect = func() (kubernetes.Interface, *rest.Config, error) {
+		rc, err := k.restConfig()
+		if err != nil {
+			return nil, nil, err
+		}
+		return cs, rc, nil
+	}
+	if _, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false); err == nil || !strings.Contains(err.Error(), "changed after it was approved") {
+		t.Errorf("Mint must fail on a changed kubeconfig: %v", err)
+	}
+	if _, err := k.GC(context.Background()); err == nil || !strings.Contains(err.Error(), "changed after it was approved") {
+		t.Errorf("GC must fail on a changed kubeconfig: %v", err)
+	}
+	if n := len(cs.Actions()); n != 0 {
+		t.Errorf("no API call may happen, got %d", n)
 	}
 }

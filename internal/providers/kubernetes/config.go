@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/client-go/tools/clientcmd"
+
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers/hooks"
 )
@@ -72,6 +74,26 @@ func (k Kubeconfig) ResolvedPath(dir string) string {
 		return ""
 	}
 	return hooks.ResolveExec(k.Path, dir)
+}
+
+// Files returns the kubeconfig files the cluster loads: the resolved Path, or for an empty Path
+// the absolute files of the default loading rules ($KUBECONFIG, then ~/.kube/config). client-go
+// skips an empty $KUBECONFIG entry, so Files does too.
+func (k Kubeconfig) Files(dir string) []string {
+	if k.Path != "" {
+		return []string{k.ResolvedPath(dir)}
+	}
+	var files []string
+	for _, f := range clientcmd.NewDefaultClientConfigLoadingRules().GetLoadingPrecedence() {
+		if f == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(f); err == nil {
+			f = abs
+		}
+		files = append(files, f)
+	}
+	return files
 }
 
 // ImplicitCluster is the key of the cluster that EffectiveClusters returns when Clusters is empty.

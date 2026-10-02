@@ -32,6 +32,9 @@ type Deps struct {
 	WorkDir string
 	// HomeDir is the resolved private-home directory ("" when the home provider is disabled).
 	HomeDir string
+	// ApprovedKubeconfigs maps a gated kubeconfig file to the hex SHA-256 the operator approved.
+	// The kubernetes provider loads such a file only from bytes with that hash.
+	ApprovedKubeconfigs map[string]string
 	// SessionHookPresenter optionally renders preStart output in the launch UI.
 	SessionHookPresenter hooks.Presenter
 	// SessionHookLog receives the session-hooks provider's attribution lines.
@@ -146,10 +149,10 @@ var registry = []Registration{
 		Grants:   func(c *config.Config) string { return c.Providers.Kubernetes.Grants() },
 		Warnings: func(c *config.Config) []health.Check { return c.Providers.Kubernetes.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
-			return kubernetes.New(c.Providers.Kubernetes, d.Home)
+			return kubernetes.New(c.Providers.Kubernetes, d.Home, d.ApprovedKubeconfigs)
 		},
 		Probe: func(d Deps) providers.Provider {
-			return kubernetes.New(kubernetes.Config{}, d.Home)
+			return kubernetes.New(kubernetes.Config{}, d.Home, nil)
 		},
 	},
 	{

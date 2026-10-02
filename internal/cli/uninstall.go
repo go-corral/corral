@@ -470,7 +470,12 @@ func uninstallGCPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader
 		c.Cont(out, c.Dim+"reap them with `corral gc` once the config is fixed"+c.Reset)
 		return true
 	}
-	reapers := providers.Reapers(gcCandidates(fp.Cfg, opts.Home, opts.Host))
+	wd, err := os.Getwd()
+	if err != nil {
+		c.Message(out, report.Attention, fmt.Sprintf("cannot check: %v", err))
+		return true
+	}
+	reapers := providers.Reapers(gcCandidates(fp.Cfg, opts.Home, opts.Host, wd))
 	if code := runGC(context.Background(), reapers, gcOptions{Yes: opts.Yes, Colors: c}, in, out); code != 0 {
 		c.Message(out, report.Attention, "orphaned resources may remain; continuing with the local footprint")
 		return true

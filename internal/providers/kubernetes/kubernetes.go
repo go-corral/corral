@@ -5,10 +5,13 @@ package kubernetes
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,12 +45,17 @@ const (
 type k8s struct {
 	cfg  Config
 	home string
+	// approved maps a gated kubeconfig file (see Kubeconfig.Files) to the hex SHA-256 the operator
+	// approved.
+	approved map[string]string
 	// connect returns the API client and the rest.Config it was built from. Overridable for tests.
 	connect func() (kubernetes.Interface, *rest.Config, error)
 }
 
-func New(cfg Config, home string) spec.Provider {
-	k := &k8s{cfg: cfg, home: home}
+// New builds the provider. approved maps a kubeconfig file (from Kubeconfig.Files) to the hex
+// SHA-256 the operator approved; a file in it loads only from bytes with that hash.
+func New(cfg Config, home string, approved map[string]string) spec.Provider {
+	k := &k8s{cfg: cfg, home: home, approved: approved}
 	k.connect = k.connectHost
 	return k
 }
@@ -64,9 +72,26 @@ func (k *k8s) Available(ctx context.Context) bool {
 	return len(raw.Clusters) > 0
 }
 
+// restConfig loads the kubeconfig of the default loading rules: a gated file from the bytes whose
+// hash matched, any other files from disk. client-go merges several files only when it reads them
+// itself, so a gated file among several fails the load.
 func (k *k8s) restConfig() (*rest.Config, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
+	files := Kubeconfig{}.Files("")
+	gated := slices.IndexFunc(files, func(f string) bool { _, ok := k.approved[f]; return ok })
+	var cc clientcmd.ClientConfig
+	switch {
+	case gated >= 0 && len(files) > 1:
+		return nil, fmt.Errorf("load kubeconfig: KUBECONFIG names several files and %s is in a sandbox-writable location; set KUBECONFIG to one file", files[gated])
+	case gated >= 0:
+		raw, err := loadApproved(files[0], k.approved[files[0]])
+		if err != nil {
+			return nil, fmt.Errorf("load kubeconfig: %w", err)
+		}
+		cc = clientcmd.NewNonInteractiveClientConfig(*raw, "", &clientcmd.ConfigOverrides{}, nil)
+	default:
+		rules := clientcmd.NewDefaultClientConfigLoadingRules()
+		cc = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
+	}
 	rc, err := cc.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
@@ -75,6 +100,38 @@ func (k *k8s) restConfig() (*rest.Config, error) {
 		rc.Impersonate = rest.ImpersonationConfig{UserName: k.cfg.As}
 	}
 	return rc, nil
+}
+
+// loadApproved reads the kubeconfig once and parses it only when its hash matches sum, so a file
+// changed after the approval gate never reaches the client. An empty sum marks a file without an
+// approval for its current content.
+func loadApproved(path, sum string) (*clientcmdapi.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("unreadable: %w", err)
+	}
+	if sum == "" {
+		return nil, fmt.Errorf("%s is not approved; `corral run` asks to approve it", path)
+	}
+	got := sha256.Sum256(data)
+	if hex.EncodeToString(got[:]) != sum {
+		return nil, fmt.Errorf("%s changed after it was approved; `corral run` asks to approve it again", path)
+	}
+	raw, err := clientcmd.Load(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	// The loading rules resolve relative file references against the kubeconfig's directory.
+	for _, a := range raw.AuthInfos {
+		a.LocationOfOrigin = path
+	}
+	for _, cl := range raw.Clusters {
+		cl.LocationOfOrigin = path
+	}
+	if err := clientcmd.ResolveLocalPaths(raw); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return raw, nil
 }
 
 func (k *k8s) connectHost() (kubernetes.Interface, *rest.Config, error) {

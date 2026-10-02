@@ -148,3 +148,4 @@ The requested `tokenLifetime` defaults to `8h` and cannot exceed `24h`. A cluste
 - **The host identity cannot grant a role:** You need to already posess the permissions being assigned or a `bind` permission on the referenced Role or ClusterRole, or use `preProvisioned` mode.
 - **The namespace was not provisioned:** Create the configured `serviceAccountNamespace` and its bindings before using `preProvisioned` mode.
 - **The token expires earlier than requested:** The cluster capped the lifetime.
+- **`KUBECONFIG names several files and ... is in a sandbox-writable location`:** corral loads an approved kubeconfig only as a single file. Set `KUBECONFIG` to that one file.

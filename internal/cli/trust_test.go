@@ -541,3 +541,252 @@ func TestTrustEntriesFiltersToRepoLayers(t *testing.T) {
 		t.Errorf("unexpected entries: %+v", got)
 	}
 }
+
+// --- kubeconfigs in sandbox-writable locations ride the same gate ---
+
+// testKubeconfig is a kubeconfig with one cluster, so the kubernetes provider is available.
+const testKubeconfig = "apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: https://127.0.0.1:1\n"
+
+// kubeRepo is trustRepo with the kubernetes provider enabled and KUBECONFIG naming a file in the
+// workdir; the config file is then pre-approved, so anything the gate still stops on is the
+// kubeconfig.
+func kubeRepo(t *testing.T) (home, proj, kubeconfig string) {
+	t.Helper()
+	home, proj = trustRepo(t, "providers:\n  home:\n    enabled: false\n  kubernetes:\n    enabled: true\n")
+	kubeconfig = filepath.Join(proj, "kube", "dev.yml")
+	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeconfig, []byte(testKubeconfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, sources, err := config.Load(config.LoadOptions{Home: home, ProjectDir: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.NewStore(trust.DefaultDir(home)).Approve(trustEntries(sources)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", kubeconfig)
+	return home, proj, kubeconfig
+}
+
+// An unapproved kubeconfig in the workdir stops the launch before the provider mints,
+// attributed to the default loading rules.
+func TestRunTrustBlocksUnapprovedKubeconfig(t *testing.T) {
+	home, proj, kubeconfig := kubeRepo(t)
+	failIfMint(t)
+	stubUpdateCheck(t)
+
+	code, stderr := runCmd(t, "--home", home, "--project", proj)
+	if code == 0 {
+		t.Fatalf("an unapproved kubeconfig on a non-tty must fail closed")
+	}
+	if !strings.Contains(stderr, "unapproved kubeconfig — review, then approve:") {
+		t.Errorf("expected the kubeconfig pending header:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, kubeconfig) || !strings.Contains(stderr, "\n                    providers.kubernetes (default kubeconfig loading rules)\n") {
+		t.Errorf("the pending kubeconfig must be listed and attributed:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, trustNonInteractiveMsg[:40]) {
+		t.Errorf("expected the non-interactive explanation:\n%s", stderr)
+	}
+}
+
+// An edited approved kubeconfig re-arms the gate and is listed as changed.
+func TestRunTrustKubeconfigChangeReprompts(t *testing.T) {
+	home, proj, kubeconfig := kubeRepo(t)
+	stubUpdateCheck(t)
+
+	prompts := 0
+	setTrustPrompt(t, func() (bool, bool) { prompts++; return true, true })
+	reached := false
+	stopAtMint(t, &reached)
+	_, _ = runCmd(t, "--home", home, "--project", proj)
+	if prompts != 1 || !reached {
+		t.Fatalf("first run: prompts=%d reached=%v, want 1/true", prompts, reached)
+	}
+
+	if err := os.WriteFile(kubeconfig, []byte(testKubeconfig+"users: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setTrustPrompt(t, func() (bool, bool) { prompts++; return true, false })
+	failIfMint(t)
+	_, stderr := runCmd(t, "--home", home, "--project", proj)
+	if prompts != 2 {
+		t.Fatalf("an edited kubeconfig must re-prompt; prompts=%d, want 2", prompts)
+	}
+	if !strings.Contains(stderr, "changed") || !strings.Contains(stderr, kubeconfig) {
+		t.Errorf("the edited kubeconfig must be listed as changed:\n%s", stderr)
+	}
+}
+
+// --yes never approves a kubeconfig.
+func TestRunTrustYesRefusesUnapprovedKubeconfig(t *testing.T) {
+	home, proj, _ := kubeRepo(t)
+	failIfMint(t)
+	stubUpdateCheck(t)
+
+	code, stderr := runCmd(t, "--yes", "--home", home, "--project", proj)
+	if code == 0 {
+		t.Fatalf("--yes must not approve a kubeconfig; expected fail-closed")
+	}
+	if !strings.Contains(stderr, trustYesRefusalMsg) {
+		t.Errorf("expected the --yes refusal explanation:\n%s", stderr)
+	}
+}
+
+// The provider receives the hash the gate checked: a change after the gate fails the load.
+func TestRunTrustKubeconfigChangedAfterGateFailsLoad(t *testing.T) {
+	home, proj, kubeconfig := kubeRepo(t)
+	stubUpdateCheck(t)
+	setTrustPrompt(t, func() (bool, bool) { return true, true })
+	orig := resolveProviders
+	t.Cleanup(func() { resolveProviders = orig })
+	resolveProviders = func(ctx context.Context, sess providers.Session, active []providers.Active) (*providers.Resolved, error) {
+		if err := os.WriteFile(kubeconfig, []byte(testKubeconfig+"users: []\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return providers.Resolve(ctx, sess, active)
+	}
+
+	code, stderr := runCmd(t, "--home", home, "--project", proj)
+	if code == 0 {
+		t.Fatalf("a kubeconfig changed after the gate must fail the launch")
+	}
+	if !strings.Contains(stderr, kubeconfig+" changed after it was approved") {
+		t.Errorf("expected the hash mismatch from the provider:\n%s", stderr)
+	}
+}
+
+// A workdir symlink to a kubeconfig outside the writable locations is gated: retargeting it after
+// the gate fails the load.
+func TestRunTrustKubeconfigSymlinkSwapFailsLoad(t *testing.T) {
+	home, proj, kubeconfig := kubeRepo(t)
+	stubUpdateCheck(t)
+	outside := t.TempDir()
+	approved, swapped := filepath.Join(outside, "approved.yml"), filepath.Join(outside, "swapped.yml")
+	for _, p := range []string{approved, swapped} {
+		if err := os.WriteFile(p, []byte(testKubeconfig+"# "+filepath.Base(p)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relink := func(target string) {
+		t.Helper()
+		if err := os.Remove(kubeconfig); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, kubeconfig); err != nil {
+			t.Fatal(err)
+		}
+	}
+	relink(approved)
+	prompts := 0
+	setTrustPrompt(t, func() (bool, bool) { prompts++; return true, true })
+	orig := resolveProviders
+	t.Cleanup(func() { resolveProviders = orig })
+	resolveProviders = func(ctx context.Context, sess providers.Session, active []providers.Active) (*providers.Resolved, error) {
+		relink(swapped)
+		return providers.Resolve(ctx, sess, active)
+	}
+
+	code, stderr := runCmd(t, "--home", home, "--project", proj)
+	if prompts != 1 {
+		t.Errorf("the workdir symlink must be gated; prompts=%d, want 1", prompts)
+	}
+	if code == 0 || !strings.Contains(stderr, kubeconfig+" changed after it was approved") {
+		t.Errorf("a retargeted symlink must fail the load (exit %d):\n%s", code, stderr)
+	}
+}
+
+// collectKubeconfigs gates a file of the default loading rules when the kubernetes provider is
+// enabled and the file, the symlink at its path, or the symlink target is in a sandbox-writable
+// location.
+func TestCollectKubeconfigs(t *testing.T) {
+	work, rw, priv, audit, home := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Chdir(work)
+	write := func(p string) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("kind: Config\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	link := func(target, p string) string {
+		t.Helper()
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	workFile := write(filepath.Join(work, "kube", "dev.yml"))
+	hostFile := write(filepath.Join(home, ".kube", "prod"))
+	link(filepath.Join(home, ".kube"), filepath.Join(work, "kdir"))
+	list := string(filepath.ListSeparator)
+
+	tests := []struct {
+		name     string
+		env      string
+		disabled bool
+		want     string
+	}{
+		{"workdir file", workFile, false, workFile},
+		{"relative workdir file", "kube/dev.yml", false, workFile},
+		{"paths.rw file", write(filepath.Join(rw, "a.yml")), false, filepath.Join(rw, "a.yml")},
+		{"private home file", write(filepath.Join(priv, ".kube", "config")), false, filepath.Join(priv, ".kube", "config")},
+		{"audit-log directory file", write(filepath.Join(audit, "k.yml")), false, filepath.Join(audit, "k.yml")},
+		{"host kubeconfig", hostFile, false, ""},
+		{"disabled provider", workFile, true, ""},
+		{"workdir symlink to outside", link(hostFile, filepath.Join(work, "out.yml")), false, filepath.Join(work, "out.yml")},
+		{"workdir directory symlink to outside", filepath.Join(work, "kdir", "prod"), false, filepath.Join(work, "kdir", "prod")},
+		{"outside symlink into workdir", link(workFile, filepath.Join(home, "in.yml")), false, filepath.Join(home, "in.yml")},
+		{"several files", hostFile + list + workFile, false, workFile},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KUBECONFIG", tt.env)
+			cfg := &config.Config{}
+			cfg.Providers.Paths.RW = []string{rw}
+			cfg.Policy.Audit.Path = filepath.Join(audit, "audit.jsonl")
+			cfg.Providers.Kubernetes.Enabled = !tt.disabled
+			got := collectKubeconfigs(cfg, work, priv)
+			if tt.want == "" {
+				if len(got.entries) != 0 || len(got.attr) != 0 {
+					t.Fatalf("want no entry, got %+v", got)
+				}
+				return
+			}
+			if len(got.entries) != 1 || got.entries[0].Path != tt.want || len(got.entries[0].SHA256) != 64 {
+				t.Fatalf("entries = %+v, want one hashed %s", got.entries, tt.want)
+			}
+			if got.attr[tt.want] != "providers.kubernetes (default kubeconfig loading rules)" {
+				t.Errorf("attr = %q", got.attr[tt.want])
+			}
+			if got.approved()[tt.want] != got.entries[0].SHA256 {
+				t.Errorf("approved() = %v, want the entry hash", got.approved())
+			}
+		})
+	}
+}
+
+// A gated kubeconfig corral cannot read gets no entry, and its approved hash matches no content.
+func TestCollectKubeconfigsUnreadable(t *testing.T) {
+	work := t.TempDir()
+	missing := filepath.Join(work, "missing.yml")
+	t.Setenv("KUBECONFIG", missing)
+	cfg := &config.Config{}
+	cfg.Providers.Kubernetes.Enabled = true
+	got := collectKubeconfigs(cfg, work, "")
+	if len(got.entries) != 0 {
+		t.Fatalf("want no entry, got %+v", got.entries)
+	}
+	if got.unreadable[missing] == "" {
+		t.Error("an unreadable kubeconfig must be recorded for the read-only views")
+	}
+	if sum, ok := got.approved()[missing]; !ok || sum != "" {
+		t.Errorf("approved() = %v, want %s mapped to \"\"", got.approved(), missing)
+	}
+}
