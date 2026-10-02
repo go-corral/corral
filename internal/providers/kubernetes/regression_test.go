@@ -124,9 +124,9 @@ func TestK8sBuildKubeconfigCAFileReadError(t *testing.T) {
 		},
 	}
 
-	_, err := buildKubeconfig(rc, "default", "fake-token")
+	_, err := kubeCluster(rc)
 	if err == nil {
-		t.Fatal("buildKubeconfig must fail closed when CAFile is unreadable")
+		t.Fatal("kubeCluster must fail closed when CAFile is unreadable")
 	}
 	if !strings.Contains(err.Error(), "read cluster CA") {
 		t.Errorf("error should mention 'read cluster CA', got %v", err)
@@ -144,7 +144,11 @@ func TestK8sBuildKubeconfigInsecureCluster(t *testing.T) {
 		},
 	}
 
-	kubeconfig, err := buildKubeconfig(rc, "default", "fake-token")
+	cluster, err := kubeCluster(rc)
+	if err != nil {
+		t.Fatalf("kubeCluster insecure: %v", err)
+	}
+	kubeconfig, err := buildKubeconfig([]kubeContext{{name: "current", cluster: cluster, namespace: "default", token: "fake-token"}}, "current")
 	if err != nil {
 		t.Fatalf("buildKubeconfig insecure: %v", err)
 	}
@@ -154,7 +158,7 @@ func TestK8sBuildKubeconfigInsecureCluster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse kubeconfig: %v", err)
 	}
-	cl := cfg.Clusters["corral"]
+	cl := cfg.Clusters["current"]
 	if cl == nil || !cl.InsecureSkipTLSVerify {
 		t.Errorf("insecure cluster must set InsecureSkipTLSVerify: %+v", cl)
 	}

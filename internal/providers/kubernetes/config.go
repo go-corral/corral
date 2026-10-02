@@ -151,6 +151,26 @@ func (k Config) EffectiveClusters() []ResolvedCluster {
 	return out
 }
 
+// AnyClusterEnabled reports whether at least one effective cluster is enabled.
+func (k Config) AnyClusterEnabled() bool {
+	for _, c := range k.EffectiveClusters() {
+		if c.Config.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// EnabledClustersOptional reports whether every enabled cluster is optional.
+func (k Config) EnabledClustersOptional() bool {
+	for _, c := range k.EffectiveClusters() {
+		if c.Config.Enabled && !c.Config.Optional {
+			return false
+		}
+	}
+	return true
+}
+
 // Permission is one RBAC grant. Exactly one scope (clusterWide XOR namespaceSelector) and exactly
 // one role (clusterRole XOR role). clusterWide requires a ClusterRole.
 type Permission struct {

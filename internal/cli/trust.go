@@ -90,7 +90,7 @@ func collectHookExecs(cfg *config.Config, workdir string) hookExecs {
 	return res
 }
 
-// kubeconfigs is the trust gate's view of the kubeconfigs that the kubernetes provider loads from
+// kubeconfigs is the trust gate's view of the kubeconfigs that enabled clusters load from
 // sandbox-writable locations: hashed entries for the readable files, a path → config-path
 // attribution map covering every such file, and the read failures for the read-only views to
 // explain. The launcher loads them on the host, where a kubeconfig can name an exec credential
@@ -101,12 +101,13 @@ type kubeconfigs struct {
 	unreadable map[string]string
 }
 
-// collectKubeconfigs gates the kubeconfigs of the enabled clusters: the implicit cluster when the
-// kubernetes provider is enabled.
+// collectKubeconfigs gates the kubeconfigs of the enabled clusters.
 func collectKubeconfigs(cfg *config.Config, workdir, privHome string) kubeconfigs {
 	var enabled []kubernetes.ResolvedCluster
-	if cfg.Providers.Kubernetes.Enabled {
-		enabled = append(enabled, kubernetes.ResolvedCluster{Key: kubernetes.ImplicitCluster, Implicit: true})
+	for _, c := range cfg.Providers.Kubernetes.EffectiveClusters() {
+		if c.Config.Enabled {
+			enabled = append(enabled, c)
+		}
 	}
 	return gateKubeconfigs(cfg, enabled, workdir, privHome)
 }
@@ -132,9 +133,15 @@ func gateKubeconfigs(cfg *config.Config, clusters []kubernetes.ResolvedCluster, 
 	inWritable := func(p string) bool {
 		return slices.ContainsFunc(writable, func(d string) bool { return pathutil.AtOrUnder(p, d) })
 	}
-	const label = "providers.kubernetes (default kubeconfig loading rules)"
 	res := kubeconfigs{attr: map[string]string{}, unreadable: map[string]string{}}
 	for _, c := range clusters {
+		label := "providers.kubernetes.clusters." + c.Key + ".kubeconfig.path"
+		if c.Kubeconfig.Path == "" {
+			label = "providers.kubernetes.clusters." + c.Key + " (default kubeconfig loading rules)"
+			if c.Implicit {
+				label = "providers.kubernetes (default kubeconfig loading rules)"
+			}
+		}
 		for _, path := range c.Kubeconfig.Files(workdir) {
 			link := filepath.Join(pathutil.Resolve(filepath.Dir(path)), filepath.Base(path))
 			if !inWritable(path) && !inWritable(link) && !inWritable(pathutil.Resolve(path)) {
