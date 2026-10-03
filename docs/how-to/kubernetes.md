@@ -178,6 +178,10 @@ providers:
 
 Set `default: true` on one cluster. The session kubeconfig then sets `current-context` to that cluster, and `kubectl` uses it without `--context`. Other clusters need `kubectl --context <key>`.
 
+### Clean up with `corral gc`
+
+`corral gc` checks every configured cluster, enabled or not. When it cannot load or reach a cluster, it reports an error, checks the other clusters, and exits with a non-zero status.
+
 ## Verify the session
 
 Launch a new session, then run:
