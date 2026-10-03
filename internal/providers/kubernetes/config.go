@@ -151,6 +151,32 @@ func (k Config) EffectiveClusters() []ResolvedCluster {
 	return out
 }
 
+// AnyClusterEnabled reports whether at least one effective cluster is enabled.
+func (k Config) AnyClusterEnabled() bool {
+	for _, c := range k.EffectiveClusters() {
+		if c.Config.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// EnabledClustersOptional reports whether every enabled cluster is optional.
+func (k Config) EnabledClustersOptional() bool {
+	for _, c := range k.EffectiveClusters() {
+		if c.Config.Enabled && !c.Config.Optional {
+			return false
+		}
+	}
+	return true
+}
+
+// GCClusters returns the clusters that `corral gc` checks: every declared cluster, enabled or
+// not, or the ImplicitCluster when it is enabled.
+func (k Config) GCClusters() []ResolvedCluster {
+	return slices.DeleteFunc(k.EffectiveClusters(), func(c ResolvedCluster) bool { return c.Implicit && !c.Config.Enabled })
+}
+
 // Permission is one RBAC grant. Exactly one scope (clusterWide XOR namespaceSelector) and exactly
 // one role (clusterRole XOR role). clusterWide requires a ClusterRole.
 type Permission struct {

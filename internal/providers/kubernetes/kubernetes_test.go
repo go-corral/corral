@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,14 +34,57 @@ import (
 	"github.com/go-corral/corral/internal/providers/spec"
 )
 
-// fakeK8s builds a k8s provider backed by a fake clientset seeded with objs. It
-// installs two reactors the bare fake lacks: a token-subresource reactor (the
-// default tracker returns an empty TokenRequest, so resp.Status.Token would be ""),
-// and a label-filtering List reactor (the fake's tracker filters List by namespace
-// only, not by label selector — so without this, matchNamespaces/GC would see
-// unmanaged objects and the tests would assert against wrong behavior).
+// fakeK8s builds a k8s provider whose every cluster is one fake clientset seeded with objs. It
+// enables cfg, as the registry builds the provider only then.
 func fakeK8s(t *testing.T, cfg Config, objs ...runtime.Object) (*k8s, *fake.Clientset) {
 	t.Helper()
+	cfg.Enabled = true
+	cs := fakeClientset(objs...)
+	k := &k8s{
+		cfg:  cfg,
+		home: t.TempDir(),
+		connect: func(ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+			return cs, &rest.Config{
+				Host:            "https://api.example:6443",
+				TLSClientConfig: rest.TLSClientConfig{CAData: []byte("FAKE-CA-DATA")},
+			}, nil
+		},
+	}
+	return k, cs
+}
+
+// fakeCluster is one cluster of multiK8s: a fake clientset and its API server, or a load error.
+type fakeCluster struct {
+	cs   *fake.Clientset
+	host string
+	err  error
+}
+
+// multiK8s builds a k8s provider that connects each cluster key to its fakeCluster.
+func multiK8s(t *testing.T, cfg Config, clusters map[string]fakeCluster) *k8s {
+	t.Helper()
+	return &k8s{
+		cfg:  cfg,
+		home: t.TempDir(),
+		connect: func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+			fc, ok := clusters[c.Key]
+			if !ok {
+				t.Fatalf("no fake cluster %q", c.Key)
+			}
+			if fc.err != nil {
+				return nil, nil, fc.err
+			}
+			return fc.cs, &rest.Config{Host: fc.host, TLSClientConfig: rest.TLSClientConfig{CAData: []byte("CA-" + c.Key)}}, nil
+		},
+	}
+}
+
+// fakeClientset builds a fake clientset seeded with objs. It installs two reactors the bare
+// fake lacks: a token-subresource reactor (the default tracker returns an empty TokenRequest, so
+// resp.Status.Token would be ""), and a label-filtering List reactor (the fake's tracker filters
+// List by namespace only, not by label selector — so without this, matchNamespaces/GC would see
+// unmanaged objects and the tests would assert against wrong behavior).
+func fakeClientset(objs ...runtime.Object) *fake.Clientset {
 	cs := fake.NewClientset(objs...)
 
 	cs.PrependReactor("list", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
@@ -81,18 +126,7 @@ func fakeK8s(t *testing.T, cfg Config, objs ...runtime.Object) (*k8s, *fake.Clie
 		}
 		return true, &authnv1.TokenRequest{Status: authnv1.TokenRequestStatus{Token: "fake-bearer-token"}}, nil
 	})
-
-	k := &k8s{
-		cfg:  cfg,
-		home: t.TempDir(),
-		connect: func() (kubernetes.Interface, *rest.Config, error) {
-			return cs, &rest.Config{
-				Host:            "https://api.example:6443",
-				TLSClientConfig: rest.TLSClientConfig{CAData: []byte("FAKE-CA-DATA")},
-			}, nil
-		},
-	}
-	return k, cs
+	return cs
 }
 
 // spyTokenRequests records the TokenRequest the provider sends (the fakeK8s token reactor
@@ -230,12 +264,15 @@ func TestKubernetesMintClusterWide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kubeconfig not parseable: %v", err)
 	}
-	if ai := kc.AuthInfos["corral"]; ai == nil || ai.Token != "fake-bearer-token" {
+	if ai := kc.AuthInfos["current"]; ai == nil || ai.Token != "fake-bearer-token" {
 		t.Errorf("kubeconfig must carry the minted bearer token, got %+v", ai)
 	}
-	cl := kc.Clusters["corral"]
+	cl := kc.Clusters["current"]
 	if cl == nil || cl.Server != "https://api.example:6443" || string(cl.CertificateAuthorityData) != "FAKE-CA-DATA" {
 		t.Errorf("kubeconfig cluster must embed server + CA, got %+v", cl)
+	}
+	if kc.CurrentContext != ImplicitCluster {
+		t.Errorf("the implicit cluster's context must be the current context, got %q", kc.CurrentContext)
 	}
 
 	// Cleanup tears down the SA, the CRB, and the kubeconfig file (LIFO on exit).
@@ -337,10 +374,10 @@ func TestKubernetesMintPreProvisioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kubeconfig not parseable: %v", err)
 	}
-	if ai := kc.AuthInfos["corral"]; ai == nil || ai.Token != "fake-bearer-token" {
+	if ai := kc.AuthInfos["current"]; ai == nil || ai.Token != "fake-bearer-token" {
 		t.Errorf("kubeconfig must carry the minted bearer token, got %+v", ai)
 	}
-	if ctxt := kc.Contexts["corral"]; ctxt == nil || ctxt.Namespace != "corral-team-a" {
+	if ctxt := kc.Contexts["current"]; ctxt == nil || ctxt.Namespace != "corral-team-a" {
 		t.Errorf("kubeconfig context should default to the pre-provisioned namespace, got %+v", ctxt)
 	}
 
@@ -624,6 +661,7 @@ func TestKubernetesMintBindingRoleRefReplacement(t *testing.T) {
 
 	// First session: cluster-wide bind to the `view` ClusterRole.
 	viewCfg := Config{
+		Enabled:                 true,
 		ServiceAccountNamespace: "corral",
 		Permissions:             []Permission{{ClusterWide: true, ClusterRole: "view"}},
 	}
@@ -768,7 +806,7 @@ func TestKubernetesReaperGCAndReap(t *testing.T) {
 		t.Fatalf("want 3 managed orphans (SA + CRB + RB), got %d: %+v", len(orphans), orphans)
 	}
 	for _, o := range orphans {
-		if o.Provider != "kubernetes" || o.ID == "" || o.Describe == "" {
+		if o.Provider != "kubernetes" || !strings.HasPrefix(o.ID, "current|") || o.Describe == "" || strings.HasPrefix(o.Describe, "cluster ") {
 			t.Errorf("malformed orphan: %+v", o)
 		}
 	}
@@ -817,7 +855,7 @@ func TestKubernetesReapRemovesStaleKubeconfig(t *testing.T) {
 	// Approve the dead session's objects only — the live session is left running.
 	var approved []spec.Orphan
 	for _, o := range orphans {
-		if _, session, err := decodeResource(o.ID); err == nil && session == dead {
+		if _, _, session, err := decodeResource(o.ID); err == nil && session == dead {
 			approved = append(approved, o)
 		}
 	}
@@ -847,7 +885,7 @@ func TestKubernetesReapRemovesStaleKubeconfig(t *testing.T) {
 }
 
 func TestKubernetesImplementsReaper(t *testing.T) {
-	if _, ok := New(Config{}, t.TempDir(), nil).(spec.Reaper); !ok {
+	if _, ok := New(Config{}, t.TempDir(), "", nil).(spec.Reaper); !ok {
 		t.Error("kubernetes provider must implement Reaper so `corral gc` can collect its orphans")
 	}
 }
@@ -855,7 +893,7 @@ func TestKubernetesImplementsReaper(t *testing.T) {
 func TestKubernetesAvailable(t *testing.T) {
 	// No discoverable kubeconfig → unavailable (skip safely, never error).
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
-	if New(Config{}, t.TempDir(), nil).Available(context.Background()) {
+	if New(Config{}, t.TempDir(), "", nil).Available(context.Background()) {
 		t.Error("no kubeconfig → provider must be unavailable")
 	}
 	// A kubeconfig that defines a cluster → available.
@@ -871,7 +909,7 @@ func TestKubernetesAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("KUBECONFIG", path)
-	if !New(Config{}, dir, nil).Available(context.Background()) {
+	if !New(Config{}, dir, "", nil).Available(context.Background()) {
 		t.Error("a kubeconfig with a cluster → provider must be available")
 	}
 }
@@ -908,7 +946,350 @@ func TestKubernetesMintRejectsSideEffectFree(t *testing.T) {
 	}
 }
 
-// --- loading a gated kubeconfig ---
+// --- several clusters ---
+
+// mintedKubeconfig parses the kubeconfig a Contribution mounts.
+func mintedKubeconfig(t *testing.T, c *spec.Contribution) *clientcmdapi.Config {
+	t.Helper()
+	if len(c.Mounts) != 1 || c.Env["KUBECONFIG"] != c.Mounts[0].Src {
+		t.Fatalf("want one kubeconfig mount that KUBECONFIG points at, got %+v %v", c.Mounts, c.Env)
+	}
+	data, err := os.ReadFile(c.Mounts[0].Src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, err := clientcmd.Load(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kc
+}
+
+func contextNames(kc *clientcmdapi.Config) []string {
+	return slices.Sorted(maps.Keys(kc.Contexts))
+}
+
+// sessionSAs lists the session ServiceAccounts on cs.
+func sessionSAs(t *testing.T, cs *fake.Clientset) []string {
+	t.Helper()
+	list, err := cs.CoreV1().ServiceAccounts(metav1.NamespaceAll).List(context.Background(), metav1.ListOptions{LabelSelector: labelManaged + "=true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, sa := range list.Items {
+		out = append(out, sa.Namespace+"/"+sa.Name)
+	}
+	return out
+}
+
+func failToken(cs *fake.Clientset) {
+	cs.PrependReactor("create", "serviceaccounts", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		if a.GetSubresource() == "token" {
+			return true, nil, errors.New("token minting denied")
+		}
+		return false, nil, nil
+	})
+}
+
+func TestKubernetesMintSameServerFails(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"admin": {Kubeconfig: Kubeconfig{Context: "admin"}},
+		"dev":   {Kubeconfig: Kubeconfig{Context: "dev"}},
+	}}
+	admin, dev := fakeClientset(), fakeClientset()
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"admin": {cs: admin, host: "https://api.example:6443"},
+		"dev":   {cs: dev, host: "HTTPS://API.Example:6443/"},
+	})
+	_, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err == nil {
+		t.Fatal("two clusters on one API server must fail the launch")
+	}
+	for _, want := range []string{"admin", "dev", "api.example:6443"} {
+		if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(want)) {
+			t.Errorf("the error must name %q: %v", want, err)
+		}
+	}
+	if n := len(admin.Actions()) + len(dev.Actions()); n != 0 {
+		t.Errorf("no cluster may be touched, got %d API calls", n)
+	}
+}
+
+func TestKubernetesMintContextPerCluster(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		clusters    map[string]Cluster
+		wantCurrent string
+		wantKeys    []string
+	}{
+		{"default cluster minted", map[string]Cluster{
+			"cluster01": {Default: true, Kubeconfig: Kubeconfig{Context: "c1"}},
+			"cluster02": {Kubeconfig: Kubeconfig{Context: "c2"}},
+		}, "cluster01", []string{"cluster01", "cluster02"}},
+		{"no default cluster", map[string]Cluster{
+			"cluster01": {Kubeconfig: Kubeconfig{Context: "c1"}},
+			"cluster02": {Kubeconfig: Kubeconfig{Context: "c2"}},
+		}, "", []string{"cluster01", "cluster02"}},
+		{"default cluster disabled", map[string]Cluster{
+			"cluster01": {Enabled: new(false), Default: true, Kubeconfig: Kubeconfig{Context: "c1"}},
+			"cluster02": {Kubeconfig: Kubeconfig{Context: "c2"}},
+		}, "", []string{"cluster02"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakes := map[string]fakeCluster{}
+			for _, key := range tc.wantKeys {
+				fakes[key] = fakeCluster{cs: fakeClientset(), host: "https://" + key + ":6443"}
+			}
+			k := multiK8s(t, Config{Enabled: true, Clusters: tc.clusters}, fakes)
+			ctx := context.Background()
+			c, err := k.Mint(ctx, spec.Session{User: "alice", ID: "s1"}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kc := mintedKubeconfig(t, c)
+			if got := contextNames(kc); !slices.Equal(got, tc.wantKeys) {
+				t.Errorf("contexts = %v, want %v", got, tc.wantKeys)
+			}
+			if kc.CurrentContext != tc.wantCurrent {
+				t.Errorf("current-context = %q, want %q", kc.CurrentContext, tc.wantCurrent)
+			}
+			for _, key := range tc.wantKeys {
+				kctx := kc.Contexts[key]
+				cl, ai := kc.Clusters[kctx.Cluster], kc.AuthInfos[kctx.AuthInfo]
+				if cl.Server != "https://"+key+":6443" || string(cl.CertificateAuthorityData) != "CA-"+key || ai.Token != "fake-bearer-token" || kctx.Namespace != "corral" {
+					t.Errorf("context %s: server %q CA %q token %q namespace %q", key, cl.Server, cl.CertificateAuthorityData, ai.Token, kctx.Namespace)
+				}
+				if got := sessionSAs(t, fakes[key].cs); !slices.Equal(got, []string{"corral/corral-alice-s1"}) {
+					t.Errorf("cluster %s: session SAs = %v", key, got)
+				}
+			}
+			if len(c.Status) != len(tc.wantKeys) {
+				t.Errorf("want one status line per cluster, got %v", c.Status)
+			}
+
+			if err := c.Cleanup(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range tc.wantKeys {
+				if got := sessionSAs(t, fakes[key].cs); len(got) != 0 {
+					t.Errorf("cleanup must tear down cluster %s, left %v", key, got)
+				}
+			}
+			if _, err := os.Stat(c.Mounts[0].Src); !os.IsNotExist(err) {
+				t.Errorf("cleanup must remove the kubeconfig, got %v", err)
+			}
+		})
+	}
+}
+
+func TestKubernetesMintOptionalClusterUnreachable(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Optional: new(true), Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {cs: fakeClientset(), host: "https://prod:6443"},
+		"staging": {err: errors.New("dial tcp: connection refused")},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := contextNames(mintedKubeconfig(t, c)); !slices.Equal(got, []string{"prod"}) {
+		t.Errorf("contexts = %v, want [prod]", got)
+	}
+	if w := strings.Join(c.Warnings, "\n"); !strings.Contains(w, "staging") || !strings.Contains(w, "connection refused") {
+		t.Errorf("a warning must name staging and the cause: %q", w)
+	}
+}
+
+func TestKubernetesMintRequiredClusterLoadFailsFirst(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"a": {Kubeconfig: Kubeconfig{Context: "a"}},
+		"b": {Kubeconfig: Kubeconfig{Context: "b"}},
+	}}
+	a := fakeClientset()
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"a": {cs: a, host: "https://a:6443"},
+		"b": {err: errors.New("context was not found")},
+	})
+	_, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err == nil || !strings.Contains(err.Error(), "cluster b:") {
+		t.Fatalf("a required cluster that fails to load must fail the launch, naming it: %v", err)
+	}
+	if n := len(a.Actions()); n != 0 {
+		t.Errorf("no cluster may mint before every cluster loaded, got %d API calls on a", n)
+	}
+}
+
+func TestKubernetesMintRequiredClusterFailsAfterAnother(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"cluster01": {Kubeconfig: Kubeconfig{Context: "c1"}},
+		"cluster02": {Kubeconfig: Kubeconfig{Context: "c2"}},
+	}}
+	cs1, cs2 := fakeClientset(), fakeClientset()
+	failToken(cs2)
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"cluster01": {cs: cs1, host: "https://c1:6443"},
+		"cluster02": {cs: cs2, host: "https://c2:6443"},
+	})
+	ctx := context.Background()
+	_, err := k.Mint(ctx, spec.Session{User: "alice", ID: "s1"}, false)
+	if err == nil || !strings.Contains(err.Error(), "cluster cluster02:") {
+		t.Fatalf("the launch must fail, naming cluster02: %v", err)
+	}
+	for key, cs := range map[string]*fake.Clientset{"cluster01": cs1, "cluster02": cs2} {
+		if got := sessionSAs(t, cs); len(got) != 0 {
+			t.Errorf("cluster %s: ServiceAccount not rolled back: %v", key, got)
+		}
+		if crbs, _ := cs.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{}); len(crbs.Items) != 0 {
+			t.Errorf("cluster %s: ClusterRoleBinding not rolled back: %d", key, len(crbs.Items))
+		}
+	}
+	if _, err := os.Stat(kubeconfigPathFor(k.home, "s1")); !os.IsNotExist(err) {
+		t.Errorf("no session kubeconfig may remain, got %v", err)
+	}
+}
+
+func TestKubernetesMintOptionalClusterFailsRollsBackIt(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"cluster01": {Kubeconfig: Kubeconfig{Context: "c1"}},
+		"cluster02": {Optional: new(true), Kubeconfig: Kubeconfig{Context: "c2"}},
+	}}
+	cs1, cs2 := fakeClientset(), fakeClientset()
+	failToken(cs2)
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"cluster01": {cs: cs1, host: "https://c1:6443"},
+		"cluster02": {cs: cs2, host: "https://c2:6443"},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionSAs(t, cs2); len(got) != 0 {
+		t.Errorf("the failed optional cluster must be rolled back, left %v", got)
+	}
+	if got := sessionSAs(t, cs1); len(got) != 1 {
+		t.Errorf("cluster01 must keep its identity, got %v", got)
+	}
+	if got := contextNames(mintedKubeconfig(t, c)); !slices.Equal(got, []string{"cluster01"}) {
+		t.Errorf("contexts = %v, want [cluster01]", got)
+	}
+	if w := strings.Join(c.Warnings, "\n"); !strings.Contains(w, "cluster02") || !strings.Contains(w, "token minting denied") {
+		t.Errorf("a warning must name cluster02 and the cause: %q", w)
+	}
+}
+
+func TestKubernetesMintOptionalDefaultSkipped(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Default: true, Optional: new(true), Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {err: errors.New("unreachable")},
+		"staging": {cs: fakeClientset(), host: "https://staging:6443"},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc := mintedKubeconfig(t, c)
+	if got := contextNames(kc); !slices.Equal(got, []string{"staging"}) || kc.CurrentContext != "" {
+		t.Errorf("want only context staging and no current-context, got %v current %q", got, kc.CurrentContext)
+	}
+	if w := strings.Join(c.Warnings, "\n"); !strings.Contains(w, "prod") {
+		t.Errorf("a warning must name prod: %q", w)
+	}
+}
+
+func TestKubernetesMintEveryClusterSkipped(t *testing.T) {
+	cfg := Config{Enabled: true, Optional: true, Clusters: map[string]Cluster{
+		"a": {Kubeconfig: Kubeconfig{Context: "a"}},
+		"b": {Kubeconfig: Kubeconfig{Context: "b"}},
+	}}
+	b := fakeClientset()
+	failToken(b)
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"a": {err: errors.New("unreachable")},
+		"b": {cs: b, host: "https://b:6443"},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Mounts) != 0 || len(c.Env) != 0 || c.Cleanup != nil {
+		t.Errorf("no cluster minted: want no mount, no KUBECONFIG, no cleanup, got %+v", c)
+	}
+	if w := strings.Join(c.Warnings, "\n"); !strings.Contains(w, "cluster a ") || !strings.Contains(w, "cluster b ") {
+		t.Errorf("a warning must name each cluster: %q", w)
+	}
+	if _, err := os.Stat(kubeconfigPathFor(k.home, "s1")); !os.IsNotExist(err) {
+		t.Errorf("no session kubeconfig may be written, got %v", err)
+	}
+}
+
+func TestKubernetesMintNoteTwoClusters(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"cluster01": {Default: true, Kubeconfig: Kubeconfig{Context: "c1"}},
+		"cluster02": {Mode: ModePreProvisioned, ServiceAccountNamespace: "corral-team-a", Kubeconfig: Kubeconfig{Context: "c2"}},
+	}}
+	cs2 := fakeClientset(ns("corral-team-a"))
+	stampSecretUID(t, cs2, "uid-2")
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"cluster01": {cs: fakeClientset(), host: "https://c1:6443"},
+		"cluster02": {cs: cs2, host: "https://c2:6443"},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.AgentNotes) != 1 {
+		t.Fatalf("want one agent note, got %v", c.AgentNotes)
+	}
+	lines := strings.Split(c.AgentNotes[0], "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want an opening line and one line per cluster, got %q", c.AgentNotes[0])
+	}
+	for i, want := range [][]string{
+		{"KUBECONFIG", "context `cluster01`"},
+		{"`cluster01` (default)", "https://c1:6443", "corral/corral-alice-s1", "8h", "ClusterRole view cluster-wide"},
+		{"`cluster02`:", "https://c2:6443", "corral-team-a/corral-alice-s1", "pre-provisioned by the cluster admin", "kubectl --context cluster02 auth can-i --list"},
+	} {
+		for _, w := range want {
+			if !strings.Contains(lines[i], w) {
+				t.Errorf("note line %d should mention %q: %q", i, w, lines[i])
+			}
+		}
+	}
+	if !strings.HasPrefix(c.Status[0], "cluster cluster01: ") || !strings.HasPrefix(c.Status[1], "cluster cluster02: ") {
+		t.Errorf("each status line must name its cluster: %v", c.Status)
+	}
+}
+
+func TestKubernetesMintNoteWithoutDefault(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"cluster01": {Kubeconfig: Kubeconfig{Context: "c1"}},
+		"cluster02": {Kubeconfig: Kubeconfig{Context: "c2"}},
+	}}
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"cluster01": {cs: fakeClientset(), host: "https://c1:6443"},
+		"cluster02": {cs: fakeClientset(), host: "https://c2:6443"},
+	})
+	c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening, _, _ := strings.Cut(c.AgentNotes[0], "\n")
+	if !strings.Contains(opening, "no current context") || !strings.Contains(opening, "--context") {
+		t.Errorf("the note must say kubectl needs --context: %q", opening)
+	}
+	if strings.Contains(c.AgentNotes[0], "(default)") {
+		t.Errorf("no cluster is the default: %q", c.AgentNotes[0])
+	}
+}
+
+// --- loading a cluster's kubeconfig ---
 
 // writeHostKubeconfig writes a kubeconfig with one context per name, each on server
 // https://<name>:6443, the first as current-context. The clusters reference a CA file relative to
@@ -943,32 +1324,61 @@ func hashFile(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func TestKubernetesRestConfigApprovedBytes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "kube", "dev.yml")
-	writeHostKubeconfig(t, path, "a", "b")
-	t.Setenv("KUBECONFIG", path)
+func TestKubernetesRestConfigPathAndContext(t *testing.T) {
+	dir := t.TempDir()
+	writeHostKubeconfig(t, filepath.Join(dir, "kube", "config"), "a", "b")
+	k := &k8s{workDir: dir}
+	for _, tc := range []struct {
+		context, as, wantHost string
+	}{
+		{"", "", "https://a:6443"},
+		{"b", "admin", "https://b:6443"},
+	} {
+		c := ResolvedCluster{Key: "x", Kubeconfig: Kubeconfig{Path: "kube/config", Context: tc.context}, Config: Config{As: tc.as}}
+		rc, err := k.restConfig(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rc.Host != tc.wantHost || rc.Impersonate.UserName != tc.as {
+			t.Errorf("context %q: host %q as %q, want %q as %q", tc.context, rc.Host, rc.Impersonate.UserName, tc.wantHost, tc.as)
+		}
+	}
+	missing := ResolvedCluster{Key: "x", Kubeconfig: Kubeconfig{Path: "kube/missing"}}
+	if _, err := k.restConfig(missing); err == nil {
+		t.Error("a missing kubeconfig.path must fail to load")
+	}
+}
 
-	fromDisk, err := (&k8s{}).restConfig()
+func TestKubernetesRestConfigApprovedBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kube", "dev.yml")
+	writeHostKubeconfig(t, path, "a", "b")
+	c := ResolvedCluster{Key: "dev", Kubeconfig: Kubeconfig{Path: "kube/dev.yml", Context: "b"}, Config: Config{As: "admin"}}
+
+	fromDisk, err := (&k8s{workDir: dir}).restConfig(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	k := &k8s{cfg: Config{As: "admin"}, approved: map[string]string{path: hashFile(t, path)}}
-	rc, err := k.restConfig()
+	k := &k8s{workDir: dir, approved: map[string]string{path: hashFile(t, path)}}
+	rc, err := k.restConfig(c)
 	if err != nil {
 		t.Fatalf("approved bytes must load: %v", err)
 	}
-	if rc.Host != "https://a:6443" || rc.Impersonate.UserName != "admin" {
-		t.Errorf("approved load must apply the current context and as: host %q as %q", rc.Host, rc.Impersonate.UserName)
+	if rc.Host != "https://b:6443" || rc.Impersonate.UserName != "admin" {
+		t.Errorf("approved load must apply context and as: host %q as %q", rc.Host, rc.Impersonate.UserName)
 	}
-	if want := filepath.Join(filepath.Dir(path), "ca.crt"); rc.CAFile != want || fromDisk.CAFile != want {
+	if want := filepath.Join(dir, "kube", "ca.crt"); rc.CAFile != want || fromDisk.CAFile != want {
 		t.Errorf("a relative CA file must resolve against the kubeconfig's directory: approved %q, from disk %q, want %q", rc.CAFile, fromDisk.CAFile, want)
 	}
 
 	writeHostKubeconfig(t, path, "b", "a")
-	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), path+" changed after it was approved") {
+	if _, err := k.restConfig(c); err == nil || !strings.Contains(err.Error(), "changed after it was approved") {
 		t.Errorf("bytes changed after approval must fail to load: %v", err)
 	}
 }
+
+// implicit is the cluster that EffectiveClusters returns when none is declared.
+var implicit = ResolvedCluster{Key: ImplicitCluster, Implicit: true}
 
 // A gated file without an approved hash fails with the approval hint, an unreadable gated file
 // fails to load, and a gated file among several KUBECONFIG files fails to load.
@@ -977,28 +1387,39 @@ func TestKubernetesRestConfigGatedFiles(t *testing.T) {
 	path, other := filepath.Join(dir, "dev.yml"), filepath.Join(dir, "other.yml")
 	writeHostKubeconfig(t, path, "a")
 	writeHostKubeconfig(t, other, "b")
-	k := &k8s{approved: map[string]string{path: ""}}
+	k := &k8s{workDir: dir, approved: map[string]string{path: ""}}
+	if _, err := k.restConfig(ResolvedCluster{Key: "dev", Kubeconfig: Kubeconfig{Path: "dev.yml"}}); err == nil || !strings.Contains(err.Error(), path+" is not approved") {
+		t.Errorf("a gated kubeconfig.path without approval must not load from disk: %v", err)
+	}
 
 	t.Setenv("KUBECONFIG", path)
-	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), path+" is not approved") {
+	if _, err := k.restConfig(implicit); err == nil || !strings.Contains(err.Error(), path+" is not approved") {
 		t.Errorf("a gated file without approval must not load from disk: %v", err)
 	}
 	k.approved[path] = hashFile(t, path)
-	if rc, err := k.restConfig(); err != nil || rc.Host != "https://a:6443" {
+	if rc, err := k.restConfig(implicit); err != nil || rc.Host != "https://a:6443" {
 		t.Errorf("a gated file must load its approved bytes: %v", err)
 	}
 	t.Setenv("KUBECONFIG", path+string(filepath.ListSeparator)+other)
-	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), "KUBECONFIG names several files and "+path) {
-		t.Errorf("a gated file among several KUBECONFIG files must fail to load: %v", err)
+	for _, tc := range []struct {
+		c    ResolvedCluster
+		hint string
+	}{
+		{implicit, "set KUBECONFIG to one file"},
+		{ResolvedCluster{Key: "dev"}, "set kubeconfig.path to the one file this cluster uses"},
+	} {
+		if _, err := k.restConfig(tc.c); err == nil || !strings.Contains(err.Error(), "KUBECONFIG names several files and "+path) || !strings.HasSuffix(err.Error(), tc.hint) {
+			t.Errorf("cluster %s: a gated file among several KUBECONFIG files must fail to load with %q: %v", tc.c.Key, tc.hint, err)
+		}
 	}
-	if rc, err := (&k8s{}).restConfig(); err != nil || rc.Host != "https://a:6443" {
+	if rc, err := (&k8s{}).restConfig(implicit); err != nil || rc.Host != "https://a:6443" {
 		t.Errorf("several ungated KUBECONFIG files must load merged from disk: %v", err)
 	}
 
 	missing := filepath.Join(dir, "missing.yml")
 	t.Setenv("KUBECONFIG", missing)
 	k.approved[missing] = ""
-	if _, err := k.restConfig(); err == nil || !strings.Contains(err.Error(), "unreadable") {
+	if _, err := k.restConfig(implicit); err == nil || !strings.Contains(err.Error(), "unreadable") {
 		t.Errorf("an unreadable gated file must fail to load: %v", err)
 	}
 }
@@ -1012,9 +1433,9 @@ func TestKubernetesApprovedKubeconfigChanged(t *testing.T) {
 	t.Setenv("KUBECONFIG", path)
 
 	cs := fake.NewClientset()
-	k := &k8s{home: t.TempDir(), approved: map[string]string{path: sum}}
-	k.connect = func() (kubernetes.Interface, *rest.Config, error) {
-		rc, err := k.restConfig()
+	k := &k8s{cfg: Config{Enabled: true}, home: t.TempDir(), approved: map[string]string{path: sum}}
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		rc, err := k.restConfig(c)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1028,5 +1449,207 @@ func TestKubernetesApprovedKubeconfigChanged(t *testing.T) {
 	}
 	if n := len(cs.Actions()); n != 0 {
 		t.Errorf("no API call may happen, got %d", n)
+	}
+}
+
+func TestKubernetesMintApprovedKubeconfigChanged(t *testing.T) {
+	for _, optional := range []bool{false, true} {
+		dir := t.TempDir()
+		devPath, stagingPath := filepath.Join(dir, "kube", "dev.yml"), filepath.Join(dir, "kube", "staging.yml")
+		writeHostKubeconfig(t, devPath, "dev")
+		writeHostKubeconfig(t, stagingPath, "staging")
+		sum := hashFile(t, devPath)
+		writeHostKubeconfig(t, devPath, "dev", "other")
+
+		cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+			"dev":     {Optional: new(optional), Kubeconfig: Kubeconfig{Path: "kube/dev.yml"}},
+			"staging": {Kubeconfig: Kubeconfig{Path: "kube/staging.yml"}},
+		}}
+		staging := fakeClientset()
+		k := &k8s{cfg: cfg, home: t.TempDir(), workDir: dir, approved: map[string]string{devPath: sum}}
+		k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+			rc, err := k.restConfig(c)
+			if err != nil {
+				return nil, nil, err
+			}
+			if c.Key != "staging" {
+				t.Fatalf("cluster %s must not load", c.Key)
+			}
+			return staging, rc, nil
+		}
+
+		c, err := k.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false)
+		if !optional {
+			if err == nil || !strings.Contains(err.Error(), "cluster dev:") || !strings.Contains(err.Error(), "changed after it was approved") {
+				t.Errorf("a required cluster with a changed kubeconfig must fail the launch: %v", err)
+			}
+			if n := len(staging.Actions()); n != 0 {
+				t.Errorf("no cluster may mint, got %d API calls", n)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := contextNames(mintedKubeconfig(t, c)); !slices.Equal(got, []string{"staging"}) {
+			t.Errorf("contexts = %v, want [staging]", got)
+		}
+		if w := strings.Join(c.Warnings, "\n"); !strings.Contains(w, "cluster dev ") || !strings.Contains(w, "changed after it was approved") {
+			t.Errorf("a warning must name dev and the change: %q", w)
+		}
+	}
+}
+
+func TestKubernetesAvailableDeclaredClusters(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	cfg := Config{Clusters: map[string]Cluster{"prod": {Kubeconfig: Kubeconfig{Path: "/nowhere"}}}}
+	if !New(cfg, t.TempDir(), "", nil).Available(context.Background()) {
+		t.Error("declared clusters are checked in Mint, so the provider must be available")
+	}
+}
+
+// managedSA is a session ServiceAccount that a crashed session left behind.
+func managedSA(name, session string) *corev1.ServiceAccount {
+	lbls := map[string]string{labelManaged: "true", labelUser: "alice", labelSession: session}
+	return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "corral", Labels: lbls}}
+}
+
+func TestKubernetesGCDisabledCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Enabled: new(false), Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	prod, staging := fakeClientset(), fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {cs: prod, host: "https://prod:6443"},
+		"staging": {cs: staging, host: "https://staging:6443"},
+	})
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") || !strings.HasPrefix(orphans[0].Describe, "cluster staging: ServiceAccount corral/corral-alice-s1") {
+		t.Fatalf("want the orphan on disabled cluster staging, named by its cluster, got %+v", orphans)
+	}
+	if err := k.Reap(ctx, orphans); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionSAs(t, staging); len(got) != 0 {
+		t.Errorf("reap must delete the orphan on staging, left %v", got)
+	}
+}
+
+// GC checks the implicit cluster only when it is enabled.
+func TestKubernetesGCImplicitClusterDisabled(t *testing.T) {
+	k := &k8s{cfg: Config{}, home: t.TempDir()}
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		t.Fatalf("cluster %s is disabled and must not load", c.Key)
+		return nil, nil, nil
+	}
+	if orphans, err := k.GC(context.Background()); err != nil || len(orphans) != 0 {
+		t.Errorf("GC = %+v, %v; want nothing", orphans, err)
+	}
+}
+
+func TestKubernetesGCClusterUnreachable(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	staging := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {err: errors.New("dial tcp: connection refused")},
+		"staging": {cs: staging, host: "https://staging:6443"},
+	})
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err == nil || !strings.Contains(err.Error(), "cluster prod: ") || !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("the error must name prod and the cause: %v", err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") {
+		t.Fatalf("want the orphan on staging, got %+v", orphans)
+	}
+	if err := k.Reap(ctx, orphans); err != nil {
+		t.Fatalf("reap must not need prod: %v", err)
+	}
+	if got := sessionSAs(t, staging); len(got) != 0 {
+		t.Errorf("reap must delete the orphan on staging, left %v", got)
+	}
+}
+
+func TestKubernetesGCApprovedKubeconfigChanged(t *testing.T) {
+	dir := t.TempDir()
+	devPath, stagingPath := filepath.Join(dir, "kube", "dev.yml"), filepath.Join(dir, "kube", "staging.yml")
+	writeHostKubeconfig(t, devPath, "dev")
+	writeHostKubeconfig(t, stagingPath, "staging")
+	sum := hashFile(t, devPath)
+	writeHostKubeconfig(t, devPath, "dev", "other")
+
+	cfg := Config{Clusters: map[string]Cluster{
+		"dev":     {Kubeconfig: Kubeconfig{Path: "kube/dev.yml"}},
+		"staging": {Kubeconfig: Kubeconfig{Path: "kube/staging.yml"}},
+	}}
+	staging := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := &k8s{cfg: cfg, home: t.TempDir(), workDir: dir, approved: map[string]string{devPath: sum}}
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		rc, err := k.restConfig(c)
+		if err != nil {
+			return nil, nil, err
+		}
+		if c.Key != "staging" {
+			t.Fatalf("cluster %s must not load", c.Key)
+		}
+		return staging, rc, nil
+	}
+
+	orphans, err := k.GC(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cluster dev: ") || !strings.Contains(err.Error(), "changed after it was approved") {
+		t.Errorf("the error must name dev and the change: %v", err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") {
+		t.Errorf("want the orphan on staging, got %+v", orphans)
+	}
+}
+
+func TestKubernetesReapPerCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"a": {Kubeconfig: Kubeconfig{Context: "a"}},
+		"b": {Kubeconfig: Kubeconfig{Context: "b"}},
+	}}
+	a := fakeClientset(managedSA("corral-alice-s1", "s1"), managedSA("corral-alice-s2", "s2"))
+	b := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"a": {cs: a, host: "https://a:6443"},
+		"b": {cs: b, host: "https://b:6443"},
+	})
+	connects := map[string]int{}
+	connect := k.connect
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		connects[c.Key]++
+		return connect(c)
+	}
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 3 {
+		t.Fatalf("want 3 orphans, got %+v", orphans)
+	}
+	clear(connects)
+	gone := spec.Orphan{Provider: "kubernetes", ID: encodeResource("gone", k8sResource{"ServiceAccount", "corral", "corral-alice-s1"}, "s1")}
+	err = k.Reap(ctx, append(orphans, gone))
+	if err == nil || !strings.Contains(err.Error(), "cluster gone ") {
+		t.Errorf("an orphan on an undeclared cluster must give an error naming it: %v", err)
+	}
+	if !maps.Equal(connects, map[string]int{"a": 1, "b": 1}) {
+		t.Errorf("reap must connect once per cluster, got %v", connects)
+	}
+	if got := append(sessionSAs(t, a), sessionSAs(t, b)...); len(got) != 0 {
+		t.Errorf("reap must delete the orphans on each cluster, left %v", got)
 	}
 }

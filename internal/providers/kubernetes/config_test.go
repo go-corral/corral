@@ -353,3 +353,45 @@ func TestKubeconfigFiles(t *testing.T) {
 		t.Errorf("Files(/work) = %v, want %v", got, want)
 	}
 }
+
+func TestClusterEnabledAndOptional(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		cfg                     Config
+		wantEnabled, wantOption bool
+	}{
+		{"implicit disabled", Config{}, false, true},
+		{"implicit enabled", Config{Enabled: true}, true, false},
+		{"profile enables one cluster", Config{Clusters: map[string]Cluster{"prod": {}, "staging": {Enabled: new(true)}}}, true, false},
+		{"all clusters disabled", Config{Enabled: true, Clusters: map[string]Cluster{"prod": {Enabled: new(false)}}}, false, true},
+		{"enabled clusters optional", Config{Enabled: true, Clusters: map[string]Cluster{"a": {Optional: new(true)}, "b": {Enabled: new(false)}}}, true, true},
+		{"one enabled cluster required", Config{Enabled: true, Optional: true, Clusters: map[string]Cluster{"a": {}, "b": {Optional: new(false)}}}, true, false},
+	} {
+		if got := tc.cfg.AnyClusterEnabled(); got != tc.wantEnabled {
+			t.Errorf("%s: AnyClusterEnabled = %v, want %v", tc.name, got, tc.wantEnabled)
+		}
+		if got := tc.cfg.EnabledClustersOptional(); got != tc.wantOption {
+			t.Errorf("%s: EnabledClustersOptional = %v, want %v", tc.name, got, tc.wantOption)
+		}
+	}
+}
+
+func TestGCClusters(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want []string
+	}{
+		{"implicit disabled", Config{}, nil},
+		{"implicit enabled", Config{Enabled: true}, []string{ImplicitCluster}},
+		{"declared, enabled or not", Config{Clusters: map[string]Cluster{"prod": {}, "staging": {Enabled: new(true)}}}, []string{"prod", "staging"}},
+	} {
+		var got []string
+		for _, c := range tc.cfg.GCClusters() {
+			got = append(got, c.Key)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: GCClusters = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -481,6 +481,37 @@ outside the sandbox, and mounts a minimal kubeconfig. See the
   At launch, corral warns when `permissions` names another role. This check compares
   names without querying the cluster and never blocks the launch. The field has no
   effect in `preProvisioned` mode because that mode rejects `permissions`.
+- **`clusters`** (map of cluster key to [cluster entry](#providerskubernetesclusterskey), default empty): declares the clusters for the session. The top-level `enabled`, `optional`, `mode`, `tokenLifetime`, `as`, `serviceAccountNamespace`, `permissions`, and `readOnlyRoles` are the defaults for every cluster.
+
+##### `providers.kubernetes.clusters.<key>`
+
+Each key names a cluster, which also becomes the kubeconfig context name in the session. Without `clusters`, corral uses a default cluster named `current`. It uses the default kubeconfig loading rules, the current context, and the top-level fields. When `clusters` declares at least one cluster, only the declared clusters exist, and corral does not add `current`.
+
+```yaml
+providers:
+  kubernetes:
+    enabled: true
+    clusters:
+      prod:
+        default: true
+        kubeconfig:
+          path: ~/.kube/prod
+          context: prod-admin
+      staging:
+        optional: true
+        permissions:
+          - clusterWide: true
+            clusterRole: view
+```
+
+- **`enabled`** (boolean, default: the top-level value): enables the cluster.
+- **`optional`** (boolean, default: the top-level value): when `true`, a failure during the session startup doesn't abort. The session will start without the cluster with a note in the system prompt.
+- **`default`** (boolean, default `false`): makes this cluster the `current-context` of the session kubeconfig. Without a default cluster, `current-context` is unset and `kubectl` needs `--context`.
+- **`kubeconfig.path`** (string, default empty): the host kubeconfig file. A relative path resolves against the directory where you run `corral`. When empty, corral uses `$KUBECONFIG`, then `~/.kube/config`.
+- **`kubeconfig.context`** (string, default empty): context in the kubeconfig. When empty, corral uses the current context of the kubeconfig.
+- **`mode`**, **`tokenLifetime`**, **`as`**, **`serviceAccountNamespace`**, **`permissions`**, **`readOnlyRoles`**: same meaning as the top-level fields. A value set here replaces the top-level value for this cluster. A list replaces the top-level list and does not extend it.
+
+A kubeconfig of an enabled cluster in the session workdir, in a `providers.paths.rw` entry, or in the private sandbox home needs approval. See the [trust gate](../explanation/trust-gate.md). For examples and `corral gc` behavior, see [Use multiple clusters](../how-to/kubernetes.md#use-multiple-clusters).
 
 ##### Kubernetes permission entries
 
@@ -567,8 +598,8 @@ account in addition to the grants.
 
 ```yaml
 grants:
-  - preset: write           # the origin project
-  - project: org/app        # read preset
+  - preset: write # the origin project
+  - project: org/app # read preset
   - group: org/libs
     permissions: [download_code, read_repository]
 ```

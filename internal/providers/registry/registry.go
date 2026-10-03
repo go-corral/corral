@@ -144,15 +144,15 @@ var registry = []Registration{
 	},
 	{
 		Name:     "kubernetes",
-		Enabled:  func(c *config.Config) bool { return c.Providers.Kubernetes.Enabled },
-		Optional: func(c *config.Config) bool { return c.Providers.Kubernetes.Optional },
+		Enabled:  func(c *config.Config) bool { return c.Providers.Kubernetes.AnyClusterEnabled() },
+		Optional: func(c *config.Config) bool { return c.Providers.Kubernetes.EnabledClustersOptional() },
 		Grants:   func(c *config.Config) string { return c.Providers.Kubernetes.Grants() },
 		Warnings: func(c *config.Config) []health.Check { return c.Providers.Kubernetes.Warnings() },
 		Build: func(c *config.Config, d Deps) providers.Provider {
-			return kubernetes.New(c.Providers.Kubernetes, d.Home, d.ApprovedKubeconfigs)
+			return kubernetes.New(c.Providers.Kubernetes, d.Home, d.WorkDir, d.ApprovedKubeconfigs)
 		},
 		Probe: func(d Deps) providers.Provider {
-			return kubernetes.New(kubernetes.Config{}, d.Home, nil)
+			return kubernetes.New(kubernetes.Config{}, d.Home, d.WorkDir, nil)
 		},
 	},
 	{
