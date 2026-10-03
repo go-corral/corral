@@ -511,7 +511,7 @@ providers:
 - **`kubeconfig.context`** (string, default empty): context in the kubeconfig. When empty, corral uses the current context of the kubeconfig.
 - **`mode`**, **`tokenLifetime`**, **`as`**, **`serviceAccountNamespace`**, **`permissions`**, **`readOnlyRoles`**: same meaning as the top-level fields. A value set here replaces the top-level value for this cluster. A list replaces the top-level list and does not extend it.
 
-A kubeconfig of an enabled cluster in the session workdir, in a `providers.paths.rw` entry, or in the private sandbox home needs approval. See the [trust gate](../explanation/trust-gate.md). For examples, see [Use several clusters](../how-to/kubernetes.md#use-several-clusters).
+A kubeconfig of an enabled cluster in the session workdir, in a `providers.paths.rw` entry, or in the private sandbox home needs approval. See the [trust gate](../explanation/trust-gate.md). For examples and `corral gc` behavior, see [Use multiple clusters](../how-to/kubernetes.md#use-multiple-clusters).
 
 ##### Kubernetes permission entries
 

@@ -211,9 +211,7 @@ Reap these 1 resource(s)? [y/N] y
   ✓ reaped 1 resource
 ```
 
-With nothing to delete, `gc` prints `✓ no orphaned resources`. A provider that cannot
-list its resources prints a `!` line. When that happens and no orphans are found, `gc`
-prints `! no orphaned resources` and exits 1.
+With nothing to delete, `gc` prints `✓ no orphaned resources`. A provider that cannot list its resources prints a `!` line, and `gc` exits 1, also after it deletes the orphans that the other providers find. When no orphans are found, `gc` then prints `! no orphaned resources`. For Kubernetes, the line names the cluster, and `gc` still checks the other clusters.
 
 | Flag               | Effect                                                                     |
 | ------------------ | -------------------------------------------------------------------------- |
