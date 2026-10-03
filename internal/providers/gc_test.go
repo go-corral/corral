@@ -16,10 +16,7 @@ type fakeReaper struct {
 }
 
 func (f *fakeReaper) GC(context.Context) ([]Orphan, error) {
-	if f.gcErr != nil {
-		return nil, f.gcErr
-	}
-	return f.orphans, nil
+	return f.orphans, f.gcErr
 }
 func (f *fakeReaper) Reap(_ context.Context, approved []Orphan) error {
 	f.reaped = append(f.reaped, approved...)
@@ -39,6 +36,21 @@ func TestCollectOrphansAggregatesAndReportsErrors(t *testing.T) {
 	r1 := &fakeReaper{fakeProvider: fakeProvider{name: "k8s"}, orphans: []Orphan{{Provider: "k8s", ID: "sa1", Describe: "SA sa1"}}}
 	r2 := &fakeReaper{fakeProvider: fakeProvider{name: "vault"}, gcErr: errors.New("unreachable")}
 	orphans, errs := CollectOrphans(context.Background(), []Reaper{r1, r2})
+	if len(orphans) != 1 || orphans[0].ID != "sa1" {
+		t.Errorf("orphans = %+v, want sa1", orphans)
+	}
+	if len(errs) != 1 {
+		t.Errorf("expected 1 reaper error, got %v", errs)
+	}
+}
+
+func TestCollectOrphansKeepsPartialResults(t *testing.T) {
+	r := &fakeReaper{
+		fakeProvider: fakeProvider{name: "k8s"},
+		orphans:      []Orphan{{Provider: "k8s", ID: "sa1"}},
+		gcErr:        errors.New("cluster prod: unreachable"),
+	}
+	orphans, errs := CollectOrphans(context.Background(), []Reaper{r})
 	if len(orphans) != 1 || orphans[0].ID != "sa1" {
 		t.Errorf("orphans = %+v, want sa1", orphans)
 	}

@@ -806,7 +806,7 @@ func TestKubernetesReaperGCAndReap(t *testing.T) {
 		t.Fatalf("want 3 managed orphans (SA + CRB + RB), got %d: %+v", len(orphans), orphans)
 	}
 	for _, o := range orphans {
-		if o.Provider != "kubernetes" || o.ID == "" || o.Describe == "" {
+		if o.Provider != "kubernetes" || !strings.HasPrefix(o.ID, "current|") || o.Describe == "" || strings.HasPrefix(o.Describe, "cluster ") {
 			t.Errorf("malformed orphan: %+v", o)
 		}
 	}
@@ -855,7 +855,7 @@ func TestKubernetesReapRemovesStaleKubeconfig(t *testing.T) {
 	// Approve the dead session's objects only — the live session is left running.
 	var approved []spec.Orphan
 	for _, o := range orphans {
-		if _, session, err := decodeResource(o.ID); err == nil && session == dead {
+		if _, _, session, err := decodeResource(o.ID); err == nil && session == dead {
 			approved = append(approved, o)
 		}
 	}
@@ -1508,58 +1508,148 @@ func TestKubernetesAvailableDeclaredClusters(t *testing.T) {
 	}
 }
 
-// GC and Reap load one cluster: the enabled default cluster, else the first enabled cluster. A
-// disabled cluster is never loaded.
-func TestKubernetesGCCluster(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		clusters map[string]Cluster
-		want     string
-	}{
-		{"enabled default", map[string]Cluster{
-			"a": {Kubeconfig: Kubeconfig{Context: "a"}},
-			"b": {Default: true, Kubeconfig: Kubeconfig{Context: "b"}},
-		}, "b"},
-		{"no default", map[string]Cluster{
-			"a": {Enabled: new(false), Kubeconfig: Kubeconfig{Context: "a"}},
-			"b": {Kubeconfig: Kubeconfig{Context: "b"}},
-			"c": {Kubeconfig: Kubeconfig{Context: "c"}},
-		}, "b"},
-		{"disabled default", map[string]Cluster{
-			"a": {Enabled: new(false), Default: true, Kubeconfig: Kubeconfig{Context: "a"}},
-			"b": {Kubeconfig: Kubeconfig{Context: "b"}},
-		}, "b"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cs := fakeClientset()
-			k := &k8s{cfg: Config{Enabled: true, Clusters: tc.clusters}, home: t.TempDir()}
-			var loaded []string
-			k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
-				loaded = append(loaded, c.Key)
-				return cs, &rest.Config{Host: "https://" + c.Key + ":6443"}, nil
-			}
-			ctx := context.Background()
-			if _, err := k.GC(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if err := k.Reap(ctx, nil); err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(loaded, []string{tc.want, tc.want}) {
-				t.Errorf("loaded %v, want %s for GC and Reap", loaded, tc.want)
-			}
-		})
-	}
+// managedSA is a session ServiceAccount that a crashed session left behind.
+func managedSA(name, session string) *corev1.ServiceAccount {
+	lbls := map[string]string{labelManaged: "true", labelUser: "alice", labelSession: session}
+	return &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "corral", Labels: lbls}}
+}
 
-	k := &k8s{cfg: Config{Clusters: map[string]Cluster{"a": {}}}, home: t.TempDir()}
+func TestKubernetesGCDisabledCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Enabled: new(false), Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	prod, staging := fakeClientset(), fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {cs: prod, host: "https://prod:6443"},
+		"staging": {cs: staging, host: "https://staging:6443"},
+	})
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") || !strings.HasPrefix(orphans[0].Describe, "cluster staging: ServiceAccount corral/corral-alice-s1") {
+		t.Fatalf("want the orphan on disabled cluster staging, named by its cluster, got %+v", orphans)
+	}
+	if err := k.Reap(ctx, orphans); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionSAs(t, staging); len(got) != 0 {
+		t.Errorf("reap must delete the orphan on staging, left %v", got)
+	}
+}
+
+// GC checks the implicit cluster only when it is enabled.
+func TestKubernetesGCImplicitClusterDisabled(t *testing.T) {
+	k := &k8s{cfg: Config{}, home: t.TempDir()}
 	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
 		t.Fatalf("cluster %s is disabled and must not load", c.Key)
 		return nil, nil, nil
 	}
-	if _, err := k.GC(context.Background()); err == nil {
-		t.Error("GC without an enabled cluster must fail")
+	if orphans, err := k.GC(context.Background()); err != nil || len(orphans) != 0 {
+		t.Errorf("GC = %+v, %v; want nothing", orphans, err)
 	}
-	if err := k.Reap(context.Background(), nil); err == nil {
-		t.Error("Reap without an enabled cluster must fail")
+}
+
+func TestKubernetesGCClusterUnreachable(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"prod":    {Kubeconfig: Kubeconfig{Context: "prod"}},
+		"staging": {Kubeconfig: Kubeconfig{Context: "staging"}},
+	}}
+	staging := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"prod":    {err: errors.New("dial tcp: connection refused")},
+		"staging": {cs: staging, host: "https://staging:6443"},
+	})
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err == nil || !strings.Contains(err.Error(), "cluster prod: ") || !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("the error must name prod and the cause: %v", err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") {
+		t.Fatalf("want the orphan on staging, got %+v", orphans)
+	}
+	if err := k.Reap(ctx, orphans); err != nil {
+		t.Fatalf("reap must not need prod: %v", err)
+	}
+	if got := sessionSAs(t, staging); len(got) != 0 {
+		t.Errorf("reap must delete the orphan on staging, left %v", got)
+	}
+}
+
+func TestKubernetesGCApprovedKubeconfigChanged(t *testing.T) {
+	dir := t.TempDir()
+	devPath, stagingPath := filepath.Join(dir, "kube", "dev.yml"), filepath.Join(dir, "kube", "staging.yml")
+	writeHostKubeconfig(t, devPath, "dev")
+	writeHostKubeconfig(t, stagingPath, "staging")
+	sum := hashFile(t, devPath)
+	writeHostKubeconfig(t, devPath, "dev", "other")
+
+	cfg := Config{Clusters: map[string]Cluster{
+		"dev":     {Kubeconfig: Kubeconfig{Path: "kube/dev.yml"}},
+		"staging": {Kubeconfig: Kubeconfig{Path: "kube/staging.yml"}},
+	}}
+	staging := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := &k8s{cfg: cfg, home: t.TempDir(), workDir: dir, approved: map[string]string{devPath: sum}}
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		rc, err := k.restConfig(c)
+		if err != nil {
+			return nil, nil, err
+		}
+		if c.Key != "staging" {
+			t.Fatalf("cluster %s must not load", c.Key)
+		}
+		return staging, rc, nil
+	}
+
+	orphans, err := k.GC(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cluster dev: ") || !strings.Contains(err.Error(), "changed after it was approved") {
+		t.Errorf("the error must name dev and the change: %v", err)
+	}
+	if len(orphans) != 1 || !strings.HasPrefix(orphans[0].ID, "staging|") {
+		t.Errorf("want the orphan on staging, got %+v", orphans)
+	}
+}
+
+func TestKubernetesReapPerCluster(t *testing.T) {
+	cfg := Config{Enabled: true, Clusters: map[string]Cluster{
+		"a": {Kubeconfig: Kubeconfig{Context: "a"}},
+		"b": {Kubeconfig: Kubeconfig{Context: "b"}},
+	}}
+	a := fakeClientset(managedSA("corral-alice-s1", "s1"), managedSA("corral-alice-s2", "s2"))
+	b := fakeClientset(managedSA("corral-alice-s1", "s1"))
+	k := multiK8s(t, cfg, map[string]fakeCluster{
+		"a": {cs: a, host: "https://a:6443"},
+		"b": {cs: b, host: "https://b:6443"},
+	})
+	connects := map[string]int{}
+	connect := k.connect
+	k.connect = func(c ResolvedCluster) (kubernetes.Interface, *rest.Config, error) {
+		connects[c.Key]++
+		return connect(c)
+	}
+	ctx := context.Background()
+
+	orphans, err := k.GC(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 3 {
+		t.Fatalf("want 3 orphans, got %+v", orphans)
+	}
+	clear(connects)
+	gone := spec.Orphan{Provider: "kubernetes", ID: encodeResource("gone", k8sResource{"ServiceAccount", "corral", "corral-alice-s1"}, "s1")}
+	err = k.Reap(ctx, append(orphans, gone))
+	if err == nil || !strings.Contains(err.Error(), "cluster gone ") {
+		t.Errorf("an orphan on an undeclared cluster must give an error naming it: %v", err)
+	}
+	if !maps.Equal(connects, map[string]int{"a": 1, "b": 1}) {
+		t.Errorf("reap must connect once per cluster, got %v", connects)
+	}
+	if got := append(sessionSAs(t, a), sessionSAs(t, b)...); len(got) != 0 {
+		t.Errorf("reap must delete the orphans on each cluster, left %v", got)
 	}
 }
