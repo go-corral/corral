@@ -3,15 +3,19 @@ package cli
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/hooks"
+	"github.com/go-corral/corral/internal/providers/kubernetes"
 	"github.com/go-corral/corral/internal/trust"
 )
 
@@ -696,6 +700,92 @@ func TestRunTrustKubeconfigSymlinkSwapFailsLoad(t *testing.T) {
 	}
 	if code == 0 || !strings.Contains(stderr, kubeconfig+" changed after it was approved") {
 		t.Errorf("a retargeted symlink must fail the load (exit %d):\n%s", code, stderr)
+	}
+}
+
+// The gate and the provider resolve a relative kubeconfig.path against the same workdir: a file
+// changed after the gate fails the load and its API server is never contacted.
+func TestRunTrustRelativeKubeconfigPathChangedAfterGate(t *testing.T) {
+	var contacted atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contacted.Store(true)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	kubeconfig := func(user string) []byte {
+		return []byte("apiVersion: v1\nkind: Config\ncurrent-context: c\n" +
+			"clusters:\n- name: c\n  cluster:\n    server: " + srv.URL + "\n" +
+			"contexts:\n- name: c\n  context:\n    cluster: c\n    user: " + user + "\n" +
+			"users:\n- name: " + user + "\n  user:\n    token: t\n")
+	}
+	home, proj := trustRepo(t, "providers:\n  home:\n    enabled: false\n  kubernetes:\n    clusters:\n      dev:\n        enabled: true\n        kubeconfig:\n          path: kube/dev.yml\n")
+	path := filepath.Join(proj, "kube", "dev.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, kubeconfig("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, sources, err := config.Load(config.LoadOptions{Home: home, ProjectDir: proj})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trust.NewStore(trust.DefaultDir(home)).Approve(trustEntries(sources)); err != nil {
+		t.Fatal(err)
+	}
+	stubUpdateCheck(t)
+	prompts := 0
+	setTrustPrompt(t, func() (bool, bool) { prompts++; return true, true })
+	orig := resolveProviders
+	t.Cleanup(func() { resolveProviders = orig })
+	resolveProviders = func(ctx context.Context, sess providers.Session, active []providers.Active) (*providers.Resolved, error) {
+		if err := os.WriteFile(path, kubeconfig("b"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return providers.Resolve(ctx, sess, active)
+	}
+
+	code, stderr := runCmd(t, "--home", home, "--project", proj)
+	if prompts != 1 {
+		t.Errorf("the kubeconfig.path in the workdir must be gated; prompts=%d, want 1", prompts)
+	}
+	if code == 0 || !strings.Contains(stderr, "cluster dev: load kubeconfig: "+path+" changed after it was approved") {
+		t.Errorf("a kubeconfig changed after the gate must fail the load (exit %d):\n%s", code, stderr)
+	}
+	if contacted.Load() {
+		t.Error("the API server of a changed kubeconfig must not be contacted")
+	}
+}
+
+// collectKubeconfigs gates each enabled declared cluster and attributes the file to the key that
+// names it.
+func TestCollectKubeconfigsDeclaredClusters(t *testing.T) {
+	work := t.TempDir()
+	for _, name := range []string{"dev.yml", "staging.yml", "env.yml"} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte("kind: Config\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("KUBECONFIG", filepath.Join(work, "env.yml"))
+	cfg := &config.Config{}
+	cfg.Providers.Kubernetes.Enabled = true
+	cfg.Providers.Kubernetes.Clusters = map[string]kubernetes.Cluster{
+		"dev":     {Kubeconfig: kubernetes.Kubeconfig{Path: "dev.yml"}},
+		"staging": {Enabled: new(false), Kubeconfig: kubernetes.Kubeconfig{Path: "staging.yml"}},
+		"host":    {},
+	}
+	got := collectKubeconfigs(cfg, work, "")
+	want := map[string]string{
+		filepath.Join(work, "dev.yml"): "providers.kubernetes.clusters.dev.kubeconfig.path",
+		filepath.Join(work, "env.yml"): "providers.kubernetes.clusters.host (default kubeconfig loading rules)",
+	}
+	if len(got.attr) != len(want) || len(got.entries) != len(want) {
+		t.Fatalf("want %d gated files, got attr %v entries %+v", len(want), got.attr, got.entries)
+	}
+	for path, label := range want {
+		if got.attr[path] != label {
+			t.Errorf("attr[%s] = %q, want %q", path, got.attr[path], label)
+		}
 	}
 }
 
