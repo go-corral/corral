@@ -55,6 +55,9 @@ func TestSecretScannerParity(t *testing.T) {
 		{"heroku", KindHerokuKey, "HRKU-" + "AA" + strings.Repeat("l", 58)},
 		{"flyio", KindFlyToken, "fo1_" + strings.Repeat("m", 43)},
 		{"cloudflare-origin-ca", KindCloudflareKey, "v1.0-" + strings.Repeat("4", 24) + "-" + strings.Repeat("5", 146)},
+		{"cloudflare-global-key", KindCloudflareToken, "cfk_" + strings.Repeat("A", 40) + "0a1b2c3d"},
+		{"cloudflare-user-token", KindCloudflareToken, "cfut_" + strings.Repeat("b", 40) + "4E5F6A7B"},
+		{"cloudflare-account-token", KindCloudflareToken, "cfat_" + strings.Repeat("7", 40) + "89abcdef"},
 		{"1password-secret-key", KindOnePassword, "A3-" + "ABC123-" + "DEF456GHI78-" + "JKL90-" + "MNO12-" + "PQR34"},
 		{"age", KindAgeKey, "AGE-SECRET-" + "KEY-1" + strings.Repeat("Q", 58)},
 		{"sentry-user", KindSentryToken, "sntryu_" + strings.Repeat("6", 64)},
@@ -87,6 +90,8 @@ func TestSecretScannerParity(t *testing.T) {
 		{"git-sha", "commit " + strings.Repeat("a", 40)},
 		{"kebab-slug", "risk-admin-dashboard-configuration-and-settings-refactor"},
 		{"gitlab-prefix-in-prose", "set glpat-token in the CI settings"},
+		{"cloudflare-prefix-in-prose", "set cfut_token in the env"},
+		{"cloudflare-too-long", "cfat_" + strings.Repeat("c", 41) + "89abcdef"},
 	}
 
 	// scanAll runs the four real entry points over one input and returns their hit verdicts
