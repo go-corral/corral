@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.24.0](https://github.com/go-corral/corral/compare/v0.23.0...v0.24.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** log events and evaluate hook events in a sidecar ([#40](https://github.com/go-corral/corral/issues/40))
+* **gitlab:** the gitlab provider mints only fine-grained personal access tokens and needs GitLab 19.2 or later. providers.gitlab.type, scopes, role, and project are removed; configure access through providers.gitlab.grants. A config with only `enabled: true` now gets read-only access to the project in the workdir's origin remote.
+
+### Features
+
+* **gc:** check every declared kubernetes cluster ([#47](https://github.com/go-corral/corral/issues/47)) ([0bde9ea](https://github.com/go-corral/corral/commit/0bde9ea08244b2cb3a6fdeab8c3d00b2dd609377))
+* **gitlab:** mint fine-grained personal access tokens ([#33](https://github.com/go-corral/corral/issues/33)) ([ef5c50b](https://github.com/go-corral/corral/commit/ef5c50b34b98dd6c8dfcce1d86a56b61df89083e))
+* **hooks:** log events and evaluate hook events in a sidecar ([#40](https://github.com/go-corral/corral/issues/40)) ([bf467b0](https://github.com/go-corral/corral/commit/bf467b0686c894b73b9eff2c23928430ba2bb45f))
+* **kubernetes:** declare clusters in a map with inherited defaults ([#44](https://github.com/go-corral/corral/issues/44)) ([f65a4c4](https://github.com/go-corral/corral/commit/f65a4c496ca016cb6f0edb158debdd44a9901f86))
+* **kubernetes:** support multiple clusters in sessions ([#46](https://github.com/go-corral/corral/issues/46)) ([46d15eb](https://github.com/go-corral/corral/commit/46d15eb0f8d1631e200617419d94da205dce068a))
+* **policy:** detect Cloudflare tokens ([#48](https://github.com/go-corral/corral/issues/48)) ([22931ce](https://github.com/go-corral/corral/commit/22931ce98acda1c53a241acf071155ff2400d449)), closes [#42](https://github.com/go-corral/corral/issues/42)
+* **trust:** require approval for kubeconfigs in sandbox-writable locations ([#45](https://github.com/go-corral/corral/issues/45)) ([c55e6ac](https://github.com/go-corral/corral/commit/c55e6ac79946d4cb41efe9151ab6c4f7c1ca9a3a))
+
+
+### Bug Fixes
+
+* **hooks:** apply profiles when executing hooks ([#35](https://github.com/go-corral/corral/issues/35)) ([8467504](https://github.com/go-corral/corral/commit/8467504d367302c796d75cf52a032b1904fe6d24))
+
 ## [0.23.0](https://github.com/go-corral/corral/compare/v0.22.0...v0.23.0) (2026-09-25)
 
 
