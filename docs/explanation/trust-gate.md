@@ -27,7 +27,7 @@ Kubernetes kubeconfigs in sandbox-writable locations also require approval. When
 - the private sandbox home, when the home provider is enabled
 - the directory of `policy.audit.path`, when it is set
 
-`corral gc` does not prompt. It uses the current directory as the workdir and loads a kubeconfig in a sandbox-writable location only when its current content is approved. For a kubeconfig that is not approved or changed since approval, `corral gc` reports an error and exits with a non-zero status.
+`corral gc` does not prompt. It uses the current directory as the workdir and loads a kubeconfig in a sandbox-writable location only when its current content is approved. For a kubeconfig that is not approved or changed since approval, `corral gc` reports an error for that cluster, still checks the other clusters, and exits with a non-zero status.
 
 ## What happens if a file changes?
 

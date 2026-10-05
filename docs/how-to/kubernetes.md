@@ -151,7 +151,7 @@ Each configured cluster needs information on which cluster it's associated to:
 - `kubeconfig.path` points to the kubeconfig to use. A relative path resolves against the directory where you run `corral`. When no path is set, corral loads `$KUBECONFIG`, then `~/.kube/config`.
 - `kubeconfig.context` sets the context to use. Without a context, corral uses the current context of your kubeconfig.
 
-You cannot configure two different contexts against the same Kubernetes API address, they must be unique.
+Every Kubernetes API server can only be used once. It's not possible to configure different Corral session contexts against the same Kubernetes API.
 
 ### Config inheritance
 
@@ -177,6 +177,10 @@ providers:
 ### Default context
 
 Set `default: true` on one cluster. The session kubeconfig then sets `current-context` to that cluster, and `kubectl` uses it without `--context`. Other clusters need `kubectl --context <key>`.
+
+### Clean up with `corral gc`
+
+`corral gc` checks every configured cluster, enabled or not. When it cannot load or reach a cluster, it reports an error, checks the other clusters, and exits with a non-zero status.
 
 ## Verify the session
 

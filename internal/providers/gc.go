@@ -17,13 +17,13 @@ func Reapers(ps []Provider) []Reaper {
 }
 
 // CollectOrphans runs GC() on every reaper and aggregates the previews. It never
-// deletes anything — that is Reap's job, after the caller obtains approval.
+// deletes anything — that is Reap's job, after the caller obtains approval. A
+// reaper can return orphans together with an error; both are kept.
 func CollectOrphans(ctx context.Context, reapers []Reaper) (orphans []Orphan, errs []error) {
 	for _, r := range reapers {
 		found, err := r.GC(ctx)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("provider %q: %w", r.Name(), err))
-			continue
 		}
 		orphans = append(orphans, found...)
 	}

@@ -375,3 +375,23 @@ func TestClusterEnabledAndOptional(t *testing.T) {
 		}
 	}
 }
+
+func TestGCClusters(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want []string
+	}{
+		{"implicit disabled", Config{}, nil},
+		{"implicit enabled", Config{Enabled: true}, []string{ImplicitCluster}},
+		{"declared, enabled or not", Config{Clusters: map[string]Cluster{"prod": {}, "staging": {Enabled: new(true)}}}, []string{"prod", "staging"}},
+	} {
+		var got []string
+		for _, c := range tc.cfg.GCClusters() {
+			got = append(got, c.Key)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: GCClusters = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

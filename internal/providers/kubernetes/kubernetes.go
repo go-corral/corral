@@ -634,38 +634,37 @@ func (k *k8s) applyRoleBinding(ctx context.Context, cs kubernetes.Interface, rb 
 		func(b *rbacv1.RoleBinding) rbacv1.RoleRef { return b.RoleRef })
 }
 
-// gcCluster is the cluster that GC and Reap work on: the enabled default cluster, else the first
-// enabled cluster in key order. Only the kubeconfigs of enabled clusters pass the trust gate.
-func (k *k8s) gcCluster() (ResolvedCluster, error) {
-	enabled := slices.DeleteFunc(k.cfg.EffectiveClusters(), func(c ResolvedCluster) bool { return !c.Config.Enabled })
-	if len(enabled) == 0 {
-		return ResolvedCluster{}, errors.New("no kubernetes cluster is enabled")
+// GC lists the corral-managed resources (label corral.dev/managed=true) on each of
+// Config.GCClusters. It does not enumerate Namespaces: deleting one cascades and races a
+// concurrent launch, and an empty leftover is harmless. GC never deletes: `corral gc` previews and
+// Reap deletes the operator-approved subset. A cluster that fails adds to the returned error, and
+// the orphans of the other clusters are still returned.
+func (k *k8s) GC(ctx context.Context) ([]spec.Orphan, error) {
+	var orphans []spec.Orphan
+	var errs []error
+	for _, c := range k.cfg.GCClusters() {
+		found, err := k.gcCluster(ctx, c)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s%w", c.label(), err))
+			continue
+		}
+		orphans = append(orphans, found...)
 	}
-	if i := slices.IndexFunc(enabled, func(c ResolvedCluster) bool { return c.Default }); i >= 0 {
-		return enabled[i], nil
-	}
-	return enabled[0], nil
+	return orphans, errors.Join(errs...)
 }
 
-// GC lists the corral-managed resources (label corral.dev/managed=true) on gcCluster. It does not
-// enumerate Namespaces: deleting one cascades and races a concurrent launch, and an empty leftover
-// is harmless. GC never deletes: `corral gc` previews and Reap deletes the operator-approved subset.
-func (k *k8s) GC(ctx context.Context) ([]spec.Orphan, error) {
-	c, err := k.gcCluster()
-	if err != nil {
-		return nil, err
-	}
+func (k *k8s) gcCluster(ctx context.Context, c ResolvedCluster) ([]spec.Orphan, error) {
 	cs, _, err := k.connect(c)
 	if err != nil {
-		return nil, fmt.Errorf("%s%w", c.label(), err)
+		return nil, err
 	}
 	sel := labelManaged + "=true"
 	var orphans []spec.Orphan
 	add := func(r k8sResource, lbls map[string]string) {
 		orphans = append(orphans, spec.Orphan{
 			Provider: k.Name(),
-			ID:       encodeResource(r, lbls[labelSession]),
-			Describe: describeResource(r, lbls),
+			ID:       encodeResource(c.Key, r, lbls[labelSession]),
+			Describe: c.label() + describeResource(r, lbls),
 		})
 	}
 
@@ -717,32 +716,52 @@ func (k *k8s) GC(ctx context.Context) ([]spec.Orphan, error) {
 // Reap deletes the approved orphans (NotFound ignored) and removes each approved session's minted
 // kubeconfig (a SIGKILLed launcher never runs in-session Cleanup, so that 0600 bearer-token file
 // outlives the session). Only approved sessions are touched, never the kube/ directory as a whole.
+// It connects once per cluster; a cluster that is not in Config.GCClusters or fails to connect
+// adds to the returned error, and the other clusters are still reaped.
 func (k *k8s) Reap(ctx context.Context, approved []spec.Orphan) error {
-	c, err := k.gcCluster()
-	if err != nil {
-		return err
+	clusters := map[string]ResolvedCluster{}
+	for _, c := range k.cfg.GCClusters() {
+		clusters[c.Key] = c
 	}
-	cs, _, err := k.connect(c)
-	if err != nil {
-		return fmt.Errorf("%s%w", c.label(), err)
-	}
-	var resources []k8sResource
+	var keys []string
+	byCluster := map[string][]k8sResource{}
 	var kubeconfigs []string
 	seen := map[string]bool{}
 	for _, o := range approved {
-		r, session, err := decodeResource(o.ID)
+		key, r, session, err := decodeResource(o.ID)
 		if err != nil {
 			return err
 		}
-		resources = append(resources, r)
-		// One kubeconfig per session, not per resource. A resource carrying no session label is
-		// skipped rather than guessed at — sanitizeDNS("") is a valid filename component.
+		if _, ok := byCluster[key]; !ok {
+			keys = append(keys, key)
+		}
+		byCluster[key] = append(byCluster[key], r)
+		// One kubeconfig per session, not per resource or cluster. A resource carrying no session
+		// label is skipped rather than guessed at — sanitizeDNS("") is a valid filename component.
 		if session != "" && !seen[session] {
 			seen[session] = true
 			kubeconfigs = append(kubeconfigs, kubeconfigPathFor(k.home, session))
 		}
 	}
-	return teardown(ctx, cs, resources, kubeconfigs...)
+	var errs []error
+	for _, key := range keys {
+		c, ok := clusters[key]
+		if !ok {
+			errs = append(errs, fmt.Errorf("cluster %s is not declared any more; its resources were not deleted", key))
+			continue
+		}
+		cs, _, err := k.connect(c)
+		if err == nil {
+			err = teardown(ctx, cs, byCluster[key])
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s%w", c.label(), err))
+		}
+	}
+	if err := teardown(ctx, nil, nil, kubeconfigs...); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // teardown deletes the resources (best-effort, ignoring NotFound) and removes the kubeconfig at
@@ -875,18 +894,21 @@ func kubeconfigPathFor(home, sessionID string) string {
 	return filepath.Join(home, ".cache", "corral", "kube", "config-"+sanitizeDNS(sessionID))
 }
 
-// encodeResource/decodeResource round-trip a k8sResource plus its session ID through Orphan.ID.
-// Neither a DNS-1123 name nor a sanitized label can contain '|'.
-func encodeResource(r k8sResource, session string) string {
-	return r.kind + "|" + r.namespace + "|" + r.name + "|" + session
+// encodeResource/decodeResource round-trip a cluster key, a k8sResource, and its session ID
+// through Orphan.ID. Neither a DNS-1123 name nor a sanitized label can contain '|', but a cluster
+// key can, so decodeResource takes the last four fields and leaves the rest to the key.
+func encodeResource(cluster string, r k8sResource, session string) string {
+	return cluster + "|" + r.kind + "|" + r.namespace + "|" + r.name + "|" + session
 }
 
-func decodeResource(id string) (k8sResource, string, error) {
-	parts := strings.SplitN(id, "|", 4)
-	if len(parts) != 4 {
-		return k8sResource{}, "", fmt.Errorf("malformed orphan id %q", id)
+func decodeResource(id string) (cluster string, r k8sResource, session string, err error) {
+	parts := strings.Split(id, "|")
+	n := len(parts) - 4
+	if n < 1 {
+		return "", k8sResource{}, "", fmt.Errorf("malformed orphan id %q", id)
 	}
-	return k8sResource{kind: parts[0], namespace: parts[1], name: parts[2]}, parts[3], nil
+	r = k8sResource{kind: parts[n], namespace: parts[n+1], name: parts[n+2]}
+	return strings.Join(parts[:n], "|"), r, parts[n+3], nil
 }
 
 func describeResource(r k8sResource, lbls map[string]string) string {
