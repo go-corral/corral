@@ -20,12 +20,26 @@ import (
 	"github.com/go-corral/corral/internal/sidecar"
 )
 
+// Hook event names: the `corral hook` subcommands and the sidecar request types.
+const (
+	eventPreToolUse       = "pre-tool-use"
+	eventPostToolUse      = "post-tool-use"
+	eventSessionStart     = "session-start"
+	eventUserPromptSubmit = "user-prompt-submit"
+)
+
+// Deny presentations: the `--decision` values of pre-tool-use.
+const (
+	decisionJSON  = "json"
+	decisionExit2 = "exit2"
+)
+
 // hookDispatch maps each hook event to its handler. cmdHook fails closed on unknown events.
 var hookDispatch = map[string]func(args []string) int{
-	"pre-tool-use":       cmdHookPreToolUse,
-	"post-tool-use":      cmdHookPostToolUse,
-	"session-start":      cmdHookSessionStart,
-	"user-prompt-submit": cmdHookUserPromptSubmit,
+	eventPreToolUse:       cmdHookPreToolUse,
+	eventPostToolUse:      cmdHookPostToolUse,
+	eventSessionStart:     cmdHookSessionStart,
+	eventUserPromptSubmit: cmdHookUserPromptSubmit,
 }
 
 // cmdHook dispatches the hook enforcer subcommands (the hot path: fast, fail-closed).
@@ -79,7 +93,7 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 
 	// The prompt secret scan runs sandboxed or not. Soft warn-and-resubmit, keyed per prompt.
 	// When the policy cannot be evaluated, it scans for known credential formats only.
-	resp := evaluate(sidecar.Request{Type: "user-prompt-submit"}, data)
+	resp := evaluate(sidecar.Request{Type: eventUserPromptSubmit}, data)
 	if resp.Error != "" {
 		if code, handled := promptSecretWarn(ev, 0, policy.IncidentHint, nil, stdout); handled {
 			return code
@@ -281,9 +295,9 @@ func (s *stringSlice) Set(v string) error {
 // cmdHookPreToolUse runs the PreToolUse gate: install fail-closed signal handling, evaluate
 // stdin, reproduce the answer, exit 0 or 2.
 func cmdHookPreToolUse(args []string) int {
-	fs := flag.NewFlagSet("pre-tool-use", flag.ContinueOnError)
-	decision := fs.String("decision", "json", "how to report a block: \"json\" (clean policy decision) or \"exit2\"")
-	if err := fs.Parse(args); err != nil {
+	fs := flag.NewFlagSet(eventPreToolUse, flag.ContinueOnError)
+	decision := fs.String("decision", decisionJSON, fmt.Sprintf("how to report a block: %q (clean policy decision) or %q", decisionJSON, decisionExit2))
+	if err := fs.Parse(args); err != nil || (*decision != decisionJSON && *decision != decisionExit2) {
 		// A gate that can't parse its own flags must block.
 		fmt.Fprintln(os.Stderr, "corral: bad hook arguments, blocking (fail-closed)")
 		return policy.ExitBlock
@@ -297,7 +311,7 @@ func cmdHookPreToolUse(args []string) int {
 		fmt.Fprintf(os.Stderr, "corral: cannot read hook input, blocking: %v\n", err)
 		return policy.ExitBlock
 	}
-	resp := evaluate(sidecar.Request{Type: "pre-tool-use", Decision: *decision}, data)
+	resp := evaluate(sidecar.Request{Type: eventPreToolUse, Decision: *decision}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, blocking (fail-closed): %s\n", resp.Error)
 		return policy.ExitBlock
@@ -333,7 +347,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 		}
 	}()
 
-	fs := flag.NewFlagSet("post-tool-use", flag.ContinueOnError)
+	fs := flag.NewFlagSet(eventPostToolUse, flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		// Learn the tool name before withholding: otherwise pre-parse paths fall back to the
 		// Bash schema, which an mcp__* caller silently ignores.
@@ -349,7 +363,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 	} else {
 		gate.ObserveShapeFrom(bytes.NewReader(data))
 	}
-	resp := evaluate(sidecar.Request{Type: "post-tool-use"}, data)
+	resp := evaluate(sidecar.Request{Type: eventPostToolUse}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, withholding the tool response (fail-closed): %s\n", resp.Error)
 		return gate.Replace("[corral] tool response withheld — could not evaluate policy (fail-closed)")
@@ -429,19 +443,19 @@ func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, e
 		var stdout, stderr bytes.Buffer
 		var code int
 		switch req.Type {
-		case "pre-tool-use":
+		case eventPreToolUse:
 			eng, err := build(fsys)
 			if err != nil {
 				return sidecar.Response{Error: err.Error()}
 			}
 			present := policy.PresentJSON
-			if req.Decision == "exit2" {
+			if req.Decision == decisionExit2 {
 				present = policy.PresentExit2
 			}
 			code = policy.RunHookWithAudit(eng, aud, fsys, bytes.NewReader(payload), &stdout, &stderr, present)
-		case "post-tool-use":
+		case eventPostToolUse:
 			code = policy.RunPostToolUseHook(entropy, 0, hint, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
-		case "user-prompt-submit":
+		case eventUserPromptSubmit:
 			ev, _ := policy.ParseEvent(payload)
 			code, _ = promptSecretWarn(ev, entropy, hint, aud, &stdout)
 		default:
