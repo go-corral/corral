@@ -639,13 +639,7 @@ When the live log is older than `rotateInterval`, corral renames it to
 adds `.gz` when `gzip` is enabled. Durations accept Go units such as `12h` and `90m`,
 plus `d` (day), `w` (week), `mo` (30 days), and `y` (365 days).
 
-- **`path`** (absolute or `~`-relative path, default empty): log file location. An empty
-  value places `corral-audit.jsonl` under the selected agent's config directory:
-  `$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, and `$PI_CODING_AGENT_DIR` or
-  `~/.pi` for pi. In the sandbox, `CORRAL_AUDIT_PATH` holds the log path. For a custom
-  path, corral creates the parent directory and adds it to
-  [`providers.paths.rw`](#providerspaths), so use a dedicated directory. corral refuses
-  a parent directory that is or contains the home directory.
+- **`path`** (absolute or `~`-relative path, default empty): log file location, by default `$XDG_STATE_HOME/corral/audit/<hash>/corral-audit.jsonl` or `~/.local/state/corral/audit/<hash>/corral-audit.jsonl` when `XDG_STATE_HOME` is unset or not an absolute path.
 - **`rotateInterval`** (duration, default `1w`): age at which corral rotates the live
   log. Must be positive.
 - **`retention`** (duration, default `6mo`): how long to keep a rotated backup, measured

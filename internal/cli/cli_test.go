@@ -183,6 +183,7 @@ func TestCmdHookWritesAuditLog(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	t.Setenv("XDG_STATE_HOME", "")
 
 	// A deny (Write of an AWS key, caught by the content scanner) and an allow.
 	aws := "AKIAIOSFODNN7EXAMPLE"
@@ -198,12 +199,7 @@ func TestCmdHookWritesAuditLog(t *testing.T) {
 		t.Fatalf("ls should allow: %d", code)
 	}
 
-	// Locate the log (the config dir may be canonicalized through /tmp symlinks).
-	logDir := cfgDir
-	if real, err := filepath.EvalSymlinks(cfgDir); err == nil {
-		logDir = real
-	}
-	data, err := os.ReadFile(filepath.Join(logDir, "corral-audit.jsonl"))
+	data, err := os.ReadFile(defaultAuditPath(filepath.Join(home, ".local", "state"), cfgDir))
 	if err != nil {
 		t.Fatalf("audit log not written: %v", err)
 	}

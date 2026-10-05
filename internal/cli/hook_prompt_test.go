@@ -273,32 +273,11 @@ func TestHooksDisabledBlocksNothingAndAuditsOnce(t *testing.T) {
 	}
 
 	// Exactly one "hooks-disabled" audit line for all of those invocations.
-	var found int
-	for _, e := range mustReadDirFiles(t, dir) {
-		found += strings.Count(e, `"hooks-disabled"`)
-	}
-	if found != 1 {
-		t.Errorf("want exactly 1 hooks-disabled audit line, got %d", found)
-	}
-}
-
-// mustReadDirFiles returns the contents of every regular file directly under dir.
-func mustReadDirFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
+	data, err := os.ReadFile(defaultAuditPath(filepath.Join(dir, ".local", "state"), dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		out = append(out, string(b))
+	if found := strings.Count(string(data), `"hooks-disabled"`); found != 1 {
+		t.Errorf("want exactly 1 hooks-disabled audit line, got %d", found)
 	}
-	return out
 }

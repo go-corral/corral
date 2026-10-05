@@ -27,7 +27,7 @@ command only lists the state and agent integrations it would remove.
    - deletes the cache, including private homes and scratch space used for
      agent-installed dependencies;
    - deletes repository approval records;
-   - deletes the audit log and its rotated backups.
+   - deletes the audit logs at `policy.audit.path` and in `<state dir>/corral/audit`. The state-directory step deletes the trust store and keeps `<state dir>/corral/audit`, so declining the audit step keeps the logs.
 
    `--yes` skips these prompts. Declining a prompt skips only that step. If a
    repository enables a provider in its own `.corral.yml`, run `corral gc` from that
@@ -58,7 +58,7 @@ Delete the four `hooks` entries in
 mentions `hook pre-tool-use`, `hook post-tool-use`, `hook session-start`, or
 `hook user-prompt-submit`, and delete
 `~/.pi/agent/extensions/corral-presence.ts`. Then delete the remaining state:
-`~/.cache/corral`, `~/.local/state/corral`, and `~/.claude/corral-audit.jsonl*`.
+`~/.cache/corral`, `~/.local/state/corral`
 
 Paths assume the defaults: adjust for `$XDG_STATE_HOME`, `$XDG_CONFIG_HOME`,
 or `$CLAUDE_CONFIG_DIR` if you've overridden them, and if you set

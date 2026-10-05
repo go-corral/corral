@@ -122,10 +122,6 @@ func gateKubeconfigs(cfg *config.Config, clusters []kubernetes.ResolvedCluster, 
 	if privHome != "" {
 		dirs = append(dirs, privHome)
 	}
-	// The launch adds the audit-log directory to providers.paths.rw after the gate.
-	if p := cfg.Policy.Audit.Path; p != "" {
-		dirs = append(dirs, filepath.Dir(p))
-	}
 	var writable []string
 	for _, d := range dirs {
 		writable = append(writable, filepath.Clean(d), pathutil.Resolve(d))

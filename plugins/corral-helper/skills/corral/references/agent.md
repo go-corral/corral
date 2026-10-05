@@ -83,8 +83,8 @@ After the user restarts through the alias or `corral run`:
 4. If a provider was enabled, run the verification command from its setup guide: [providers.md](how-to/providers.md), [kubernetes.md](how-to/kubernetes.md), or [gitlab.md](how-to/gitlab.md). With several Kubernetes clusters, run the Kubernetes commands once per cluster with `--context <key>`.
 
 Treat a failed probe as a diagnosis task. Capture `doctor`, `validate`, and the audit
-record's `rule` and `reason`; the current session logs to the file in
-`$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). Then follow
+record's `rule` and `reason`; the current session logs to the host file in
+`$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). The sandbox cannot open that file unless the workdir or a `providers.paths` grant contains it. When neither contains it, ask the user to read it on the host. Then follow
 [troubleshooting.md](how-to/troubleshooting.md).
 
 ## Run commands for the user

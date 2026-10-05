@@ -138,7 +138,7 @@ type cacheEntry struct {
 
 // stateFootprint is corral's state dir: the trust store's approval records.
 type stateFootprint struct {
-	Dir      string // ~/.local/state/corral (or $XDG_STATE_HOME/corral) — what gets removed
+	Dir      string // ~/.local/state/corral (or $XDG_STATE_HOME/corral) — what gets removed, except audit/
 	TrustDir string // <Dir>/trust — where the approval records live
 	Exists   bool
 	Records  int
@@ -266,28 +266,20 @@ func collectStateFootprint(home string) stateFootprint {
 	return out
 }
 
-// collectAuditFootprint resolves the audit logs uninstall would delete. effectiveAuditPath is
-// the same resolver the hook's auditor uses.
+// collectAuditFootprint resolves the audit logs uninstall would delete: policy.audit.path when
+// set, every known agent's default and legacy default, and every other log in the audit
+// directory.
 func collectAuditFootprint(cfg *config.Config, home string, host map[string]string) []auditFootprint {
 	if cfg == nil {
 		cfg = &config.Config{} // unloadable config: fall back to the per-agent defaults
 	}
 	seen := map[string]bool{}
 	var out []auditFootprint
-	for _, name := range agents.Known() {
-		a, ok := agents.Lookup(name)
-		if !ok {
-			continue
-		}
-		path := effectiveAuditPath(cfg, a.ConfigDir(home, host))
+	add := func(path, source string) {
 		if seen[path] {
-			continue
+			return
 		}
 		seen[path] = true
-		source := name + " default"
-		if cfg.Policy.Audit.Path != "" {
-			source = "policy.audit.path"
-		}
 		af := auditFootprint{Path: path, Source: source, Lock: path + ".lock"}
 		if info, err := os.Stat(path); err == nil {
 			af.Exists, af.Size = true, info.Size()
@@ -297,6 +289,25 @@ func collectAuditFootprint(cfg *config.Config, home string, host map[string]stri
 			}
 		}
 		out = append(out, af)
+	}
+	if p := cfg.Policy.Audit.Path; p != "" {
+		add(p, "policy.audit.path")
+	}
+	stateDir := trust.StateDir(home, host["XDG_STATE_HOME"])
+	for _, name := range agents.Known() {
+		a, ok := agents.Lookup(name)
+		if !ok {
+			continue
+		}
+		configDir := a.ConfigDir(home, host)
+		add(defaultAuditPath(stateDir, configDir), name+" default")
+		add(legacyAuditPath(configDir), name+" legacy default")
+	}
+	// The audit directory is corral's, so a log keyed by a config dir that is no longer set is
+	// corral's too.
+	others, _ := filepath.Glob(filepath.Join(stateDir, "corral", "audit", "*", "corral-audit.jsonl"))
+	for _, p := range others {
+		add(p, "other agent config dir")
 	}
 	return out
 }
@@ -433,9 +444,9 @@ func applyUninstall(opts uninstallOptions, fp uninstallFootprint, in io.Reader, 
 	failed := uninstallGCPhase(opts, fp, in, out)
 	failed = deregisterPhase(opts, in, out) || failed
 	failed = removePhase(opts, in, out, "cache", fp.Cache.Dir, fp.Cache.Exists,
-		fmt.Sprintf("%d entr%s", len(fp.Cache.Entries), plural(len(fp.Cache.Entries), "y", "ies"))) || failed
+		fmt.Sprintf("%d entr%s", len(fp.Cache.Entries), plural(len(fp.Cache.Entries), "y", "ies")), os.RemoveAll) || failed
 	failed = removePhase(opts, in, out, "state directory", fp.State.Dir, fp.State.Exists,
-		fmt.Sprintf("%d approval record(s)", fp.State.Records)) || failed
+		fmt.Sprintf("%d approval record(s); the audit logs are the next step", fp.State.Records), removeStateDir) || failed
 	failed = auditPhase(opts, fp, in, out) || failed
 
 	reportUninstallKept(out, c, fp)
@@ -517,9 +528,9 @@ func deregisterPhase(opts uninstallOptions, in io.Reader, out io.Writer) bool {
 	return failed
 }
 
-// removePhase deletes one of corral's directories wholesale. what describes its contents
+// removePhase deletes one of corral's directories with remove. what describes its contents
 // in the prompt.
-func removePhase(opts uninstallOptions, in io.Reader, out io.Writer, section, dir string, exists bool, what string) bool {
+func removePhase(opts uninstallOptions, in io.Reader, out io.Writer, section, dir string, exists bool, what string, remove func(string) error) bool {
 	c := opts.Colors
 	uninstallSection(out, c, section, "")
 	path := abbrevHome(dir, opts.Home)
@@ -531,7 +542,30 @@ func removePhase(opts uninstallOptions, in io.Reader, out io.Writer, section, di
 		skipped(out, c)
 		return false
 	}
-	return deleteReported(out, c, path, os.RemoveAll(dir))
+	return deleteReported(out, c, path, remove(dir))
+}
+
+// removeStateDir deletes corral's state dir except its audit directory, which the audit phase
+// deletes.
+func removeStateDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	kept := false
+	for _, e := range entries {
+		if e.Name() == "audit" {
+			kept = true
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	if kept {
+		return nil
+	}
+	return os.Remove(dir)
 }
 
 // deleteReported reports one deletion and whether it failed.
@@ -586,6 +620,16 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 			failed = deleteReported(out, c, abbrevHome(t, opts.Home), err) || failed
 		}
 	}
+	// Remove the directories the deletions left empty. os.Remove keeps a directory that is not
+	// empty, such as a state dir whose deletion was declined.
+	auditDir := filepath.Join(fp.State.Dir, "audit")
+	for _, af := range present {
+		if filepath.Dir(filepath.Dir(af.Path)) == auditDir {
+			_ = os.Remove(filepath.Dir(af.Path))
+		}
+	}
+	_ = os.Remove(auditDir)
+	_ = os.Remove(fp.State.Dir)
 	return failed
 }
 

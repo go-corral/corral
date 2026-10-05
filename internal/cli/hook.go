@@ -16,8 +16,10 @@ import (
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/providers/aiignore"
+	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sidecar"
+	"github.com/go-corral/corral/internal/trust"
 )
 
 // Hook event names: the `corral hook` subcommands and the sidecar request types.
@@ -393,12 +395,14 @@ func localEngineInputs() (engineInputs, error) {
 		return engineInputs{}, fmt.Errorf("load config: %w", err)
 	}
 	env := envMap()
-	configDir, err := canonicalAgentConfigDir(cfg, home, env, policy.OSFS{})
-	if err != nil {
+	// Fail closed on an agent config dir the engine cannot canonicalize, for every event. The
+	// audit path keys on the uncanonicalized dir, as the launcher's does.
+	if _, err := canonicalAgentConfigDir(cfg, home, env, policy.OSFS{}); err != nil {
 		return engineInputs{}, err
 	}
 	wd, _ := os.Getwd()
-	return engineInputs{cfg: cfg, home: home, env: env, workDir: wd, auditPath: effectiveAuditPath(cfg, configDir)}, nil
+	auditPath := effectiveAuditPath(cfg, trust.StateDir(home, env["XDG_STATE_HOME"]), cfg.AgentConfigDir(home, env))
+	return engineInputs{cfg: cfg, home: home, env: env, workDir: wd, auditPath: auditPath}, nil
 }
 
 // evaluate answers one hook event. With a sidecar it forwards the event. Inside the sandbox
@@ -614,27 +618,38 @@ func agentFootprints(cfg *config.Config) (policy.AgentFootprint, []policy.AgentF
 // effectiveAuditPath returns the resolved audit-log path: the launcher's pin
 // (CORRAL_AUDIT_PATH) when set, else the configured path. Shared by the auditor (writes)
 // and the self-protect gate (guards), so they never diverge.
-func effectiveAuditPath(cfg *config.Config, configDir string) string {
+func effectiveAuditPath(cfg *config.Config, stateDir, configDir string) string {
 	if p := os.Getenv(sandbox.AuditPathEnvVar); p != "" {
 		return p
 	}
-	return configuredAuditPath(cfg, configDir)
+	return configuredAuditPath(cfg, stateDir, configDir)
 }
 
-// configuredAuditPath returns the audit path from config alone: policy.audit.path or
-// the default <configDir>/corral-audit.jsonl. The launcher resolves with this half — a
-// nested launch must resolve from its own config, not inherit the enclosing sandbox's pin.
-func configuredAuditPath(cfg *config.Config, configDir string) string {
+// configuredAuditPath returns the audit path from config alone: policy.audit.path or the
+// default. The launcher resolves with this half — a nested launch must resolve from its own
+// config, not inherit the enclosing sandbox's pin.
+func configuredAuditPath(cfg *config.Config, stateDir, configDir string) string {
 	if p := cfg.Policy.Audit.Path; p != "" {
 		return p
 	}
+	return defaultAuditPath(stateDir, configDir)
+}
+
+// defaultAuditPath is the default audit log of the agent config dir configDir, in a state
+// directory the sandbox does not mount. configDir is uncanonicalized, as for the private home,
+// so the launcher and a bare session with the same inputs resolve the same file.
+func defaultAuditPath(stateDir, configDir string) string {
+	return filepath.Join(stateDir, "corral", "audit", home.ConfigDirKey(configDir), "corral-audit.jsonl")
+}
+
+// legacyAuditPath is the former default audit log, inside the agent config dir.
+func legacyAuditPath(configDir string) string {
 	return filepath.Join(configDir, "corral-audit.jsonl")
 }
 
 // buildAuditor returns the always-on audit callback. Tool-call decisions are logged unconditionally,
-// so it is non-disableable — no nil/off path. The default log lives under the effective agent config
-// dir (for claude, $CLAUDE_CONFIG_DIR or ~/.claude). In a corral session the sidecar writes it from
-// the host. Writing is best-effort: a logging error is swallowed, never changing a verdict or failing
+// so it is non-disableable — no nil/off path. In a corral session the sidecar writes it from the
+// host. Writing is best-effort: a logging error is swallowed, never changing a verdict or failing
 // the hook.
 func buildAuditor(cfg *config.Config, auditPath string) policy.AuditFunc {
 	logger := audit.New(cfg.Policy.Audit, auditPath)

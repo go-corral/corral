@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/audit"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/health"
@@ -26,6 +27,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
 	"github.com/go-corral/corral/internal/sidecar"
+	"github.com/go-corral/corral/internal/trust"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -166,7 +168,7 @@ func cmdRun(args []string, version string) int {
 	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, *yes, os.Stdin, os.Stderr, c) {
 		return 1
 	}
-	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
+	if err := prepareAuditDir(cfg, *home, *dryRun); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
@@ -196,7 +198,9 @@ func cmdRun(args []string, version string) int {
 	}
 	// Pin the audit-log path so the sidecar and commands inside the sandbox do not resolve it
 	// against the private home.
-	spec.SetEnv[sandbox.AuditPathEnvVar] = configuredAuditPath(cfg, cfg.AgentConfigDir(*home, host))
+	agentConfigDir := cfg.AgentConfigDir(*home, host)
+	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
+	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
 	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
 	launch := cfg.AgentLaunch()
@@ -278,7 +282,7 @@ func cmdRun(args []string, version string) int {
 		version:  version,
 		home:     *home,
 		workdir:  spec.WorkDir,
-		auditLog: effectiveAuditPath(cfg, cfg.AgentConfigDir(*home, host)),
+		auditLog: auditPath,
 		profiles: []string(*profiles),
 	}
 
@@ -372,6 +376,14 @@ func cmdRun(args []string, version string) int {
 	writeBannerBody(os.Stderr, c, *home, notices, nil)
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
+
+	// Move the selected agent's legacy default log before the sidecar writes the new one.
+	if cfg.Policy.Audit.Path == "" {
+		for _, err := range audit.MoveLegacy(legacyAuditPath(agentConfigDir), auditPath) {
+			c.Message(os.Stderr, report.Attention, fmt.Sprintf("legacy audit log not moved: %v; move the file into %s or delete it by hand",
+				err, filepath.Dir(auditPath)))
+		}
+	}
 
 	// The sidecar evaluates the session's hook events against a policy fixed here, built from
 	// what the sandbox sees: its HOME, environment, and working directory.

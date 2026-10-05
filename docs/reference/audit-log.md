@@ -1,11 +1,6 @@
 # Audit-log format
 
-Every policy decision is appended as one JSON line to the audit log. The default
-is `corral-audit.jsonl` under the selected agent's config directory:
-`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, and
-`$PI_CODING_AGENT_DIR` or `~/.pi` for pi. Location, rotation, and retention are
-configured by [`policy.audit`](config.md#policyaudit); recipes for reading it are in
-[troubleshooting](../how-to/troubleshooting.md#reading-the-audit-log).
+Every policy decision is appended as one JSON line to the audit log. The default is `$XDG_STATE_HOME/corral/audit/<hash>/corral-audit.jsonl`, or `~/.local/state/corral/audit/<hash>/corral-audit.jsonl` when `XDG_STATE_HOME` is unset or not an absolute path. `<hash>` is the first 4 bytes of the SHA-256 of the selected agent's config directory, in hex. The config directory is `$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, and `$PI_CODING_AGENT_DIR` or `~/.pi` for pi. The same `<hash>` names the private home `~/.cache/corral/home-<hash>`. The startup banner prints the exact path. Location, rotation, and retention are configured by [`policy.audit`](config.md#policyaudit); recipes for reading it are in [troubleshooting](../how-to/troubleshooting.md#reading-the-audit-log).
 
 Each record:
 
@@ -32,8 +27,4 @@ limits. Other values are replaced with their byte count.
   `plan`, and `message` instruction fields; and other free-text MCP arguments. A counted
   value appears as `"content_bytes": 2148`.
 
-[`policy.audit.path`](config.md#policyaudit) sets the log location. Policy blocks agent
-tool calls that try to write, truncate, or delete the live log and its backups.
-
-Before sharing an audit record, inspect every retained `command`, WebSearch `query`, and
-WebFetch `url`. These fields may contain an inline token.
+Before sharing an audit record, inspect every retained `command`, WebSearch `query`, and WebFetch `url`. These fields may contain an inline token.
