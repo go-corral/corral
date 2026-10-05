@@ -355,6 +355,26 @@ func TestCmdHookPreToolUseRejectsRemovedFlags(t *testing.T) {
 	}
 }
 
+func TestCmdHookPreToolUseRejectsUnknownDecision(t *testing.T) {
+	serveHandler(t, func(sidecar.Request, []byte, policy.FS) sidecar.Response { return sidecar.Response{} })
+	var code int
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			withStdin(t, bashPreToolUse("ls -la"), func() { code = cmdHook([]string{"pre-tool-use", "--decision", "yaml"}) })
+		})
+	})
+	if code != policy.ExitBlock {
+		t.Errorf("got exit %d, want %d", code, policy.ExitBlock)
+	}
+	if !strings.Contains(stderr, "corral: bad hook arguments, blocking (fail-closed)") {
+		t.Errorf("stderr = %q, want the bad-arguments message", stderr)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+}
+
 // Inside the sandbox, a missing or dead sidecar blocks with a message that names the cause.
 func TestCmdHookPreToolUseWithoutSidecarBlocks(t *testing.T) {
 	for _, tc := range []struct {
