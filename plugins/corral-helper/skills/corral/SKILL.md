@@ -151,9 +151,7 @@ Inside an active corral sandbox, policy blocks writes to corral's config files. 
 - **Config keys and defaults:** [config.md](references/reference/config.md).
 - **Claude Code versus pi:** [agents.md](references/reference/agents.md).
 - **SSH, Docker, or private home:** [providers.md](references/how-to/providers.md).
-- **Kubernetes:** [kubernetes.md](references/how-to/kubernetes.md). Do not recommend
-  `preProvisioned` mode without explaining that users with `edit` in its dedicated
-  namespace share all access assigned to the ServiceAccount group.
+- **Kubernetes:** [kubernetes.md](references/how-to/kubernetes.md). Ask which clusters and contexts the session needs and which one is the default. Declare several clusters in `providers.kubernetes.clusters`. Do not recommend `preProvisioned` mode without explaining that users with `edit` in its dedicated namespace share all access assigned to the ServiceAccount group.
 - **GitLab:** [gitlab.md](references/how-to/gitlab.md). Confirm the instance runs GitLab
   19.2 or later, and ask which projects or groups the session needs and whether the
   `read` or `write` preset fits each, plus any extra permissions, before writing

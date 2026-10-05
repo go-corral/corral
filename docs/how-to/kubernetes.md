@@ -128,6 +128,56 @@ The developer's minimal necessary permissions are:
 
 The last permission is optional. If namespace reads are forbidden, corral continues with a warning and reports a less specific error if the namespace does not exist.
 
+## Use multiple clusters
+
+It's possible to create credentials for multiple clusters at once, too. To do that, configure clusters in `providers.kubernetes.clusters`. Every configured cluster will become a context in a single kubeconfig in the sandbox.
+
+```yaml
+providers:
+  kubernetes:
+    enabled: true
+    clusters:
+      prod:
+        default: true
+        kubeconfig:
+          path: ~/.kube/prod
+      staging:
+        kubeconfig:
+          context: staging-admin
+```
+
+Each configured cluster needs information on which cluster it's associated to:
+
+- `kubeconfig.path` points to the kubeconfig to use. A relative path resolves against the directory where you run `corral`. When no path is set, corral loads `$KUBECONFIG`, then `~/.kube/config`.
+- `kubeconfig.context` sets the context to use. Without a context, corral uses the current context of your kubeconfig.
+
+You cannot configure two different contexts against the same Kubernetes API address, they must be unique.
+
+### Config inheritance
+
+The top-level fields are inherited to the clusters. When `permissions` are defined for a cluster, they replace higher level `permissions` and do not extend them.
+
+```yaml
+providers:
+  kubernetes:
+    enabled: true
+    permissions:
+      - clusterRole: edit
+        namespaceSelector:
+          matchLabels:
+            team: platform
+    clusters:
+      staging: {} # inherits the edit permission
+      prod:
+        permissions: # replaces it
+          - clusterWide: true
+            clusterRole: view
+```
+
+### Default context
+
+Set `default: true` on one cluster. The session kubeconfig then sets `current-context` to that cluster, and `kubectl` uses it without `--context`. Other clusters need `kubectl --context <key>`.
+
 ## Verify the session
 
 Launch a new session, then run:
@@ -140,6 +190,12 @@ kubectl auth can-i get pods --namespace app-namespace
 
 The first command should show the per-session ServiceAccount. Replace `app-namespace` with a namespace the session should access. The other commands then reflect the managed-mode `permissions` or the pre-provisioned group bindings in that namespace.
 
+With multiple clusters, add `--context <key>` to reach a cluster that is not the default:
+
+```sh
+kubectl --context staging auth whoami
+```
+
 The requested `tokenLifetime` defaults to `8h` and cannot exceed `24h`. A cluster may return a shorter expiry. The startup banner reports the actual expiry.
 
 ## Fix common failures
@@ -148,4 +204,4 @@ The requested `tokenLifetime` defaults to `8h` and cannot exceed `24h`. A cluste
 - **The host identity cannot grant a role:** You need to already posess the permissions being assigned or a `bind` permission on the referenced Role or ClusterRole, or use `preProvisioned` mode.
 - **The namespace was not provisioned:** Create the configured `serviceAccountNamespace` and its bindings before using `preProvisioned` mode.
 - **The token expires earlier than requested:** The cluster capped the lifetime.
-- **`KUBECONFIG names several files and ... is in a sandbox-writable location`:** corral loads an approved kubeconfig only as a single file. Set `KUBECONFIG` to that one file.
+- **`KUBECONFIG names several files and ... is in a sandbox-writable location`:** corral loads an approved kubeconfig only as a single file. Set `KUBECONFIG` to that one file. For a declared cluster, set its `kubeconfig.path` to that file.

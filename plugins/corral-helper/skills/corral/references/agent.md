@@ -80,9 +80,7 @@ After the user restarts through the alias or `corral run`:
 2. Run `corral doctor` and check that the backend and agent integration are healthy.
 3. Ask the sandboxed agent to read `~/.aws/credentials`; the always-blocked path must be
    refused. Do not attempt to inspect the file outside the sandbox.
-4. If a provider was enabled, run the verification command from its setup guide:
-   [providers.md](how-to/providers.md), [kubernetes.md](how-to/kubernetes.md), or
-   [gitlab.md](how-to/gitlab.md).
+4. If a provider was enabled, run the verification command from its setup guide: [providers.md](how-to/providers.md), [kubernetes.md](how-to/kubernetes.md), or [gitlab.md](how-to/gitlab.md). With several Kubernetes clusters, run the Kubernetes commands once per cluster with `--context <key>`.
 
 Treat a failed probe as a diagnosis task. Capture `doctor`, `validate`, and the audit
 record's `rule` and `reason`; the current session logs to the file in
