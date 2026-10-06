@@ -309,13 +309,13 @@ func TestCmdHookOutputStaysPlain(t *testing.T) {
 		want string
 	}{
 		{nil, "corral hook: missing event (e.g. pre-tool-use)\n"},
-		{[]string{"frobnicate"}, "corral hook: unknown event \"frobnicate\", blocking (fail-closed)\n"},
+		{[]string{"frobnicate"}, "corral: " + policy.FailClosed(`unknown hook event "frobnicate"`) + "\n"},
 	} {
 		if got := captureStderr(t, func() { cmdHook(tt.args) }); got != tt.want {
 			t.Errorf("cmdHook(%q) stderr = %q, want %q", tt.args, got, tt.want)
 		}
 	}
-	if got := captureStderr(t, func() { cmdHook([]string{"pre-tool-use", "--not-a-flag"}) }); !strings.HasSuffix(got, "\ncorral: bad hook arguments, blocking (fail-closed)\n") {
+	if got := captureStderr(t, func() { cmdHook([]string{"pre-tool-use", "--not-a-flag"}) }); !strings.HasSuffix(got, "\ncorral: "+policy.FailClosed("bad hook arguments")+"\n") {
 		t.Errorf("bad-flag stderr = %q", got)
 	}
 

@@ -35,7 +35,7 @@ func (r *AIIgnoreRule) Evaluate(ev *HookEvent) (Decision, bool, error) {
 			return Decision{
 				Action: Deny,
 				Rule:   r.Name(),
-				Reason: fmt.Sprintf("%s is excluded by a repo AI ignore rule (pattern %q); access is blocked by corral policy (resolved %q)", canon, pat, raw),
+				Reason: fmt.Sprintf("%s is excluded by a repo AI ignore rule (pattern %q, resolved %q)", canon, pat, raw),
 			}, true, nil
 		}
 	}

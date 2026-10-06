@@ -82,7 +82,6 @@ policy:
     rotateInterval: 1w
     retention: 6mo
     gzip: true
-  incidentHint: ""
 update:
   checkOnStart: true
 ```
@@ -610,15 +609,6 @@ grants:
 ### `policy`
 
 Tunes the hook-side policy engine.
-
-#### `policy.incidentHint`
-
-- **Type:** string
-- **Default:** empty, which uses `Treat this credential as potentially exposed:
-rotate/revoke it and inform IT/Security.`
-- **Behavior:** replaces the incident-response sentence appended to secret-detection
-  messages. Use it for an organization-specific contact or runbook, and do not include
-  credentials.
 
 #### `policy.secretScan`
 

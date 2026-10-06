@@ -93,16 +93,18 @@ func classifySensitive(p string) (string, bool) {
 		return "a system credential file", true
 	}
 
-	segs := strings.Split(p, "/")
+	segs := strings.Split(strings.TrimRight(p, "/"), "/")
 	for i, seg := range segs {
 		lower := strings.ToLower(seg)
-		if reason, ok := secretDirComponents[lower]; ok {
-			return reason, true
+		reason, ok := secretDirComponents[lower]
+		if !ok && i > 0 {
+			reason, ok = secretDirPairs[[2]string{strings.ToLower(segs[i-1]), lower}]
 		}
-		if i > 0 {
-			if reason, ok := secretDirPairs[[2]string{strings.ToLower(segs[i-1]), lower}]; ok {
-				return reason, true
+		if ok {
+			if i < len(segs)-1 {
+				reason = "a path in " + reason
 			}
+			return reason, true
 		}
 	}
 	return "", false

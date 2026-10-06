@@ -68,7 +68,7 @@ skill is therefore self-contained.
   token of each grant rather than grouping branches and keep validity separate from host readiness. From an active
   sandbox, confirm it asks for host-side `validate` output before using paths to guide a change.
   For audit questions, confirm the helper uses `echo "$CORRAL_AUDIT_PATH"` to name the host file
-  the current session logs to and asks the user to read it on the host, because by default the sandbox cannot open it.
+  the current session logs to and asks the user to read it on the host, because by default the sandbox cannot open it. For a `[hook:<rule>]` deny, confirm the helper proposes the `Fix:` text. For a silent sandbox deny, confirm it proposes no grant for an always-blocked path, a `providers.block` entry, or an AI ignore match.
 - Keep Linux/bwrap and macOS/Seatbelt guidance balanced. Source and CI do not replace
   manual macOS verification for platform-specific behavior.
 

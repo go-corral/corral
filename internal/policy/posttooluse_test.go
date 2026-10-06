@@ -39,7 +39,7 @@ func TestRunPostToolUseSuppressesSecretResponse(t *testing.T) {
 	key := "AKIA" + strings.Repeat("Q", 16)
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"mcp__db__get","tool_response":"the value is ` + key + `"}`
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow {
 		t.Fatalf("the replacement rides in the JSON with exit 0; got code %d", code)
 	}
@@ -56,7 +56,7 @@ func TestRunPostToolUseSuppressesSecretResponse(t *testing.T) {
 func TestRunPostToolUseAllowsCleanResponse(t *testing.T) {
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"mcp__docs__search","tool_response":[{"type":"text","text":"nothing sensitive here"}]}`
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow {
 		t.Fatalf("a clean response must allow; got %d", code)
 	}
@@ -70,7 +70,7 @@ func TestRunPostToolUseAllowsCleanResponse(t *testing.T) {
 // error → replace.
 func TestRunPostToolUseSuppressesOnError(t *testing.T) {
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(""), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(""), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow {
 		t.Fatalf("the error path returns ExitAllow with the replacement in JSON; got %d", code)
 	}
@@ -83,7 +83,7 @@ func TestRunPostToolUseSuppressesOnError(t *testing.T) {
 func TestRunPostToolUseAllowsEmptyResponse(t *testing.T) {
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"mcp__noop__ping","tool_response":null}`
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow || out.Len() != 0 {
 		t.Errorf("an empty response must allow with no output; code=%d out=%q", code, out.String())
 	}
@@ -100,7 +100,7 @@ func TestRunPostToolUseSuppressesBashSecretInStdout(t *testing.T) {
 	token := "ghp_" + strings.Repeat("0123456789abcdef", 3) // 48 chars of token after prefix (>36 required)
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"stdout":"token=` + token + `","stderr":"secret too: ` + token + `","interrupted":false,"isImage":false}}`
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow {
 		t.Fatalf("the replacement rides in the JSON with exit 0; got code %d", code)
 	}
@@ -333,7 +333,7 @@ func replacementLine(s string) string {
 func TestRunPostToolUseAllowsBashCleanResponse(t *testing.T) {
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"stdout":"hello world","stderr":"","exit_code":0}}`
 	var out, errw bytes.Buffer
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow {
 		t.Fatalf("a clean Bash response must allow; got %d", code)
 	}

@@ -143,9 +143,8 @@ type Providers struct {
 
 // Policy tunes the policy engine (the hook-side gates).
 type Policy struct {
-	SecretScan   SecretScan   `yaml:"secretScan"`
-	Audit        audit.Config `yaml:"audit"`
-	IncidentHint string       `yaml:"incidentHint"`
+	SecretScan SecretScan   `yaml:"secretScan"`
+	Audit      audit.Config `yaml:"audit"`
 }
 
 // SecretScan tunes the content secret scanner.
@@ -313,10 +312,6 @@ policy:
     rotateInterval: 1w
     retention: 6mo
     gzip: true
-  # Appended to every secret-detection deny/withhold message as the incident next
-  # step. Empty uses the built-in wording (rotate/revoke + inform IT/Security); set
-  # an org-specific runbook/contact string to override. Never contains a secret.
-  incidentHint: ""
 # Self-update. checkOnStart prints a throttled (once/day, cached under ~/.cache/corral),
 # best-effort "newer version available" notice on 'corral run'; set false to disable all
 # launch-time version checks. The release source is fixed at compile time (the module path)
@@ -546,8 +541,7 @@ func (c *Config) ConfigBlockedFiles(home string) []string {
 }
 
 // EffectiveBlockedPaths returns every path the policy denies: always-blocked,
-// blocked dirs, and blocked files. The single source of truth for the hook deny
-// roots and for diagnostics.
+// blocked dirs, and blocked files, for diagnostics.
 func (c *Config) EffectiveBlockedPaths(home string) []string {
 	return expandDedup(home, AlwaysBlockedPaths, c.Providers.Block.Directories, c.Providers.Block.Files)
 }

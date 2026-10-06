@@ -8,18 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-// IncidentHint is the default incident-response next step appended to every secret-detection
-// deny/withhold message. Exported so the PreToolUse, PostToolUse, and UserPromptSubmit paths share
-// one consistent wording. It names no secret value.
-const IncidentHint = "Treat this credential as potentially exposed: rotate/revoke it and inform IT/Security."
-
-func incidentHintOr(configured string) string {
-	if configured != "" {
-		return configured
-	}
-	return IncidentHint
-}
-
 const defaultScanBytes int64 = 1 << 20 // 1 MiB
 
 func scanLimit(maxScanBytes int64) int64 {
@@ -349,7 +337,6 @@ type SecretScanRule struct {
 	EntropyThreshold float64  // >0 enables the high-entropy heuristic; 0 = known formats only
 	MaxScanBytes     int64    // caps how much of a file is read for the Read scan; 0 → 1 MiB
 	SkipRoots        []string // canonical directory prefixes exempt from scanning
-	IncidentHint     string   // overrides the built-in IncidentHint; empty → default
 }
 
 func (r *SecretScanRule) Name() string { return "secret-scan" }
@@ -380,7 +367,7 @@ func (r *SecretScanRule) evalMCPArgs(ev *HookEvent) (Decision, bool, error) {
 		return Decision{
 			Action: Deny,
 			Rule:   r.Name(),
-			Reason: fmt.Sprintf("the arguments to %s contain %s; sending a secret to an MCP tool is blocked by corral policy. %s", ev.ToolName, res.kind, incidentHintOr(r.IncidentHint)),
+			Reason: fmt.Sprintf("the arguments to MCP tool %s contain %s", ev.ToolName, res.kind),
 		}, true, nil
 	}
 	return Decision{}, false, nil
@@ -396,7 +383,7 @@ func (r *SecretScanRule) evalWrite(ev *HookEvent) (Decision, bool, error) {
 			return Decision{
 				Action: Deny,
 				Rule:   r.Name(),
-				Reason: fmt.Sprintf("the content being written contains %s; writing secrets is blocked by corral policy. %s", res.kind, incidentHintOr(r.IncidentHint)),
+				Reason: fmt.Sprintf("the content being written contains %s", res.kind),
 			}, true, nil
 		}
 	}
@@ -425,7 +412,7 @@ func (r *SecretScanRule) evalRead(ev *HookEvent) (Decision, bool, error) {
 			return Decision{
 				Action: Deny,
 				Rule:   r.Name(),
-				Reason: fmt.Sprintf("%s appears to contain %s; reading it is blocked by corral policy (resolved %q). %s", canon, res.kind, raw, incidentHintOr(r.IncidentHint)),
+				Reason: fmt.Sprintf("%s appears to contain %s (resolved %q)", canon, res.kind, raw),
 			}, true, nil
 		}
 	}

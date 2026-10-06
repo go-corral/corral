@@ -49,7 +49,7 @@ those files.
 
 ### 2. The hook fails closed
 
-The `corral hook` policy path returns only allow or block for a tool call. Malformed input, an unknown event, a rule error, or another evaluation failure result in blocks. Inside a `corral run` session, the hook forwards each event to the sidecar. If the sidecar is missing, unreachable, silent or failing, `PreToolUse` blocks with `cannot evaluate policy, blocking (fail-closed)`. `PostToolUse` withholds the result. `UserPromptSubmit` scans the prompt and warns once asking for a resubmit when it recognizes a credential.
+The `corral hook` policy path returns only allow or block for a tool call. Malformed input, an unknown event, a rule error, or another evaluation failure result in blocks. Inside a `corral run` session, the hook forwards each event to the sidecar. If the sidecar is missing, unreachable, silent or failing, `PreToolUse` blocks with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy`. `PostToolUse` withholds the result. `UserPromptSubmit` scans the prompt and warns once asking for a resubmit when it recognizes a credential.
 
 A post-tool response requires different mechanics because blocking after execution cannot remove data already returned by the tool. If response parsing or scanning fails, corral replaces the response with a withheld marker. It does not pass the original response through.
 

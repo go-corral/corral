@@ -51,9 +51,9 @@ include the result of a session hook or the scope and expiry of a temporary
 credential. `corral validate` lists the contributing config files and summarizes
 selected effective policy before you launch.
 
-The agent receives a shorter session note. It names access the agent needs to use
-correctly, such as `GITLAB_TOKEN`, the active Kubernetes roles, or a relevant command
-quirk. These notes contain metadata, not token values.
+The agent receives a shorter session note. It names the always-blocked paths, the configured blocks, and the AI ignore files, says how each layer reports a block ([deny format](../reference/agents.md#deny-format)), and tells the agent to propose a fix to the user instead of working around the block.
+
+The note also names access the agent needs to use correctly, such as `GITLAB_TOKEN`, the active Kubernetes roles, or a relevant command quirk. These notes contain metadata, not token values.
 
 ## Apply the same policy to Claude Code and pi
 

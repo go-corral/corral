@@ -50,21 +50,25 @@ func TestBlockMintDryRunIdentical(t *testing.T) {
 	}
 }
 
-// The AgentNote stays terse for a huge block list: capped by spec.Summarize.
-func TestBlockNoteCapped(t *testing.T) {
-	var dirs []string
-	for i := 0; i < 10; i++ {
-		dirs = append(dirs, "/d"+string(rune('0'+i)))
-	}
-	c, err := New(dirs, nil).Mint(context.Background(), spec.Session{}, false)
+// The AgentNote lists every entry with no cap, so the agent can check a path against it, and
+// states that the user can remove an entry.
+func TestBlockNoteListsEveryEntry(t *testing.T) {
+	dirs := []string{"/d0", "/d1", "/d2", "/d3", "/d4"}
+	files := []string{"/f0.env", "/f1.env", "/f2.env"}
+	c, err := New(dirs, files).Mint(context.Background(), spec.Session{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	note := c.AgentNotes[0]
-	if !strings.Contains(note, "(+4 more)") {
-		t.Errorf("note must cap the path list: %q", note)
+	for _, p := range append(dirs, files...) {
+		if !strings.Contains(note, "`"+p+"`") {
+			t.Errorf("note must name %s: %q", p, note)
+		}
 	}
-	if strings.Contains(note, "/d7") {
-		t.Errorf("capped note must not list every path: %q", note)
+	if strings.Contains(note, "more") {
+		t.Errorf("note must not summarize the list: %q", note)
+	}
+	if !strings.Contains(note, "the user can remove an entry") {
+		t.Errorf("note must state that the user can remove an entry: %q", note)
 	}
 }
