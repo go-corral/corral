@@ -8,11 +8,12 @@ import (
 	"time"
 )
 
-// MoveLegacy moves the log at from and its rotated backups into the directory of to, then
-// removes from's lock file. The live log becomes to when to does not exist, else a rotated
-// backup of to. Backups keep their names. It holds the flock of both logs, so a concurrent
-// writer of either loses no record. Each file that stays in place, because its rename fails or
-// its target name exists, yields one error.
+// MoveLegacy moves the log at from and its rotated backups into the directory of to. The live
+// log becomes to when to does not exist, else a rotated backup of to. Backups keep their names.
+// It holds the flock of both logs, so a concurrent writer of either loses no record. It keeps
+// from's lock file, so a writer that waits on that lock and a later writer share one lock.
+// Each file that stays in place, because its rename fails or its target name exists, yields one
+// error.
 func MoveLegacy(from, to string) []error {
 	// Nothing to move must leave no trace, not even the lock files, so check before creating any.
 	if len(Backups(from)) == 0 {
@@ -55,7 +56,6 @@ func MoveLegacy(from, to string) []error {
 			errs = append(errs, err)
 		}
 	}
-	_ = os.Remove(from + ".lock")
 	return errs
 }
 

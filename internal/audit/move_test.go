@@ -53,10 +53,14 @@ func TestMoveLegacyMovesLogAndBackups(t *testing.T) {
 	if got := readFile(t, filepath.Join(filepath.Dir(to), filepath.Base(backup))); got != "old\n" {
 		t.Errorf("backup content = %q, want %q", got, "old\n")
 	}
-	for _, p := range []string{from, backup, from + ".lock"} {
+	for _, p := range []string{from, backup} {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("%s must be gone, stat err: %v", p, err)
 		}
+	}
+	// A writer that waits on the legacy lock must keep sharing it with later writers.
+	if _, err := os.Lstat(from + ".lock"); err != nil {
+		t.Errorf("legacy lock file must stay: %v", err)
 	}
 }
 
