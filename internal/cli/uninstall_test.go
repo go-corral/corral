@@ -359,6 +359,35 @@ func TestUninstallDeletesLogOfOtherConfigDir(t *testing.T) {
 	mustNotExist(t, other, other+".lock", seed.StateDir)
 }
 
+// Rotated backups and the lock file of a log whose live file is gone are listed and deleted:
+// a moved legacy log leaves its lock file, and a key directory can hold only backups.
+func TestUninstallDeletesBackupsWithoutLiveLog(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	seed := seedUninstallFootprint(t, home)
+	fakeUninstallBinary(t, home)
+	if err := os.Remove(seed.AuditLegacy); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(seed.StateDir, "audit", "deadbeef", "corral-audit.jsonl")
+	writeFiles(t, map[string]string{
+		other + ".20260102T000000Z": "{\"tool\":\"Read\"}\n",
+		seed.AuditLegacy + ".lock":  "",
+	})
+
+	out, code := runUninstallCmd(t, "")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustContain(t, out, abbrevHome(other, home)+" (other agent config dir)", "no live log, 1 rotated backup(s)")
+
+	out, code = runUninstallCmd(t, "", "--apply", "--yes")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustNotExist(t, other+".20260102T000000Z", seed.AuditLegacyOld, seed.AuditLegacy+".lock", seed.StateDir)
+}
+
 // --- degradation ---
 
 // An invalid global config must not block the uninstall: the manifest warns and falls back to

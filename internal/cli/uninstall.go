@@ -280,13 +280,13 @@ func collectAuditFootprint(cfg *config.Config, home string, host map[string]stri
 			return
 		}
 		seen[path] = true
-		af := auditFootprint{Path: path, Source: source, Lock: path + ".lock"}
+		// Backups and the lock file can outlive the live log.
+		af := auditFootprint{Path: path, Source: source, Lock: path + ".lock", Backups: audit.Backups(path)}
 		if info, err := os.Stat(path); err == nil {
 			af.Exists, af.Size = true, info.Size()
-			af.Backups = audit.Backups(path)
-			if _, lerr := os.Stat(af.Lock); lerr == nil {
-				af.LockExists = true
-			}
+		}
+		if _, err := os.Stat(af.Lock); err == nil {
+			af.LockExists = true
 		}
 		out = append(out, af)
 	}
@@ -304,12 +304,17 @@ func collectAuditFootprint(cfg *config.Config, home string, host map[string]stri
 		add(legacyAuditPath(configDir), name+" legacy default")
 	}
 	// The audit directory is corral's, so a log keyed by a config dir that is no longer set is
-	// corral's too.
-	others, _ := filepath.Glob(filepath.Join(stateDir, "corral", "audit", "*", "corral-audit.jsonl"))
+	// corral's too. The glob also finds a key directory that holds only backups or the lock file.
+	others, _ := filepath.Glob(filepath.Join(stateDir, "corral", "audit", "*", "corral-audit.jsonl*"))
 	for _, p := range others {
-		add(p, "other agent config dir")
+		add(filepath.Join(filepath.Dir(p), "corral-audit.jsonl"), "other agent config dir")
 	}
 	return out
+}
+
+// present reports whether any file of the log is on disk.
+func (af auditFootprint) present() bool {
+	return af.Exists || len(af.Backups) > 0 || af.LockExists
 }
 
 // --- manifest rendering ---
@@ -384,11 +389,15 @@ func reportUninstallState(out io.Writer, c report.Style, fp uninstallFootprint) 
 
 	for _, af := range fp.Audit {
 		text := fmt.Sprintf("%s (%s)", abbrevHome(af.Path, fp.Home), af.Source)
-		if !af.Exists {
+		if !af.present() {
 			c.Row(out, report.Row{Glyph: report.Off, Label: "audit", Value: text + " — not present"})
 			continue
 		}
-		detail := fmt.Sprintf("%s, %d rotated backup(s)", humanSize(af.Size), len(af.Backups))
+		live := "no live log"
+		if af.Exists {
+			live = humanSize(af.Size)
+		}
+		detail := fmt.Sprintf("%s, %d rotated backup(s)", live, len(af.Backups))
 		if af.LockExists {
 			detail += ", + " + filepath.Base(af.Lock)
 		}
@@ -579,13 +588,13 @@ func deleteReported(out io.Writer, c report.Style, path string, err error) bool 
 	return false
 }
 
-// auditPhase deletes each existing audit log with its rotated backups and lock file.
+// auditPhase deletes each present audit log with its rotated backups and lock file.
 func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out io.Writer) bool {
 	c := opts.Colors
 	uninstallSection(out, c, "audit logs", "")
 	var present []auditFootprint
 	for _, af := range fp.Audit {
-		if af.Exists {
+		if af.present() {
 			present = append(present, af)
 		}
 	}
@@ -593,12 +602,19 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 		c.Message(out, report.Off, "no audit log present")
 		return false
 	}
+	var targets [][]string
 	files := 0
 	for _, af := range present {
-		files += 1 + len(af.Backups)
-		if af.LockExists {
-			files++
+		var t []string
+		if af.Exists {
+			t = append(t, af.Path)
 		}
+		t = append(t, af.Backups...)
+		if af.LockExists {
+			t = append(t, af.Lock)
+		}
+		targets = append(targets, t)
+		files += len(t)
 	}
 	if !confirmPhase(opts, in, out, fmt.Sprintf("Delete %d audit log(s) and their rotated backups — %d file(s) total? [y/N] ",
 		len(present), files)) {
@@ -606,12 +622,8 @@ func auditPhase(opts uninstallOptions, fp uninstallFootprint, in io.Reader, out 
 		return false
 	}
 	failed := false
-	for _, af := range present {
-		targets := append([]string{af.Path}, af.Backups...)
-		if af.LockExists {
-			targets = append(targets, af.Lock)
-		}
-		for _, t := range targets {
+	for _, paths := range targets {
+		for _, t := range paths {
 			err := os.Remove(t)
 			// A file that vanished under us is the outcome we wanted.
 			if os.IsNotExist(err) {
