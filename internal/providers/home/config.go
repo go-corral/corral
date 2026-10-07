@@ -71,6 +71,12 @@ func keepRel(entry string) (string, bool) {
 // DefaultPath is the sandbox's private $HOME when Path is unset: a persistent
 // ~/.cache/corral/home-<hash> keyed to the active agent's config dir.
 func DefaultPath(realHome, agentConfigDir string) string {
+	return filepath.Join(realHome, ".cache", "corral", "home-"+ConfigDirKey(agentConfigDir))
+}
+
+// ConfigDirKey keys corral's per-agent-config-dir state, the private home and the audit log:
+// the first 4 bytes of the SHA-256 of the cleaned, uncanonicalized dir, in hex.
+func ConfigDirKey(agentConfigDir string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(agentConfigDir)))
-	return filepath.Join(realHome, ".cache", "corral", "home-"+hex.EncodeToString(sum[:4]))
+	return hex.EncodeToString(sum[:4])
 }

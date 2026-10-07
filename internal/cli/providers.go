@@ -23,9 +23,11 @@ func launchDeps(cfg *config.Config, home string, host map[string]string, workDir
 	return registry.Deps{Home: home, Host: host, WorkDir: workDir, HomeDir: dir}
 }
 
-// activeProviders returns enabled feature providers in registry order.
-func activeProviders(cfg *config.Config, home string, host map[string]string, workDir string, present hooks.Presenter, log io.Writer) []providers.Active {
+// activeProviders returns enabled feature providers in registry order. approved maps a gated
+// kubeconfig path to its approved hash.
+func activeProviders(cfg *config.Config, home string, host map[string]string, workDir string, approved map[string]string, present hooks.Presenter, log io.Writer) []providers.Active {
 	d := launchDeps(cfg, home, host, workDir)
+	d.ApprovedKubeconfigs = approved
 	d.SessionHookPresenter = present
 	d.SessionHookLog = log
 	return registry.Features(cfg, d)

@@ -1185,7 +1185,7 @@ func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 }
 
 // TestRunDryRunPinsAuditPath: the launcher pins the audit-log path as CORRAL_AUDIT_PATH,
-// and a custom policy.audit.path gets its directory as a read-write grant.
+// and the sandbox gets no bind of a custom policy.audit.path's directory.
 func TestRunDryRunPinsAuditPath(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1213,9 +1213,12 @@ func TestRunDryRunPinsAuditPath(t *testing.T) {
 	if !strings.Contains(out, wantEnv) {
 		t.Errorf("dry-run argv must set %s to the audit path:\n%s", sandbox.AuditPathEnvVar, out)
 	}
-	// Only bwrap shows the bind kind in argv.
-	if runtime.GOOS == "linux" && !strings.Contains(out, "--bind-try "+filepath.Dir(audit)) {
-		t.Errorf("the audit-log directory must be a read-write grant (--bind-try):\n%s", out)
+	// The pin is the only mention of the path: no bind of the directory or the file.
+	if strings.Count(out, filepath.Dir(audit)) != 1 {
+		t.Errorf("the audit-log directory must not be bound into the sandbox:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Dir(audit)); !os.IsNotExist(err) {
+		t.Errorf("a dry run must not create the audit-log directory, stat err: %v", err)
 	}
 }
 
@@ -1305,6 +1308,103 @@ func TestRunServesSidecarForTheSession(t *testing.T) {
 	}
 	if strings.Index(string(argv), "--bind\n"+proj+"\n") > bind || strings.LastIndex(string(argv), "--tmpfs\n") > bind {
 		t.Errorf("the sidecar bind must come after the project bind and the blocked-path masks, argv:\n%s", argv)
+	}
+}
+
+// seedLegacyAuditLog writes a legacy default log and one rotated backup under ~/.claude.
+func seedLegacyAuditLog(t *testing.T, home string) []string {
+	t.Helper()
+	log := legacyAuditPath(filepath.Join(home, ".claude"))
+	files := []string{log, log + ".20260101T000000Z"}
+	writeFiles(t, map[string]string{files[0]: "{\"tool\":\"Read\"}\n", files[1]: "{\"tool\":\"Bash\"}\n"})
+	return files
+}
+
+// launchWithFakeBwrap runs a real launch through a bwrap stub that writes its argv, one
+// argument per line, and exits 0. It returns stderr and the argv.
+func launchWithFakeBwrap(t *testing.T, home, proj string) (stderr, argv string) {
+	t.Helper()
+	stubUpdateCheck(t)
+	origConfirm := confirmProceed
+	t.Cleanup(func() { confirmProceed = origConfirm })
+	confirmProceed = func(bool, *os.File, io.Writer, report.Style) bool { return true }
+
+	argvFile := filepath.Join(home, "argv")
+	fakeBwrap := filepath.Join(home, "fake-bwrap")
+	if err := os.WriteFile(fakeBwrap, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argvFile+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr = captureStderr(t, func() {
+		code = cmdRun([]string{"--home", home, "--project", proj, "--backend", "bwrap", "--bwrap", fakeBwrap, "--command", "/bin/true"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("cmdRun = %d\n%s", code, stderr)
+	}
+	data, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stderr, string(data)
+}
+
+// A dry run leaves the legacy default log in place; a real launch moves it and its backup
+// into the directory of the new default log.
+func TestRunMovesLegacyAuditLog(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("drives the bwrap backend")
+	}
+	// A long TMPDIR could push the socket path over the unix socket limit.
+	t.Setenv("TMPDIR", "")
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	mkdirs(t, proj)
+	writeCorralYML(t, proj, "providers:\n  home:\n    enabled: false\n")
+	isolateConfigEnv(t, home, proj)
+	legacy := seedLegacyAuditLog(t, home)
+
+	var code int
+	captureStdout(t, func() {
+		_ = captureStderr(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+		})
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	mustExist(t, legacy...)
+
+	stderr, _ := launchWithFakeBwrap(t, home, proj)
+	if strings.Contains(stderr, "legacy audit log") {
+		t.Errorf("a successful move must print no warning:\n%s", stderr)
+	}
+	mustNotExist(t, legacy...)
+	dir := filepath.Dir(defaultAuditPath(filepath.Join(home, ".local", "state"), filepath.Join(home, ".claude")))
+	mustExist(t, filepath.Join(dir, filepath.Base(legacy[0])), filepath.Join(dir, filepath.Base(legacy[1])))
+}
+
+// A launch with policy.audit.path set leaves the legacy default log in place, and creates the
+// custom directory without binding it into the sandbox.
+func TestRunCustomAuditPathKeepsLegacyLog(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("drives the bwrap backend")
+	}
+	t.Setenv("TMPDIR", "")
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	mkdirs(t, proj)
+	custom := filepath.Join(home, "logs", "audit.jsonl")
+	writeCorralYML(t, proj, "providers:\n  home:\n    enabled: false\npolicy:\n  audit:\n    path: "+custom+"\n")
+	isolateConfigEnv(t, home, proj)
+	legacy := seedLegacyAuditLog(t, home)
+
+	_, argv := launchWithFakeBwrap(t, home, proj)
+	mustExist(t, legacy...)
+	if fi, err := os.Stat(filepath.Dir(custom)); err != nil || !fi.IsDir() {
+		t.Errorf("the launch must create the custom audit-log directory, stat err: %v", err)
+	}
+	if strings.Contains("\n"+argv, "\n"+filepath.Dir(custom)+"\n") {
+		t.Errorf("the custom audit-log directory must not be bound into the sandbox, argv:\n%s", argv)
 	}
 }
 
@@ -1408,8 +1508,8 @@ func TestRunRefusesProfileMissingInWorkdir(t *testing.T) {
 	}
 }
 
-// TestRunRefusesAuditPathUnderAlwaysBlocked: the audit-log directory is a read-write grant,
-// so the always-blocked guard refuses it before any provider mints.
+// TestRunRefusesAuditPathUnderAlwaysBlocked: run refuses an audit-log directory under an
+// always-blocked path before any provider mints.
 func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")

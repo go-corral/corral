@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-corral/corral/internal/agents"
+	"github.com/go-corral/corral/internal/audit"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/health"
@@ -26,6 +27,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
 	"github.com/go-corral/corral/internal/sidecar"
+	"github.com/go-corral/corral/internal/trust"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -151,22 +153,27 @@ func cmdRun(args []string, version string) int {
 		}
 	}
 
+	// A `corral run <agent>` positional overrides the configured agent. Set before the trust
+	// gate, because the private home path depends on the agent.
+	if agentName != "" {
+		cfg.Agent = agentName
+	}
+	host := envMap()
+	privHome, homeOn := homeDir(cfg, *home, host)
+
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
-	// executable a session hook would run. Runs before any consumption or mint. --yes is
-	// refused here; --dry-run is exempt.
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), *yes, os.Stdin, os.Stderr, c) {
+	// executable a session hook would run and every kubeconfig in a sandbox-writable location.
+	// Runs before any consumption or mint. --yes is refused here; --dry-run is exempt.
+	kubes := collectKubeconfigs(cfg, projectSrc, privHome)
+	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, *yes, os.Stdin, os.Stderr, c) {
 		return 1
 	}
-	if err := grantAuditDir(cfg, *home, *dryRun); err != nil {
+	if err := prepareAuditDir(cfg, *home, *dryRun); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
 	if err := checkResolvedPathGrants(cfg, *home); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
-	}
-	// A `corral run <agent>` positional overrides the configured agent.
-	if agentName != "" {
-		cfg.Agent = agentName
 	}
 
 	// Resolve the program to run: the configured agent's binary on PATH, or -command to override.
@@ -179,7 +186,6 @@ func cmdRun(args []string, version string) int {
 		commandBin = resolveAgentBinary(agent)
 	}
 
-	host := envMap()
 	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
 	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
@@ -192,7 +198,9 @@ func cmdRun(args []string, version string) int {
 	}
 	// Pin the audit-log path so the sidecar and commands inside the sandbox do not resolve it
 	// against the private home.
-	spec.SetEnv[sandbox.AuditPathEnvVar] = configuredAuditPath(cfg, cfg.AgentConfigDir(*home, host))
+	agentConfigDir := cfg.AgentConfigDir(*home, host)
+	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
+	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
 	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
 	launch := cfg.AgentLaunch()
@@ -244,7 +252,8 @@ func cmdRun(args []string, version string) int {
 	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
 	// Registered before the teardown, so it runs after the session-end hooks.
 	defer hookLog.Flush()
-	active := activeProviders(cfg, *home, host, projectSrc, bannerSessionHookPresenter(os.Stderr, c), hookLog)
+	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
+	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
 	command = append(command, fs.Args()...)
 
@@ -258,7 +267,6 @@ func cmdRun(args []string, version string) int {
 	homeArch := baselineArch(backendKind)
 	keep := cfg.Providers.Home.KeepRel()
 	guardDir := hookGuardDir(cfg, *home, host)
-	privHome, homeOn := homeDir(cfg, *home, host)
 	var shadows []string
 	if homeOn {
 		pre := spec // shallow copy: linkHome only reads
@@ -274,7 +282,7 @@ func cmdRun(args []string, version string) int {
 		version:  version,
 		home:     *home,
 		workdir:  spec.WorkDir,
-		auditLog: effectiveAuditPath(cfg, cfg.AgentConfigDir(*home, host)),
+		auditLog: auditPath,
 		profiles: []string(*profiles),
 	}
 
@@ -290,7 +298,7 @@ func cmdRun(args []string, version string) int {
 		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
 		writeStartupBanner(os.Stderr, c, cfg, banner, checks, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
-		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc))
+		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc), kubes)
 		prep, err := backend.Prepare(&spec, warnLines)
 		warnLines.Flush()
 		if err != nil {
@@ -368,6 +376,14 @@ func cmdRun(args []string, version string) int {
 	writeBannerBody(os.Stderr, c, *home, notices, nil)
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
+
+	// Move the selected agent's legacy default log before the sidecar writes the new one.
+	if cfg.Policy.Audit.Path == "" {
+		for _, err := range audit.MoveLegacy(legacyAuditPath(agentConfigDir), auditPath) {
+			c.Message(os.Stderr, report.Attention, fmt.Sprintf("legacy audit log not moved: %v; move the file into %s or delete it by hand",
+				err, filepath.Dir(auditPath)))
+		}
+	}
 
 	// The sidecar evaluates the session's hook events against a policy fixed here, built from
 	// what the sandbox sees: its HOME, environment, and working directory.

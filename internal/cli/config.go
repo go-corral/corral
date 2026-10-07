@@ -76,10 +76,10 @@ func pinGlobalConfig(spec *sandbox.SandboxSpec, sources []config.Source) {
 	}
 }
 
-// grantAuditDir adds the directory of a custom policy.audit.path to providers.paths.rw,
-// so the grant checks, the read-write bind, and the banner cover it. The directory is
-// created because a missing grant is not mounted.
-func grantAuditDir(cfg *config.Config, home string, dryRun bool) error {
+// prepareAuditDir checks and creates the directory of a custom policy.audit.path on the host.
+// The self-protect gate guards the log's directory, so a directory that is or contains the
+// home directory is refused.
+func prepareAuditDir(cfg *config.Config, home string, dryRun bool) error {
 	p := cfg.Policy.Audit.Path
 	if p == "" {
 		return nil
@@ -88,20 +88,23 @@ func grantAuditDir(cfg *config.Config, home string, dryRun bool) error {
 	if pathutil.AtOrUnderClean(home, dir) {
 		return fmt.Errorf("policy.audit.path %q: directory %q is or contains the home directory; use a dedicated directory", p, dir)
 	}
-	cfg.Providers.Paths.RW = append(cfg.Providers.Paths.RW, dir)
-	floor := config.AlwaysBlockedExpanded(home)
-	if err := cfg.Providers.Paths.Validate(floor); err != nil {
-		return fmt.Errorf("policy.audit.path %q: %w", p, err)
-	}
-	// checkResolvedPathGrants cannot resolve a missing directory, so check where MkdirAll
-	// would create it: behind a symlinked ancestor, that can be an always-blocked path.
+	// Check where MkdirAll would create it: behind a symlinked ancestor, that can be an
+	// always-blocked path.
 	real, err := policy.CanonicalizeRoot(dir, "")
 	if err != nil {
 		return fmt.Errorf("policy.audit.path %q: %w", p, err)
 	}
-	for _, f := range floor {
+	for _, f := range config.AlwaysBlockedExpanded(home) {
+		if pathutil.AtOrUnder(dir, f) {
+			return fmt.Errorf("policy.audit.path %q: directory %q overlaps the always-blocked path %q", p, dir, f)
+		}
 		if pathutil.AtOrUnder(real, pathutil.Resolve(f)) {
 			return fmt.Errorf("policy.audit.path %q: directory %q resolves into the always-blocked path %q", p, dir, f)
+		}
+		// A symlinked directory resolves elsewhere, and the self-protect gate guards the resolved
+		// directory, so its target must not contain an always-blocked path.
+		if real != dir && pathutil.Under(pathutil.Resolve(f), real) {
+			return fmt.Errorf("policy.audit.path %q: directory %q resolves to %q, which contains the always-blocked path %q", p, dir, real, f)
 		}
 	}
 	if dryRun {

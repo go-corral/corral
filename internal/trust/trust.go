@@ -49,10 +49,16 @@ func NewStore(dir string) *Store {
 }
 
 func DefaultDir(home string) string {
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "corral", "trust")
+	return filepath.Join(StateDir(home, os.Getenv("XDG_STATE_HOME")), "corral", "trust")
+}
+
+// StateDir is the base of corral's state: xdg (XDG_STATE_HOME) when it is absolute, else
+// <home>/.local/state. The XDG spec treats a relative value as invalid.
+func StateDir(home, xdg string) string {
+	if filepath.IsAbs(xdg) {
+		return xdg
 	}
-	return filepath.Join(home, ".local", "state", "corral", "trust")
+	return filepath.Join(home, ".local", "state")
 }
 
 type record struct {

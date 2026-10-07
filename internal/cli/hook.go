@@ -16,16 +16,32 @@ import (
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/providers/aiignore"
+	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sidecar"
+	"github.com/go-corral/corral/internal/trust"
+)
+
+// Hook event names: the `corral hook` subcommands and the sidecar request types.
+const (
+	eventPreToolUse       = "pre-tool-use"
+	eventPostToolUse      = "post-tool-use"
+	eventSessionStart     = "session-start"
+	eventUserPromptSubmit = "user-prompt-submit"
+)
+
+// Deny presentations: the `--decision` values of pre-tool-use.
+const (
+	decisionJSON  = "json"
+	decisionExit2 = "exit2"
 )
 
 // hookDispatch maps each hook event to its handler. cmdHook fails closed on unknown events.
 var hookDispatch = map[string]func(args []string) int{
-	"pre-tool-use":       cmdHookPreToolUse,
-	"post-tool-use":      cmdHookPostToolUse,
-	"session-start":      cmdHookSessionStart,
-	"user-prompt-submit": cmdHookUserPromptSubmit,
+	eventPreToolUse:       cmdHookPreToolUse,
+	eventPostToolUse:      cmdHookPostToolUse,
+	eventSessionStart:     cmdHookSessionStart,
+	eventUserPromptSubmit: cmdHookUserPromptSubmit,
 }
 
 // cmdHook dispatches the hook enforcer subcommands (the hot path: fast, fail-closed).
@@ -79,7 +95,7 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 
 	// The prompt secret scan runs sandboxed or not. Soft warn-and-resubmit, keyed per prompt.
 	// When the policy cannot be evaluated, it scans for known credential formats only.
-	resp := evaluate(sidecar.Request{Type: "user-prompt-submit"}, data)
+	resp := evaluate(sidecar.Request{Type: eventUserPromptSubmit}, data)
 	if resp.Error != "" {
 		if code, handled := promptSecretWarn(ev, 0, policy.IncidentHint, nil, stdout); handled {
 			return code
@@ -281,9 +297,9 @@ func (s *stringSlice) Set(v string) error {
 // cmdHookPreToolUse runs the PreToolUse gate: install fail-closed signal handling, evaluate
 // stdin, reproduce the answer, exit 0 or 2.
 func cmdHookPreToolUse(args []string) int {
-	fs := flag.NewFlagSet("pre-tool-use", flag.ContinueOnError)
-	decision := fs.String("decision", "json", "how to report a block: \"json\" (clean policy decision) or \"exit2\"")
-	if err := fs.Parse(args); err != nil {
+	fs := flag.NewFlagSet(eventPreToolUse, flag.ContinueOnError)
+	decision := fs.String("decision", decisionJSON, fmt.Sprintf("how to report a block: %q (clean policy decision) or %q", decisionJSON, decisionExit2))
+	if err := fs.Parse(args); err != nil || (*decision != decisionJSON && *decision != decisionExit2) {
 		// A gate that can't parse its own flags must block.
 		fmt.Fprintln(os.Stderr, "corral: bad hook arguments, blocking (fail-closed)")
 		return policy.ExitBlock
@@ -297,7 +313,7 @@ func cmdHookPreToolUse(args []string) int {
 		fmt.Fprintf(os.Stderr, "corral: cannot read hook input, blocking: %v\n", err)
 		return policy.ExitBlock
 	}
-	resp := evaluate(sidecar.Request{Type: "pre-tool-use", Decision: *decision}, data)
+	resp := evaluate(sidecar.Request{Type: eventPreToolUse, Decision: *decision}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, blocking (fail-closed): %s\n", resp.Error)
 		return policy.ExitBlock
@@ -333,7 +349,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 		}
 	}()
 
-	fs := flag.NewFlagSet("post-tool-use", flag.ContinueOnError)
+	fs := flag.NewFlagSet(eventPostToolUse, flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		// Learn the tool name before withholding: otherwise pre-parse paths fall back to the
 		// Bash schema, which an mcp__* caller silently ignores.
@@ -349,7 +365,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 	} else {
 		gate.ObserveShapeFrom(bytes.NewReader(data))
 	}
-	resp := evaluate(sidecar.Request{Type: "post-tool-use"}, data)
+	resp := evaluate(sidecar.Request{Type: eventPostToolUse}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, withholding the tool response (fail-closed): %s\n", resp.Error)
 		return gate.Replace("[corral] tool response withheld — could not evaluate policy (fail-closed)")
@@ -379,12 +395,14 @@ func localEngineInputs() (engineInputs, error) {
 		return engineInputs{}, fmt.Errorf("load config: %w", err)
 	}
 	env := envMap()
-	configDir, err := canonicalAgentConfigDir(cfg, home, env, policy.OSFS{})
-	if err != nil {
+	// Fail closed on an agent config dir the engine cannot canonicalize, for every event. The
+	// audit path keys on the uncanonicalized dir, as the launcher's does.
+	if _, err := canonicalAgentConfigDir(cfg, home, env, policy.OSFS{}); err != nil {
 		return engineInputs{}, err
 	}
 	wd, _ := os.Getwd()
-	return engineInputs{cfg: cfg, home: home, env: env, workDir: wd, auditPath: effectiveAuditPath(cfg, configDir)}, nil
+	auditPath := effectiveAuditPath(cfg, trust.StateDir(home, env["XDG_STATE_HOME"]), cfg.AgentConfigDir(home, env))
+	return engineInputs{cfg: cfg, home: home, env: env, workDir: wd, auditPath: auditPath}, nil
 }
 
 // evaluate answers one hook event. With a sidecar it forwards the event. Inside the sandbox
@@ -429,19 +447,19 @@ func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, e
 		var stdout, stderr bytes.Buffer
 		var code int
 		switch req.Type {
-		case "pre-tool-use":
+		case eventPreToolUse:
 			eng, err := build(fsys)
 			if err != nil {
 				return sidecar.Response{Error: err.Error()}
 			}
 			present := policy.PresentJSON
-			if req.Decision == "exit2" {
+			if req.Decision == decisionExit2 {
 				present = policy.PresentExit2
 			}
 			code = policy.RunHookWithAudit(eng, aud, fsys, bytes.NewReader(payload), &stdout, &stderr, present)
-		case "post-tool-use":
+		case eventPostToolUse:
 			code = policy.RunPostToolUseHook(entropy, 0, hint, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
-		case "user-prompt-submit":
+		case eventUserPromptSubmit:
 			ev, _ := policy.ParseEvent(payload)
 			code, _ = promptSecretWarn(ev, entropy, hint, aud, &stdout)
 		default:
@@ -600,27 +618,38 @@ func agentFootprints(cfg *config.Config) (policy.AgentFootprint, []policy.AgentF
 // effectiveAuditPath returns the resolved audit-log path: the launcher's pin
 // (CORRAL_AUDIT_PATH) when set, else the configured path. Shared by the auditor (writes)
 // and the self-protect gate (guards), so they never diverge.
-func effectiveAuditPath(cfg *config.Config, configDir string) string {
+func effectiveAuditPath(cfg *config.Config, stateDir, configDir string) string {
 	if p := os.Getenv(sandbox.AuditPathEnvVar); p != "" {
 		return p
 	}
-	return configuredAuditPath(cfg, configDir)
+	return configuredAuditPath(cfg, stateDir, configDir)
 }
 
-// configuredAuditPath returns the audit path from config alone: policy.audit.path or
-// the default <configDir>/corral-audit.jsonl. The launcher resolves with this half — a
-// nested launch must resolve from its own config, not inherit the enclosing sandbox's pin.
-func configuredAuditPath(cfg *config.Config, configDir string) string {
+// configuredAuditPath returns the audit path from config alone: policy.audit.path or the
+// default. The launcher resolves with this half — a nested launch must resolve from its own
+// config, not inherit the enclosing sandbox's pin.
+func configuredAuditPath(cfg *config.Config, stateDir, configDir string) string {
 	if p := cfg.Policy.Audit.Path; p != "" {
 		return p
 	}
+	return defaultAuditPath(stateDir, configDir)
+}
+
+// defaultAuditPath is the default audit log of the agent config dir configDir, in a state
+// directory the sandbox does not mount. configDir is uncanonicalized, as for the private home,
+// so the launcher and a bare session with the same inputs resolve the same file.
+func defaultAuditPath(stateDir, configDir string) string {
+	return filepath.Join(stateDir, "corral", "audit", home.ConfigDirKey(configDir), "corral-audit.jsonl")
+}
+
+// legacyAuditPath is the former default audit log, inside the agent config dir.
+func legacyAuditPath(configDir string) string {
 	return filepath.Join(configDir, "corral-audit.jsonl")
 }
 
 // buildAuditor returns the always-on audit callback. Tool-call decisions are logged unconditionally,
-// so it is non-disableable — no nil/off path. The default log lives under the effective agent config
-// dir (for claude, $CLAUDE_CONFIG_DIR or ~/.claude). In a corral session the sidecar writes it from
-// the host. Writing is best-effort: a logging error is swallowed, never changing a verdict or failing
+// so it is non-disableable — no nil/off path. In a corral session the sidecar writes it from the
+// host. Writing is best-effort: a logging error is swallowed, never changing a verdict or failing
 // the hook.
 func buildAuditor(cfg *config.Config, auditPath string) policy.AuditFunc {
 	logger := audit.New(cfg.Policy.Audit, auditPath)

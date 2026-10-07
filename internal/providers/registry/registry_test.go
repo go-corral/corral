@@ -173,3 +173,53 @@ func listTree(t *testing.T, root string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// The kubernetes provider is active when at least one effective cluster is enabled, whatever
+// the top-level enabled says.
+func TestRegistryKubernetesClusterEnabled(t *testing.T) {
+	global := `providers:
+  kubernetes:
+    enabled: false
+    clusters:
+      prod:
+        kubeconfig: {context: prod}
+      staging:
+        kubeconfig: {context: staging}
+profiles:
+  staging:
+    providers:
+      kubernetes:
+        clusters:
+          staging:
+            enabled: true
+`
+	for _, tc := range []struct {
+		profiles []string
+		want     bool
+	}{
+		{[]string{"staging"}, true},
+		{nil, false},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "global.yml")
+		if err := os.WriteFile(path, []byte(global), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := config.Load(config.LoadOptions{Home: dir, GlobalPath: path, ProjectDir: dir, Profiles: tc.profiles})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var active bool
+		for _, a := range Features(cfg, Deps{Home: dir}) {
+			if a.Provider.Name() == "kubernetes" {
+				active = true
+				if a.Optional {
+					t.Error("a required enabled cluster makes the provider required")
+				}
+			}
+		}
+		if active != tc.want {
+			t.Errorf("profiles %v: kubernetes active = %v, want %v", tc.profiles, active, tc.want)
+		}
+	}
+}

@@ -18,11 +18,7 @@ fixes a problem. When the locale is not UTF-8, the output uses ASCII: `[x]`, `[!
 corral run [agent] [flags] [-- agent-args]
 ```
 
-Launches `claude` (the default) or `pi` inside the sandbox. The agent positional,
-when given, must be the first token; everything after `--` is passed to the agent
-unchanged. Before a real run, new or changed repository config and any enabled
-session-hook executable require interactive
-[content approval](../explanation/trust-gate.md) before launch.
+Launches `claude` (the default) or `pi` inside the sandbox. The agent positional, when given, must be the first token; everything after `--` is passed to the agent unchanged. Before a real run, new or changed repository config, any enabled session-hook executable, and a kubeconfig in a sandbox-writable location require interactive [content approval](../explanation/trust-gate.md) before launch.
 
 | Flag               | Effect                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
@@ -105,14 +101,14 @@ environment ! hooks CORRAL_DISABLE_HOOKS=0 not recognized
 update      ✓ up to date as of 2026-09-01
 ```
 
-| Area          | Checks                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------- |
-| `sandbox`     | The backend binary. For bwrap, also the PID namespace and legacy TIOCSTI.                |
-| `config`      | Config validity, and approval of repository config and session-hook executables.        |
-| `agents`      | Each installed agent and its policy integration, and the configured agent if missing.    |
-| `providers`   | The host prerequisite of each enabled provider, such as a Docker socket or an SSH agent. |
-| `environment` | `CORRAL_DISABLE_HOOKS` in the shell that runs `doctor`.                                  |
-| `update`      | The cached result of the last update check, and the launch check setting. No network.   |
+| Area          | Checks                                                                                         |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| `sandbox`     | The backend binary. For bwrap, also the PID namespace and legacy TIOCSTI.                      |
+| `config`      | Config validity, and approval of repository config, session-hook executables, and kubeconfigs. |
+| `agents`      | Each installed agent and its policy integration, and the configured agent if missing.          |
+| `providers`   | The host prerequisite of each enabled provider, such as a Docker socket or an SSH agent.       |
+| `environment` | `CORRAL_DISABLE_HOOKS` in the shell that runs `doctor`.                                        |
+| `update`      | The cached result of the last update check, and the launch check setting. No network.          |
 
 When a check fails or warns, the **needs attention** section lists it with its reason.
 If a command fixes the problem, the line after the reason shows it:
@@ -174,7 +170,7 @@ Sections follow:
 
 | Section         | Content                                                                                                                                                                                                                                                        |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `warnings`      | Advisory warnings about the config, and repository config or session-hook executables that are not approved, changed since approval, or unreadable. Shown only when there are warnings.                                                                        |
+| `warnings`      | Advisory warnings about the config, and repository config, session-hook executables, or kubeconfigs that are not approved, changed since approval, or unreadable. Shown only when there are warnings.                                                          |
 | `blocked paths` | Each effective blocked path, marked `always blocked` or `configured`. Shown only with `--list`.                                                                                                                                                                |
 | `settings`      | Each loaded config file with its approval state, the private home, network, hostname, agent settings, environment passthrough names, session-hook executables, and one row per enabled provider with what it adds to the sandbox and its setup-error behavior. |
 | `path grants`   | The working directory and each extra grant in one tree, with its access (`rw` or `ro`) and the config that grants it.                                                                                                                                          |
@@ -215,9 +211,7 @@ Reap these 1 resource(s)? [y/N] y
   ✓ reaped 1 resource
 ```
 
-With nothing to delete, `gc` prints `✓ no orphaned resources`. A provider that cannot
-list its resources prints a `!` line. When that happens and no orphans are found, `gc`
-prints `! no orphaned resources` and exits 1.
+With nothing to delete, `gc` prints `✓ no orphaned resources`. A provider that cannot list its resources prints a `!` line, and `gc` exits 1, also after it deletes the orphans that the other providers find. When no orphans are found, `gc` then prints `! no orphaned resources`. For Kubernetes, the line names the cluster, and `gc` still checks the other clusters.
 
 | Flag               | Effect                                                                     |
 | ------------------ | -------------------------------------------------------------------------- |

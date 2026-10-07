@@ -106,3 +106,53 @@ func TestRunDryRunAnnotatesUnapprovedConfig(t *testing.T) {
 		t.Errorf("run --dry-run should note the unapproved repo config:\n%s", stderr)
 	}
 }
+
+// validate warns about a kubeconfig in the workdir that is not approved.
+func TestValidateWarnsUnapprovedKubeconfig(t *testing.T) {
+	_, proj := trustRepo(t, "providers:\n  kubernetes:\n    enabled: true\n")
+	kubeconfig := filepath.Join(proj, "kube", "dev.yml")
+	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeconfig, []byte("kind: Config\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", kubeconfig)
+
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "  ! kubeconfig      not approved\n                    ~/proj/kube/dev.yml (providers.kubernetes (default kubeconfig loading rules)); corral asks on the next run\n") {
+		t.Errorf("validate should warn about the unapproved kubeconfig:\n%s", out)
+	}
+}
+
+// validate warns about a gated kubeconfig that corral cannot read.
+func TestValidateWarnsUnreadableKubeconfig(t *testing.T) {
+	_, proj := trustRepo(t, "providers:\n  kubernetes:\n    enabled: true\n")
+	t.Setenv("KUBECONFIG", filepath.Join(proj, "kube", "dev.yml"))
+
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	if !strings.Contains(out, "  ! kubeconfig      ~/proj/kube/dev.yml\n                    providers.kubernetes (default kubeconfig loading rules); ") || !strings.Contains(out, "; the cluster fails to load\n") {
+		t.Errorf("validate should warn about the unreadable kubeconfig:\n%s", out)
+	}
+}
+
+// run --dry-run notes a kubeconfig that a real run would ask to approve.
+func TestRunDryRunAnnotatesUnapprovedKubeconfig(t *testing.T) {
+	home, proj, kubeconfig := kubeRepo(t)
+	failIfMint(t)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		_ = captureStdout(t, func() {
+			withStdin(t, "", func() {
+				code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+			})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run must not be gated, got code %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "not yet approved") || !strings.Contains(stderr, kubeconfig) {
+		t.Errorf("run --dry-run should note the unapproved kubeconfig:\n%s", stderr)
+	}
+}

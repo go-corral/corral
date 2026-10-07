@@ -264,9 +264,25 @@ func TestEvaluateBareSessionBlocksConfiguredPath(t *testing.T) {
 	if resp.Error != "" || resp.Code != policy.ExitBlock {
 		t.Fatalf("got %+v, want a deny", resp)
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "corral-audit.jsonl"))
+	data, err := os.ReadFile(defaultAuditPath(filepath.Join(home, ".local", "state"), filepath.Join(home, ".claude")))
 	if err != nil || !strings.Contains(string(data), `"rule":"blocked-path"`) {
 		t.Errorf("audit record missing (err %v):\n%s", err, data)
+	}
+}
+
+// A bare session fails closed on a relative agent config dir for every event, also for the
+// events that build no engine.
+func TestEvaluateBareSessionRefusesRelativeConfigDir(t *testing.T) {
+	home, proj := t.TempDir(), t.TempDir()
+	isolateConfigEnv(t, home, proj)
+	bareSession(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "relcfg")
+
+	for _, typ := range []string{"pre-tool-use", "post-tool-use", "user-prompt-submit"} {
+		resp := evaluate(sidecar.Request{Type: typ}, []byte(bashPreToolUse("ls")))
+		if !strings.Contains(resp.Error, `relative path "relcfg"`) {
+			t.Errorf("%s: got %+v, want an error naming the relative config dir", typ, resp)
+		}
 	}
 }
 
@@ -352,6 +368,26 @@ func TestCmdHookPreToolUseRejectsRemovedFlags(t *testing.T) {
 		if code != policy.ExitBlock || !strings.Contains(stderr, "bad hook arguments") {
 			t.Errorf("%v: got exit %d, stderr %q; want exit 2 with a bad-arguments message", args, code, stderr)
 		}
+	}
+}
+
+func TestCmdHookPreToolUseRejectsUnknownDecision(t *testing.T) {
+	serveHandler(t, func(sidecar.Request, []byte, policy.FS) sidecar.Response { return sidecar.Response{} })
+	var code int
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			withStdin(t, bashPreToolUse("ls -la"), func() { code = cmdHook([]string{"pre-tool-use", "--decision", "yaml"}) })
+		})
+	})
+	if code != policy.ExitBlock {
+		t.Errorf("got exit %d, want %d", code, policy.ExitBlock)
+	}
+	if !strings.Contains(stderr, "corral: bad hook arguments, blocking (fail-closed)") {
+		t.Errorf("stderr = %q, want the bad-arguments message", stderr)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
 	}
 }
 

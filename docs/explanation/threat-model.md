@@ -123,12 +123,7 @@ launch. It does not prevent the operator from changing those files outside the s
 
 ### 7. Repository config requires approval
 
-A real `corral run` or `corral sync` cannot proceed with new or changed repository
-`.corral.yml` or `.corral.local.yml` content until the operator approves it
-interactively. Non-interactive use fails closed. Before `corral run`, readable
-session-hook executables also require content approval, including executables named by
-global config. See [why repository config requires approval](trust-gate.md) for inspection
-commands and coverage limits.
+A `corral run` or `corral sync` cannot proceed with new or changed repository `.corral.yml` or `.corral.local.yml` content until the operator approves it. Before `corral run`, readable session-hook executables also require content approval, including executables named by global config, as does a kubeconfig that the Kubernetes provider loads from a sandbox-writable location. See [why repository config requires approval](trust-gate.md) for inspection commands and coverage limits.
 
 ## What corral does not protect against
 

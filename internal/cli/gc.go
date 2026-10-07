@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/kubernetes"
+	"github.com/go-corral/corral/internal/trust"
 )
 
 // cmdGC collects and (after approval) reaps orphaned out-of-process provider
@@ -37,19 +40,42 @@ func cmdGC(args []string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "cannot resolve home: %v", err)
 	}
-	reapers := providers.Reapers(gcCandidates(cfg, home, envMap()))
+	wd, err := os.Getwd()
+	if err != nil {
+		return fatalf(os.Stderr, "cannot resolve working directory: %v", err)
+	}
+	reapers := providers.Reapers(gcCandidates(cfg, home, envMap(), wd))
 
 	return runGC(context.Background(), reapers, gcOptions{DryRun: *dryRun, Yes: *yes, Title: true, Colors: report.StyleFor(os.Stdout)}, os.Stdin, os.Stdout)
 }
 
-// gcCandidates returns the providers `corral gc` should query for orphans.
-func gcCandidates(cfg *config.Config, home string, host map[string]string) []providers.Provider {
+// gcCandidates returns the providers `corral gc` should query for orphans. workDir is the
+// sandbox-writable workdir for the kubeconfig gate and anchors a relative kubeconfig.path.
+func gcCandidates(cfg *config.Config, home string, host map[string]string, workDir string) []providers.Provider {
+	privHome, _ := homeDir(cfg, home, host)
+	approved := gcApprovedKubeconfigs(cfg, workDir, privHome, trust.NewStore(trust.DefaultDir(home)))
 	var out []providers.Provider
-	// gc inspects orphans from past sessions, not the current project.
-	for _, a := range activeProviders(cfg, home, host, "", nil, nil) {
+	for _, a := range activeProviders(cfg, home, host, workDir, approved, nil, nil) {
 		out = append(out, a.Provider)
 	}
+	// A declared cluster can hold orphans while the current config disables it.
+	if k := cfg.Providers.Kubernetes; len(k.Clusters) > 0 && !k.AnyClusterEnabled() {
+		out = append(out, kubernetes.New(k, home, workDir, approved))
+	}
 	return out
+}
+
+// gcApprovedKubeconfigs gates the kubeconfigs of the clusters that gc checks, enabled or not,
+// without a prompt: only content the store reports as approved loads, every other gated
+// kubeconfig maps to "".
+func gcApprovedKubeconfigs(cfg *config.Config, workDir, privHome string, store *trust.Store) map[string]string {
+	kubes := gateKubeconfigs(cfg, cfg.Providers.Kubernetes.GCClusters(), workDir, privHome)
+	states := map[string]trust.State{}
+	for _, r := range store.Check(kubes.entries) {
+		states[r.Path] = r.State
+	}
+	kubes.entries = slices.DeleteFunc(kubes.entries, func(e trust.Entry) bool { return states[e.Path] != trust.StateApproved })
+	return kubes.approved()
 }
 
 type gcOptions struct {
@@ -87,14 +113,19 @@ func runGC(ctx context.Context, reapers []providers.Reaper, opts gcOptions, in i
 		c.Row(out, report.Row{Glyph: report.On, Label: o.Provider, Value: o.Describe})
 	}
 
+	// A reaper that failed to report keeps the exit status non-zero after the other reapers' orphans.
+	code := 0
+	if len(errs) > 0 {
+		code = 1
+	}
 	if opts.DryRun {
 		c.Message(out, report.None, c.Dim+"dry-run: nothing deleted"+c.Reset)
-		return 0
+		return code
 	}
 	// Default-no: anything but an explicit yes aborts.
 	if !opts.Yes && !promptYesNo(in, out, fmt.Sprintf("Reap these %d resource(s)? [y/N] ", len(orphans))) {
 		c.Message(out, report.None, c.Dim+"nothing deleted"+c.Reset)
-		return 0
+		return code
 	}
 
 	if rErrs := providers.Reap(ctx, reapers, orphans); len(rErrs) > 0 {
@@ -104,7 +135,7 @@ func runGC(ctx context.Context, reapers []providers.Reaper, opts gcOptions, in i
 		return 1
 	}
 	c.Message(out, report.Ready, "reaped "+resources(len(orphans), "resource"))
-	return 0
+	return code
 }
 
 // resources counts n of noun, pluralized.

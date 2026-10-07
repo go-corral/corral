@@ -16,25 +16,21 @@ than cache, so clearing corral's cache does not remove approvals.
 
 ## Which files require approval?
 
-The approval check covers repository-discovered `.corral.yml` and
-`.corral.local.yml` files. The global config, normally
-`~/.config/corral/config.yml`, is owned by the operator and is implicitly trusted.
+The approval check covers repository-discovered `.corral.yml` and `.corral.local.yml` files. The global config, normally `~/.config/corral/config.yml`, is owned by the operator and therefore trusted.
 
-Session-hook executables are handled separately. Before `corral run`, corral hashes
-each readable executable named by an enabled `providers.hooks` entry. The executable
-requires approval whether the entry came from repository config or global config.
-This prevents a script in the writable project from being changed after its config
-was approved and then silently run on the host at the next launch.
+Session-hook executables are handled separately. Before `corral run`, corral hashes each executable used by a `providers.hooks` entry. Hooks always require approvals, no matter where the executable is located.
 
-`corral sync` approves repository config but does not inspect session-hook
-executables, because sync does not run them. Their approval is checked by the next
-`corral run`.
+Kubernetes kubeconfigs in sandbox-writable locations also require approval. When the Kubernetes provider is enabled, corral loads kubeconfigs on the host, and a kubeconfig can call an `exec` credential plugin and the API server. If the agent can edit the file, unknown code could be executed unintentionally on the next launch. Kubeconfigs must be approved if they are located at:
+
+- the session workdir
+- a `providers.paths.rw` entry
+- the private sandbox home, when the home provider is enabled
+
+`corral gc` does not prompt. It uses the current directory as the workdir and loads a kubeconfig in a sandbox-writable location only when its current content is approved. For a kubeconfig that is not approved or changed since approval, `corral gc` reports an error for that cluster, still checks the other clusters, and exits with a non-zero status.
 
 ## What happens if a file changes?
 
-A changed repository config stops the next `corral run` or `corral sync`. A changed
-session-hook executable stops the next `corral run`. The prompt names each new or
-changed file so the operator can review it before approving the new content.
+A changed repository config stops the next `corral run` or `corral sync`. A changed session-hook executable or kubeconfig stops the next `corral run`. The prompt names each new or changed file so the operator can review it before approving the new content.
 
 A `postEnd` executable needs one additional check because the agent can edit project
 files during the session. corral hashes the executable before the agent starts and
@@ -58,13 +54,9 @@ session.
 
 ## How can I inspect unapproved config?
 
-- `corral validate` lists config sources with the approval state of repository config,
-  summarizes selected effective settings, and warns about repository config and
-  session-hook executables that are not approved or changed since approval.
-- `corral doctor` warns about repository config and session-hook executables that are
-  not approved or changed since approval.
-- `corral run --dry-run` builds the sandbox preview without requiring approval and
-  notes files that a real run would ask you to approve.
+- `corral validate` lists config sources with the approval state of repository config, summarizes selected effective settings, and warns about repository config, session-hook executables, and kubeconfigs that are not approved or changed since approval.
+- `corral doctor` warns about repository config, session-hook executables, and kubeconfigs that are not approved or changed since approval.
+- `corral run --dry-run` builds the sandbox preview without requiring approval and notes files that a real run would ask you to approve.
 - `corral sync --dry-run` previews agent synchronization without requiring approval.
 
 A real `run` or `sync` requires a terminal for new approval. Non-interactive use

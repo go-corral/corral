@@ -33,13 +33,13 @@ func cmdSync(args []string) int {
 	}
 
 	// Repo-config trust gate: a real sync is side-effectful, so a committed .corral.yml must be
-	// approve-once here too. --dry-run is not gated. Session-hook executables are not gated here.
+	// approve-once here too. --dry-run is not gated. Session-hook executables and kubeconfigs are not gated here.
 	if !*dryRun {
 		_, sources, cerr := loadConfig(nil)
 		if cerr != nil {
 			return fatalf(os.Stderr, "load config: %v", cerr)
 		}
-		if !checkRepoConfigTrust(sources, hookExecs{}, false, os.Stdin, os.Stderr, report.StyleFor(os.Stderr)) {
+		if !checkRepoConfigTrust(sources, hookExecs{}, kubeconfigs{}, false, os.Stdin, os.Stderr, report.StyleFor(os.Stderr)) {
 			return 1
 		}
 	}

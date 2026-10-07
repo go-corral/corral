@@ -106,6 +106,16 @@ func TestDefaultPathHashIsPinned(t *testing.T) {
 	}
 }
 
+// The audit log shares the private home's key, so ConfigDirKey must give DefaultPath's suffix.
+func TestConfigDirKeyMatchesDefaultPath(t *testing.T) {
+	const realHome = "/home/u"
+	for _, dir := range []string{filepath.Join(realHome, ".claude"), filepath.Join(realHome, ".pi", ".")} {
+		if got, want := "home-"+ConfigDirKey(dir), filepath.Base(DefaultPath(realHome, dir)); got != want {
+			t.Errorf("ConfigDirKey(%q): got %q, want %q", dir, got, want)
+		}
+	}
+}
+
 func TestHomeAlwaysAvailable(t *testing.T) {
 	if !New(t.TempDir()).Available(context.Background()) {
 		t.Error("home provider has no host prerequisite — always available")

@@ -124,9 +124,9 @@ func TestK8sBuildKubeconfigCAFileReadError(t *testing.T) {
 		},
 	}
 
-	_, err := buildKubeconfig(rc, "default", "fake-token")
+	_, err := kubeCluster(rc)
 	if err == nil {
-		t.Fatal("buildKubeconfig must fail closed when CAFile is unreadable")
+		t.Fatal("kubeCluster must fail closed when CAFile is unreadable")
 	}
 	if !strings.Contains(err.Error(), "read cluster CA") {
 		t.Errorf("error should mention 'read cluster CA', got %v", err)
@@ -144,7 +144,11 @@ func TestK8sBuildKubeconfigInsecureCluster(t *testing.T) {
 		},
 	}
 
-	kubeconfig, err := buildKubeconfig(rc, "default", "fake-token")
+	cluster, err := kubeCluster(rc)
+	if err != nil {
+		t.Fatalf("kubeCluster insecure: %v", err)
+	}
+	kubeconfig, err := buildKubeconfig([]kubeContext{{name: "current", cluster: cluster, namespace: "default", token: "fake-token"}}, "current")
 	if err != nil {
 		t.Fatalf("buildKubeconfig insecure: %v", err)
 	}
@@ -154,7 +158,7 @@ func TestK8sBuildKubeconfigInsecureCluster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse kubeconfig: %v", err)
 	}
-	cl := cfg.Clusters["corral"]
+	cl := cfg.Clusters["current"]
 	if cl == nil || !cl.InsecureSkipTLSVerify {
 		t.Errorf("insecure cluster must set InsecureSkipTLSVerify: %+v", cl)
 	}
@@ -220,18 +224,18 @@ func TestK8sApplyRoleBindingConflict(t *testing.T) {
 	}
 }
 
-// A malformed Orphan.ID (fewer than four |-parts) must return an error so Reap aborts
+// A malformed Orphan.ID (fewer than five |-parts) must return an error so Reap aborts
 // safely.
 func TestK8sDecodeResourceMalformed(t *testing.T) {
 	malformedIDs := []string{
-		"ServiceAccount|only-two", // 2 parts, not 4
-		"ServiceAccount|ns|name",  // 3 parts: no session field
-		"Kind",                    // 1 part
-		"",                        // empty
+		"ServiceAccount|ns|name|s1", // 4 parts: no cluster field
+		"ServiceAccount|only-two",   // 2 parts
+		"Kind",                      // 1 part
+		"",                          // empty
 	}
 
 	for _, id := range malformedIDs {
-		_, _, err := decodeResource(id)
+		_, _, _, err := decodeResource(id)
 		if err == nil {
 			t.Errorf("decodeResource(%q) must fail closed, got nil", id)
 		}
@@ -240,13 +244,21 @@ func TestK8sDecodeResourceMalformed(t *testing.T) {
 		}
 	}
 	// A session-less resource encodes as a trailing empty field, not a missing one, so it
-	// still decodes: "Kind|ns|name|" is len 4 with session "" (Reap then skips its kubeconfig).
-	if _, session, err := decodeResource("ServiceAccount|ns|name|"); err != nil || session != "" {
+	// still decodes with session "" (Reap then skips its kubeconfig).
+	if _, _, session, err := decodeResource("current|ServiceAccount|ns|name|"); err != nil || session != "" {
 		t.Errorf("an empty session field must decode, got session %q err %v", session, err)
 	}
-	// SplitN with max 4 still creates 4 parts even if there are more delimiters.
-	// "Kind|ns|name|s|extra" splits into ["Kind", "ns", "name", "s|extra"], which is len 4
-	// and valid. This is actually correct — the code doesn't reject it, which is fine.
+}
+
+// A cluster key is a YAML map key and can contain '|'; the other fields cannot.
+func TestK8sResourceIDRoundTrip(t *testing.T) {
+	r := k8sResource{kind: "RoleBinding", namespace: "app1", name: "corral-alice-s1-0"}
+	for _, key := range []string{"prod", "a|b", "|", ""} {
+		cluster, got, session, err := decodeResource(encodeResource(key, r, "s1"))
+		if err != nil || cluster != key || got != r || session != "s1" {
+			t.Errorf("key %q: got cluster %q resource %+v session %q err %v", key, cluster, got, session, err)
+		}
+	}
 }
 
 // An unknown resource kind must return an "unknown resource kind" error so teardown/Reap

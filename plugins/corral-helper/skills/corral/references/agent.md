@@ -46,14 +46,7 @@ corral validate
 corral run pi -- <pi args>
 ```
 
-The second `doctor` confirms the Claude Code hooks or pi presence-warning extension.
-`validate` summarizes selected effective policy before launch. Read the **warnings**
-section first, then check the approval state in the `sources` row and the grants under
-**path grants**. Only tree rows with an `rw` or `ro` access token are grants; terminal
-output also renders them bold. Other tree branches only group paths. `--list` shows
-blocked paths.
-Repository config or session-hook executable approval requires an interactive terminal;
-do not substitute `--yes` for that review.
+The second `doctor` confirms the Claude Code hooks or pi presence-warning extension. `validate` summarizes selected effective policy before launch. Read the **warnings** section first, then check the approval state in the `sources` row and the grants under **path grants**. Only tree rows with an `rw` or `ro` access token are grants; terminal output also renders them bold. Other tree branches only group paths. `--list` shows blocked paths. Repository config, session-hook executable, or kubeconfig approval requires an interactive terminal; do not substitute `--yes` for that review.
 
 If a step fails, use its output rather than restarting the sequence blindly. Common next
 references are [troubleshooting.md](how-to/troubleshooting.md) for readiness or policy
@@ -87,13 +80,11 @@ After the user restarts through the alias or `corral run`:
 2. Run `corral doctor` and check that the backend and agent integration are healthy.
 3. Ask the sandboxed agent to read `~/.aws/credentials`; the always-blocked path must be
    refused. Do not attempt to inspect the file outside the sandbox.
-4. If a provider was enabled, run the verification command from its setup guide:
-   [providers.md](how-to/providers.md), [kubernetes.md](how-to/kubernetes.md), or
-   [gitlab.md](how-to/gitlab.md).
+4. If a provider was enabled, run the verification command from its setup guide: [providers.md](how-to/providers.md), [kubernetes.md](how-to/kubernetes.md), or [gitlab.md](how-to/gitlab.md). With several Kubernetes clusters, run the Kubernetes commands once per cluster with `--context <key>`.
 
 Treat a failed probe as a diagnosis task. Capture `doctor`, `validate`, and the audit
-record's `rule` and `reason`; the current session logs to the file in
-`$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). Then follow
+record's `rule` and `reason`; the current session logs to the host file in
+`$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). The sandbox cannot open that file unless the workdir or a `providers.paths` grant contains it. When neither contains it, ask the user to read it on the host. Then follow
 [troubleshooting.md](how-to/troubleshooting.md).
 
 ## Run commands for the user
@@ -112,9 +103,7 @@ real launch. For profiles, backend overrides, warning prompts, and every flag, r
 
 Profiles selected with `corral run -p` also apply to the sidecar and to corral commands inside the session. `echo "$CORRAL_PROFILES"` inside the session shows them. A config or profile edit takes effect on the next `corral run`. `CORRAL_SIDECAR_SOCKET` is reserved and names the sidecar socket. If every tool call is blocked with `cannot evaluate policy`, tell the user to restart the session with `corral run`, also after a corral upgrade.
 
-Do not automatically add `--yes`. It acknowledges advisory launch warnings, but cannot
-approve repository config or session-hook executables. Let the user review interactive
-approval prompts.
+Do not automatically add `--yes`. It acknowledges advisory launch warnings, but cannot approve repository config, session-hook executables, or kubeconfigs. Let the user review interactive approval prompts.
 
 When config must change, follow the minimal-overlay and layer-selection rules in the
 skill, verify with `corral validate`, and remind the user to start a new session. Exact

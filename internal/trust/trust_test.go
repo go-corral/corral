@@ -164,3 +164,26 @@ func TestDefaultDirFallback(t *testing.T) {
 		t.Fatalf("fallback wrong: %s", got)
 	}
 }
+
+func TestDefaultDirRelativeXDG(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "state")
+	if got := DefaultDir("/home/u"); got != filepath.Join("/home/u", ".local", "state", "corral", "trust") {
+		t.Fatalf("a relative XDG_STATE_HOME must be ignored: %s", got)
+	}
+}
+
+func TestStateDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		xdg  string
+		want string
+	}{
+		{"unset", "", "/home/u/.local/state"},
+		{"absolute", "/data/state", "/data/state"},
+		{"relative", "state", "/home/u/.local/state"},
+	} {
+		if got := StateDir("/home/u", tc.xdg); got != tc.want {
+			t.Errorf("%s: StateDir = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

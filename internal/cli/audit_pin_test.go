@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,12 +20,119 @@ func isolateAuditPin(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv(sandbox.GlobalConfigEnvVar, "")
 	return home
 }
 
+// auditPinArg is how the dry-run argv sets CORRAL_AUDIT_PATH to path: bwrap --setenv,
+// Seatbelt env -i VAR=…
+func auditPinArg(path string) string {
+	if runtime.GOOS == "darwin" {
+		return sandbox.AuditPathEnvVar + "=" + path
+	}
+	return "--setenv " + sandbox.AuditPathEnvVar + " " + path
+}
+
+// The launcher pins the default audit log under XDG_STATE_HOME when it is absolute, else under
+// ~/.local/state, keyed by the agent config dir the host environment resolves.
+func TestRunDryRunPinsDefaultAuditPath(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	defaultState := filepath.Join(home, ".local", "state")
+	defaultConfig := filepath.Join(home, ".claude")
+	xdg := filepath.Join(home, "xdg-state")
+	relocated := filepath.Join(home, "claude-config")
+
+	for _, tc := range []struct {
+		name, xdg, configDir, wantState, wantConfig string
+	}{
+		{"unset", "", "", defaultState, defaultConfig},
+		{"absolute XDG_STATE_HOME", xdg, "", xdg, defaultConfig},
+		{"relative XDG_STATE_HOME", "state", "", defaultState, defaultConfig},
+		{"relocated CLAUDE_CONFIG_DIR", "", relocated, defaultState, relocated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", tc.xdg)
+			t.Setenv("CLAUDE_CONFIG_DIR", tc.configDir)
+			var code int
+			out := captureStdout(t, func() {
+				code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+			})
+			if code != 0 {
+				t.Fatalf("run --dry-run exit=%d", code)
+			}
+			if want := auditPinArg(defaultAuditPath(tc.wantState, tc.wantConfig)); !strings.Contains(out, want) {
+				t.Errorf("dry-run argv must contain %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// A nested launch prints the path it pins in the banner, not the enclosing session's pin.
+func TestRunBannerShowsOwnAuditPath(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	outer := filepath.Join(home, "outer", "corral-audit.jsonl")
+	t.Setenv(sandbox.AuditPathEnvVar, outer)
+
+	var code int
+	var stderr string
+	captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+		})
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	own := defaultAuditPath(filepath.Join(home, ".local", "state"), filepath.Join(home, ".claude"))
+	if want := "audit events in " + abbrevHome(own, home); !strings.Contains(stderr, want) {
+		t.Errorf("banner must contain %q:\n%s", want, stderr)
+	}
+	if strings.Contains(stderr, abbrevHome(outer, home)) {
+		t.Errorf("banner must not show the enclosing session's pin %s:\n%s", outer, stderr)
+	}
+}
+
+// A bare session and a launch with the same home, XDG_STATE_HOME, and agent config dir append
+// to the same default audit log.
+func TestBareSessionAndLaunchShareDefaultAuditPath(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	bareSession(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-config"))
+
+	in, err := localEngineInputs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	if want := auditPinArg(in.auditPath); !strings.Contains(out, want) {
+		t.Errorf("the launch must pin the bare session's audit path %q:\n%s", in.auditPath, out)
+	}
+}
+
 // The pin wins over policy.audit.path: a PreToolUse decision must append to the pinned
-// file, and neither the configured path nor the config-dir default may receive a record.
+// file, and neither the configured path nor the default may receive a record.
 func TestCmdHookAuditPinReceivesRecord(t *testing.T) {
 	home := isolateAuditPin(t)
 
@@ -61,12 +169,13 @@ func TestCmdHookAuditPinReceivesRecord(t *testing.T) {
 			t.Errorf("pinned audit record missing %s:\n%s", want, data)
 		}
 	}
-	// Neither the configured path nor the config-dir default receives anything.
+	// Neither the configured path nor the default receives anything.
 	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
 		t.Errorf("policy.audit.path must not receive a record while the pin is set, stat err: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".claude", "corral-audit.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("the config-dir default must not receive a record while the pin is set, stat err: %v", err)
+	def := defaultAuditPath(filepath.Join(home, ".local", "state"), filepath.Join(home, ".claude"))
+	if _, err := os.Stat(def); !os.IsNotExist(err) {
+		t.Errorf("the default must not receive a record while the pin is set, stat err: %v", err)
 	}
 }
 
