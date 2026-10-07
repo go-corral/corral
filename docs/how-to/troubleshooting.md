@@ -15,13 +15,10 @@ security boundaries, see the [threat model](../explanation/threat-model.md).
 When corral blocks a tool call, find the latest denied event in the audit log:
 
 ```sh
-jq -c 'select(.action == "deny")' ~/.claude/corral-audit.jsonl | tail -n 1
+for log in ~/.local/state/corral/audit/*/corral-audit.jsonl; do jq -c 'select(.action == "deny")' "$log" | tail -n 1; done
 ```
 
-Use the correct [audit-log path](#reading-the-audit-log) if you selected pi or
-configured a custom path. Read the record's `rule` and `reason`, then use the matching
-fix. If corral could not parse the event or evaluate a rule, it blocks the call rather
-than allowing it.
+The command prints the latest denied event of each log. Each agent config directory has its own log, the startup banner contains the path. Use the correct [audit-log path](#reading-the-audit-log) if you configured a custom path.
 
 - **`blocked-path`:** The call reaches an always-blocked directory or a path added
   under `providers.block`. If a custom block is no longer intended, change that config
@@ -188,22 +185,26 @@ because the resolved SSH directory is masked inside the grant.
 
 ## Reading the audit log
 
-corral logs each policy decision as one JSON line. The default log is in the agent's config directory:
+corral logs each policy decision as one JSON line. The default log is in the corral state directory, in a subdirectory for the agent's config directory:
 
-| Agent       | Default audit log                                                                                     |
-| ----------- | ----------------------------------------------------------------------------------------------------- |
-| Claude Code | `$CLAUDE_CONFIG_DIR/corral-audit.jsonl`, or `~/.claude/corral-audit.jsonl` when the variable is unset |
-| pi          | `$PI_CODING_AGENT_DIR/corral-audit.jsonl`, or `~/.pi/corral-audit.jsonl` when the variable is unset   |
+| Agent       | Default audit log                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------- |
+| Claude Code | `~/.local/state/corral/audit/<hash>/corral-audit.jsonl`, `<hash>` from `$CLAUDE_CONFIG_DIR` or `~/.claude` |
+| pi          | `~/.local/state/corral/audit/<hash>/corral-audit.jsonl`, `<hash>` from `$PI_CODING_AGENT_DIR` or `~/.pi`   |
 
-[`policy.audit.path`](../reference/config.md#policyaudit) overrides these defaults.
-Inside a session, `CORRAL_AUDIT_PATH` holds the active path. On the host, replace the
-fallback with your path:
+`XDG_STATE_HOME` replaces `~/.local/state` when it is an absolute path. `<hash>` is the first 4 bytes of the SHA-256 of the config directory, in hex. It matches the private home `~/.cache/corral/home-<hash>`. [`policy.audit.path`](../reference/config.md#policyaudit) overrides these defaults.
+
+The sandbox cannot open the log unless the workdir or a `providers.paths` grant contains it. `CORRAL_AUDIT_PATH` inside a session names the host file. Read the file on the host. The `policy` row of the startup banner prints the exact path: `audit events in <path>`. Replace `<path>` in this example:
 
 ```sh
-log=${CORRAL_AUDIT_PATH:-~/.claude/corral-audit.jsonl}
+log=<path>
 tail -n 20 "$log" | jq .
 jq 'select(.action == "deny")' "$log"
 ```
+
+To read the log inside a session, add the log directory to `providers.paths.ro`.
+
+`corral run` moves a legacy log, `corral-audit.jsonl` in the agent's config directory, and its rotated backups into the default log directory. This happens on every real launch when `policy.audit.path` is unset. If a file cannot be moved, `corral run` prints `legacy audit log not moved: <error>; move the file into <new log directory> or delete it by hand`. Move the file into the named directory, or delete it.
 
 The `rule` and `reason` fields explain the decision. The
 [audit-log reference](../reference/audit-log.md) lists the complete record and the

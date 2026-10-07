@@ -69,9 +69,7 @@ For a block:
 3. Confirm any config change with host-side `corral validate`.
 4. Start a new corral session and retry the original task.
 
-The default audit path is under the selected agent's config directory, unless
-`policy.audit.path` overrides it. Inside an active session, `echo "$CORRAL_AUDIT_PATH"`
-prints the file this session logs to. Before sharing a record, inspect the Bash
+The default audit path is `~/.local/state/corral/audit/<hash>/corral-audit.jsonl` (`$XDG_STATE_HOME` replaces `~/.local/state` when absolute), unless `policy.audit.path` overrides it. The sandbox cannot open the log unless the workdir or a `providers.paths` grant contains it. Inside an active session, `echo "$CORRAL_AUDIT_PATH"` prints the host file this session logs to. Read it on the host. The startup banner prints the same path. `corral run` moves a legacy log from the agent's config directory into the default directory. If it warns `legacy audit log not moved`, tell the user to move the file into the named directory or delete it by hand. Before sharing a record, inspect the Bash
 `command`, WebSearch `query`, and WebFetch `url`: those values are recorded verbatim
 and can contain an inline credential. Content bodies and most free-text values are
 byte-counted. See [audit-log.md](references/reference/audit-log.md).

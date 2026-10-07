@@ -53,7 +53,7 @@ func cmdValidate(args []string, version string) int {
 	if err != nil {
 		return fatalf(os.Stderr, "cannot resolve home: %v", err)
 	}
-	if err := grantAuditDir(cfg, home, true); err != nil {
+	if err := prepareAuditDir(cfg, home, true); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	// Apply the launcher's resolved-path guard; lexical validation alone cannot detect a grant

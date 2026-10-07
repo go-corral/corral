@@ -827,7 +827,7 @@ func TestCollectKubeconfigs(t *testing.T) {
 		{"relative workdir file", "kube/dev.yml", false, workFile},
 		{"paths.rw file", write(filepath.Join(rw, "a.yml")), false, filepath.Join(rw, "a.yml")},
 		{"private home file", write(filepath.Join(priv, ".kube", "config")), false, filepath.Join(priv, ".kube", "config")},
-		{"audit-log directory file", write(filepath.Join(audit, "k.yml")), false, filepath.Join(audit, "k.yml")},
+		{"audit-log directory file", write(filepath.Join(audit, "k.yml")), false, ""},
 		{"host kubeconfig", hostFile, false, ""},
 		{"disabled provider", workFile, true, ""},
 		{"workdir symlink to outside", link(hostFile, filepath.Join(work, "out.yml")), false, filepath.Join(work, "out.yml")},

@@ -36,21 +36,24 @@ func fakeUninstallBinary(t *testing.T, home string) string {
 
 // seedUninstallFootprint installs, under home, one of everything `corral uninstall` reports on:
 // claude's registered hooks, pi's presence backstop, the cache dir (including two
-// sandbox-private homes), a trust approval record, and an audit log with a rotated backup and a
-// lock file. It returns the paths a test asserts over.
+// sandbox-private homes), a trust approval record, an audit log with a rotated backup and a
+// lock file, and a legacy audit log with a rotated backup. It returns the paths a test asserts
+// over.
 type seededFootprint struct {
-	Settings   string
-	Presence   string
-	CacheDir   string
-	Home       string // ~/.cache/corral/home
-	HomeKeyed  string // ~/.cache/corral/home-abcd1234
-	Kube       string
-	UpdateFile string
-	StateDir   string
-	RepoConfig string
-	AuditLog   string
-	AuditOld   string
-	AuditLock  string
+	Settings       string
+	Presence       string
+	CacheDir       string
+	Home           string // ~/.cache/corral/home
+	HomeKeyed      string // ~/.cache/corral/home-abcd1234
+	Kube           string
+	UpdateFile     string
+	StateDir       string
+	RepoConfig     string
+	AuditLog       string
+	AuditOld       string
+	AuditLock      string
+	AuditLegacy    string
+	AuditLegacyOld string
 }
 
 func seedUninstallFootprint(t *testing.T, home string) seededFootprint {
@@ -77,9 +80,11 @@ func seedUninstallFootprint(t *testing.T, home string) seededFootprint {
 	s.HomeKeyed = filepath.Join(s.CacheDir, "home-abcd1234")
 	s.Kube = filepath.Join(s.CacheDir, "kube", "config-x")
 	s.UpdateFile = filepath.Join(s.CacheDir, "update-check.json")
-	s.AuditLog = filepath.Join(home, ".claude", "corral-audit.jsonl")
+	s.AuditLog = defaultAuditPath(filepath.Join(home, ".local", "state"), filepath.Join(home, ".claude"))
 	s.AuditOld = s.AuditLog + ".20260101T000000Z"
 	s.AuditLock = s.AuditLog + ".lock"
+	s.AuditLegacy = legacyAuditPath(filepath.Join(home, ".claude"))
+	s.AuditLegacyOld = s.AuditLegacy + ".20250101T000000Z"
 
 	mkdirs(t, filepath.Join(s.Home, "state"), s.HomeKeyed, filepath.Dir(s.Kube))
 	writeFiles(t, map[string]string{
@@ -89,6 +94,8 @@ func seedUninstallFootprint(t *testing.T, home string) seededFootprint {
 		s.AuditLog:                             "{\"tool\":\"Read\"}\n",
 		s.AuditOld:                             "{\"tool\":\"Bash\"}\n",
 		s.AuditLock:                            "",
+		s.AuditLegacy:                          "{\"tool\":\"Grep\"}\n",
+		s.AuditLegacyOld:                       "{\"tool\":\"Glob\"}\n",
 	})
 
 	if err := trust.NewStore(trust.DefaultDir(home)).Approve([]trust.Entry{{Path: s.RepoConfig, SHA256: "abc123"}}); err != nil {
@@ -176,10 +183,12 @@ func TestUninstallManifestReportsFootprintAndDeletesNothing(t *testing.T) {
 	mustContain(t, out, "enforcement ─", "  ● claude          registered — config dir ~/.claude\n",
 		"  ● pi              registered — config dir ~/",
 		"~/.claude/settings.json", "~/.pi/agent/extensions/corral-presence.ts")
-	// State: cache entries, the trust-record count, audit siblings.
+	// State: cache entries, the trust-record count, the new and the legacy audit log with their
+	// siblings.
 	mustContain(t, out, "~/.cache/corral", "home-abcd1234", "kube", "update-check.json",
 		"~/.local/state/corral", "1 approval record",
-		"~/.claude/corral-audit.jsonl", "1 rotated backup(s)", "corral-audit.jsonl.lock")
+		abbrevHome(seed.AuditLog, home)+" (claude default)", "1 rotated backup(s)", "corral-audit.jsonl.lock",
+		"~/.claude/corral-audit.jsonl (claude legacy default)")
 	// Kept: the print-only section with its by-hand commands.
 	mustContain(t, out, "kept ─", "rm "+bin, "~/.config/corral/config.yml", "alias claude=",
 		"claude plugin uninstall corral-helper@corral", "claude plugin marketplace remove corral")
@@ -192,7 +201,7 @@ func TestUninstallManifestReportsFootprintAndDeletesNothing(t *testing.T) {
 	}
 
 	mustExist(t, seed.Settings, seed.Presence, seed.Home, seed.HomeKeyed, seed.Kube,
-		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
+		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
 	if data, err := os.ReadFile(seed.Settings); err != nil || !strings.Contains(string(data), "hook pre-tool-use") {
 		t.Errorf("the manifest must not touch settings.json (err %v)", err)
 	}
@@ -242,7 +251,7 @@ func TestUninstallApplyYesRemovesEnforcementCacheStateAudit(t *testing.T) {
 	// pi's presence backstop is gone; corral's whole cache (private homes included), the state
 	// dir, and the audit family are gone.
 	mustNotExist(t, seed.Presence, seed.Kube, seed.UpdateFile, seed.Home, seed.HomeKeyed,
-		seed.CacheDir, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
+		seed.CacheDir, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
 
 	mustContain(t, out, "kept ─", "rm "+bin, "~/.config/corral/config.yml", "  ✓ done\n",
 		"claude plugin uninstall corral-helper@corral", "claude plugin marketplace remove corral")
@@ -268,7 +277,7 @@ func TestUninstallApplyInteractiveAcceptsEveryPhase(t *testing.T) {
 		t.Errorf("every prompt was answered y, so no phase may report skipped; output:\n%s", out)
 	}
 	mustNotExist(t, seed.Presence, seed.Kube, seed.UpdateFile, seed.Home, seed.HomeKeyed,
-		seed.CacheDir, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
+		seed.CacheDir, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
 	if data, err := os.ReadFile(seed.Settings); err != nil || strings.Contains(string(data), "hook pre-tool-use") {
 		t.Errorf("corral's hook must be stripped from settings.json (err %v)", err)
 	}
@@ -287,7 +296,7 @@ func TestUninstallApplyDeclinedDeletesNothing(t *testing.T) {
 	}
 	mustContain(t, out, "skipped")
 	mustExist(t, seed.Settings, seed.Presence, seed.Home, seed.HomeKeyed, seed.Kube,
-		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
+		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
 	if data, err := os.ReadFile(seed.Settings); err != nil || !strings.Contains(string(data), "hook pre-tool-use") {
 		t.Errorf("a declined de-registration must leave the hook in place (err %v)", err)
 	}
@@ -307,7 +316,76 @@ func TestUninstallApplyNonInteractiveDeclines(t *testing.T) {
 	}
 	mustContain(t, out, "skipped")
 	mustExist(t, seed.Settings, seed.Presence, seed.Home, seed.HomeKeyed, seed.Kube,
-		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock)
+		seed.UpdateFile, seed.StateDir, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
+}
+
+// The state-directory phase deletes the trust store but not the audit logs under the state dir:
+// declining the audit phase keeps every one of them.
+func TestUninstallApplyDeclinedAuditPhaseKeepsLogs(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	seed := seedUninstallFootprint(t, home)
+	fakeUninstallBinary(t, home)
+
+	// de-register: n, cache: n, state directory: y, audit logs: n.
+	out, code := runUninstallCmd(t, "n\nn\ny\nn\n", "--apply")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustNotExist(t, trust.DefaultDir(home))
+	mustExist(t, seed.AuditLog, seed.AuditOld, seed.AuditLock, seed.AuditLegacy, seed.AuditLegacyOld)
+}
+
+// A log in the audit directory of a config dir that is no longer set is listed and deleted, so
+// the state dir goes with it.
+func TestUninstallDeletesLogOfOtherConfigDir(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	seed := seedUninstallFootprint(t, home)
+	fakeUninstallBinary(t, home)
+	other := filepath.Join(seed.StateDir, "audit", "deadbeef", "corral-audit.jsonl")
+	writeFiles(t, map[string]string{other: "{\"tool\":\"Read\"}\n", other + ".lock": ""})
+
+	out, code := runUninstallCmd(t, "")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustContain(t, out, abbrevHome(other, home)+" (other agent config dir)")
+
+	out, code = runUninstallCmd(t, "", "--apply", "--yes")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustNotExist(t, other, other+".lock", seed.StateDir)
+}
+
+// Rotated backups and the lock file of a log whose live file is gone are listed and deleted:
+// a moved legacy log leaves its lock file, and a key directory can hold only backups.
+func TestUninstallDeletesBackupsWithoutLiveLog(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	seed := seedUninstallFootprint(t, home)
+	fakeUninstallBinary(t, home)
+	if err := os.Remove(seed.AuditLegacy); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(seed.StateDir, "audit", "deadbeef", "corral-audit.jsonl")
+	writeFiles(t, map[string]string{
+		other + ".20260102T000000Z": "{\"tool\":\"Read\"}\n",
+		seed.AuditLegacy + ".lock":  "",
+	})
+
+	out, code := runUninstallCmd(t, "")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustContain(t, out, abbrevHome(other, home)+" (other agent config dir)", "no live log, 1 rotated backup(s)")
+
+	out, code = runUninstallCmd(t, "", "--apply", "--yes")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustNotExist(t, other+".20260102T000000Z", seed.AuditLegacyOld, seed.AuditLegacy+".lock", seed.StateDir)
 }
 
 // --- degradation ---
@@ -341,7 +419,7 @@ func TestUninstallInvalidGlobalConfigDegrades(t *testing.T) {
 	}
 	// The local phases ran regardless of the config failure.
 	mustNotExist(t, seed.Presence, seed.UpdateFile, seed.Home, seed.HomeKeyed,
-		seed.StateDir, seed.AuditLog)
+		seed.StateDir, seed.AuditLog, seed.AuditLegacy)
 }
 
 // --- flag validation ---
@@ -392,7 +470,7 @@ func TestUninstallRemovePhase(t *testing.T) {
 			opts := tt.opts
 			opts.Home, opts.Colors = home, tt.style
 			var out strings.Builder
-			if failed := removePhase(opts, strings.NewReader(tt.in), &out, "cache", dir, tt.exists, "2 entries"); failed {
+			if failed := removePhase(opts, strings.NewReader(tt.in), &out, "cache", dir, tt.exists, "2 entries", os.RemoveAll); failed {
 				t.Error("removePhase reported a failure")
 			}
 			if out.String() != tt.want {
