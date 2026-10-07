@@ -379,7 +379,6 @@ func Load(opt LoadOptions) (*Config, []Source, error) {
 		{"project", projFile},
 		{"local", localFile},
 	}
-	var layers []parsedLayer
 	for _, fl := range fileLayers {
 		if fl.path == "" {
 			continue
@@ -395,14 +394,13 @@ func Load(opt LoadOptions) (*Config, []Source, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse %s config %s: %w", fl.kind, fl.path, err)
 		}
-		layers = append(layers, parsedLayer{path: fl.path, m: m})
 		merged = mergeMap(merged, m)
 		sum := sha256.Sum256(data)
 		sources = append(sources, Source{Kind: fl.kind, Path: fl.path, SHA256: hex.EncodeToString(sum[:])})
 	}
 
 	if _, err := decodeStrict(merged); err != nil {
-		return nil, nil, fmt.Errorf("%w%s", err, migrationHint(layers))
+		return nil, nil, err
 	}
 
 	if len(opt.Profiles) > 0 {
@@ -431,7 +429,7 @@ func Load(opt LoadOptions) (*Config, []Source, error) {
 
 	cfg, err := decodeStrict(merged)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w%s", err, migrationHint(layers))
+		return nil, nil, err
 	}
 	cfg.expandPaths(home)
 	if err := cfg.Validate(home); err != nil {
@@ -731,65 +729,6 @@ func cloneMap(m map[string]any) map[string]any {
 		}
 	}
 	return out
-}
-
-var movedKeys = []struct{ old, new string }{
-	{"paths", "providers.paths"},
-	{"block", "providers.block"},
-	{"aiignore", "providers.aiignore"},
-	{"env", "providers.env"},
-	{"claudeaiConnectors", "agents.claude.claudeaiConnectors"},
-}
-
-type parsedLayer struct {
-	path string
-	m    map[string]any
-}
-
-func movedKeyRenames(m map[string]any) []string {
-	var out []string
-	for _, k := range movedKeys {
-		if _, ok := m[k.old]; ok {
-			out = append(out, k.old+" → "+k.new)
-		}
-	}
-	if profiles, ok := m["profiles"].(map[string]any); ok {
-		names := make([]string, 0, len(profiles))
-		for name := range profiles {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			pm, ok := profiles[name].(map[string]any)
-			if !ok {
-				continue
-			}
-			for _, k := range movedKeys {
-				if _, ok := pm[k.old]; ok {
-					out = append(out, fmt.Sprintf("profiles.%s.%s → profiles.%s.%s", name, k.old, name, k.new))
-				}
-			}
-		}
-	}
-	return out
-}
-
-// migrationHint builds the guidance appended to a strict-decode error when a
-// config file uses moved keys. Empty when no moved key is present.
-func migrationHint(layers []parsedLayer) string {
-	var b strings.Builder
-	for _, l := range layers {
-		if renames := movedKeyRenames(l.m); len(renames) > 0 {
-			fmt.Fprintf(&b, "\nhint: %s: move %s", l.path, strings.Join(renames, ", "))
-		}
-	}
-	if b.Len() > 0 {
-		b.WriteString("\nhint: the moved keys keep their fields — only the nesting changed. " +
-			"The yaml line numbers above refer to the merged config, not the files named here. " +
-			"Update the config together with the corral binary (a stale schema also fail-closes the hook); " +
-			"see docs/reference/config.md")
-	}
-	return b.String()
 }
 
 // decodeStrict marshals the merged map and decodes it into a Config with unknown
