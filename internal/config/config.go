@@ -394,13 +394,18 @@ func Load(opt LoadOptions) (*Config, []Source, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse %s config %s: %w", fl.kind, fl.path, err)
 		}
+		// An empty layer has no keys to check, and yaml.v3 rejects a tab-only
+		// file that parseYAMLMap accepts.
+		if len(m) > 0 {
+			dec := yaml.NewDecoder(bytes.NewReader(data))
+			dec.KnownFields(true)
+			if err := dec.Decode(&Config{}); err != nil {
+				return nil, nil, fmt.Errorf("invalid %s config %s: %w", fl.kind, fl.path, err)
+			}
+		}
 		merged = mergeMap(merged, m)
 		sum := sha256.Sum256(data)
 		sources = append(sources, Source{Kind: fl.kind, Path: fl.path, SHA256: hex.EncodeToString(sum[:])})
-	}
-
-	if _, err := decodeStrict(merged); err != nil {
-		return nil, nil, err
 	}
 
 	if len(opt.Profiles) > 0 {

@@ -472,9 +472,46 @@ func TestProfileNotFound(t *testing.T) {
 	}
 }
 
-func TestUnknownKeyFailsClosed(t *testing.T) {
-	if _, _, err := loadFrom(t, "/home/u", "hsotname: typo", "", ""); err == nil {
-		t.Fatal("expected error on unknown key (fail-closed), got nil")
+// The yaml line numbers must point into the file that has the key, not into the merged config.
+func TestUnknownKeyErrorNamesFileAndLine(t *testing.T) {
+	global := "hostname: global-host\n"
+	project := "hostname: proj-host\nproviders:\n  paths:\n    rwx: [/a]\n"
+	_, _, err := loadFrom(t, "/home/u", global, project, "")
+	if err == nil {
+		t.Fatal("unknown key should fail closed, got nil error")
+	}
+	for _, want := range []string{filepath.Join("proj", ".corral.yml"), "line 4"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q; got:\n%v", want, err)
+		}
+	}
+}
+
+func TestUnknownKeyInUnselectedProfileFailsClosed(t *testing.T) {
+	global := "profiles:\n  k8s:\n    hostnmae: k8s-host\n"
+	_, _, err := loadFrom(t, "/home/u", global, "", "")
+	if err == nil {
+		t.Fatal("unknown key in an unselected profile should fail closed, got nil error")
+	}
+	if !strings.Contains(err.Error(), "global.yml") {
+		t.Errorf("error should name the global file; got:\n%v", err)
+	}
+}
+
+func TestBlankLayerFilesLoad(t *testing.T) {
+	for name, content := range map[string]string{
+		"whitespace":   " \n\t\n",
+		"comment-only": "# nothing here\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, srcs, err := loadFrom(t, "", content, content, content)
+			if err != nil {
+				t.Fatalf("Load() = %v, want no error", err)
+			}
+			if len(srcs) != 4 {
+				t.Errorf("sources = %+v, want defaults plus three file layers", srcs)
+			}
+		})
 	}
 }
 
