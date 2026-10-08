@@ -103,6 +103,15 @@ func TestGitlabGrantsText(t *testing.T) {
 	}
 }
 
+func TestGitlabTokenLifetimeDays(t *testing.T) {
+	if got := (Config{}).EffectiveTokenLifetimeDays(); got != 1 {
+		t.Errorf("Config{}.EffectiveTokenLifetimeDays() = %d, want 1", got)
+	}
+	if got := (Config{TokenLifetimeDays: new(7)}).EffectiveTokenLifetimeDays(); got != 7 {
+		t.Errorf("EffectiveTokenLifetimeDays() with 7 = %d, want 7", got)
+	}
+}
+
 func TestGitlabValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -113,6 +122,12 @@ func TestGitlabValidate(t *testing.T) {
 		{name: "targetless grant", cfg: Config{TokenGrants: []Grant{{Permissions: []string{"push_code"}}}}},
 		{name: "project and group grants", cfg: Config{TokenGrants: []Grant{{Project: "org/app"}, {Group: "org"}}}},
 		{name: "presets", cfg: Config{TokenGrants: []Grant{{Preset: PresetRead}, {Group: "org", Preset: PresetWrite}}}},
+		{name: "lifetime 1 day", cfg: Config{TokenLifetimeDays: new(1)}},
+		{
+			name:    "lifetime 0 days",
+			cfg:     Config{TokenLifetimeDays: new(0)},
+			wantErr: []string{"providers.gitlab.tokenLifetimeDays", "0", "at least 1"},
+		},
 		{
 			name:    "unknown preset",
 			cfg:     Config{TokenGrants: []Grant{{Preset: PresetRead}, {Preset: "admin"}}},

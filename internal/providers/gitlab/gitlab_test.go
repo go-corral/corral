@@ -268,6 +268,38 @@ func TestGitlabMintMinimalConfig(t *testing.T) {
 	}
 }
 
+func TestGitlabExpiresAt(t *testing.T) {
+	late := time.Date(2026, 10, 8, 23, 30, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		days int
+		want string
+	}{
+		{"one day late in the UTC day", late, 1, "2026-10-09"},
+		{"seven days", late, 7, "2026-10-15"},
+		{"non-UTC now uses the UTC date", late.In(time.FixedZone("UTC+2", 2*60*60)), 1, "2026-10-09"},
+	} {
+		if got := expiresAt(tc.now, tc.days); got != tc.want {
+			t.Errorf("%s: expiresAt(%v, %d) = %q, want %q", tc.name, tc.now, tc.days, got, tc.want)
+		}
+	}
+}
+
+// The create request's expires_at follows tokenLifetimeDays.
+func TestGitlabMintTokenLifetime(t *testing.T) {
+	f := &fakeGitlab{ids: map[string]int{"projects/org%2Fapp": 42}}
+	g := f.provider(t, Config{TokenLifetimeDays: new(7), TokenGrants: []Grant{{Project: "org/app"}}})
+	before := expiresAt(time.Now(), 7)
+	if _, err := g.Mint(context.Background(), spec.Session{User: "alice", ID: "s1"}, false); err != nil {
+		t.Fatal(err)
+	}
+	after := expiresAt(time.Now(), 7)
+	if expires, _ := f.createRequest(t)["expires_at"].(string); expires != before && expires != after {
+		t.Fatalf("expires_at = %q, want %q (7 days after the current UTC date)", expires, after)
+	}
+}
+
 // Several grants become one selected_memberships scope each, in config order, with project_ids or
 // group_ids. Status and note name every target with its permissions and never a token value.
 func TestGitlabMintSeveralGrants(t *testing.T) {

@@ -153,7 +153,8 @@ Inside an active corral sandbox, policy blocks writes to corral's config files. 
 - **GitLab:** [gitlab.md](references/how-to/gitlab.md). Confirm the instance runs GitLab
   19.2 or later, and ask which projects or groups the session needs and whether the
   `read` or `write` preset fits each, plus any extra permissions, before writing
-  `grants`.
+  `grants`. The token expires at the next midnight UTC by default; when the session needs
+  it longer, ask for how many days and set `tokenLifetimeDays`.
 - **Session hooks:** [session-hooks.md](references/how-to/session-hooks.md) for setup and
   recovery; [hooks-contract.md](references/reference/hooks-contract.md) for execution and
   contribution details.

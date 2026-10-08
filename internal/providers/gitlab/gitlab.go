@@ -77,7 +77,7 @@ func (g *gitlab) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spe
 	if err != nil {
 		return nil, err
 	}
-	expires := expiresTomorrow()
+	expires := expiresAt(time.Now(), g.cfg.EffectiveTokenLifetimeDays())
 	// Never send legacy `scopes`: GitLab before 19.2 would ignore granular_scopes.
 	body := map[string]any{
 		"name":            g.tokenName(sess),
@@ -107,9 +107,10 @@ func (g *gitlab) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spe
 	}, nil
 }
 
-// expiresTomorrow is the minted token's expiry: GitLab's minimum granularity is a calendar day.
-func expiresTomorrow() string {
-	return time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+// expiresAt is the minted token's expiry date: GitLab's granularity is a calendar day, and the
+// token ends at 00:00 UTC on that date.
+func expiresAt(now time.Time, days int) string {
+	return now.UTC().AddDate(0, 0, days).Format("2006-01-02")
 }
 
 // resolvedGrant is a grant whose target has a numeric ID. name is the target as first named in

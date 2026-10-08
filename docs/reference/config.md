@@ -72,6 +72,7 @@ providers:
     tokenLifetime: 8h
   gitlab:
     enabled: false
+    tokenLifetimeDays: 1
 policy:
   secretScan:
     entropyThreshold: 0
@@ -560,11 +561,13 @@ later. See the [GitLab setup guide](../how-to/gitlab.md) for host-token requirem
 - **`host`** (string without a URL scheme): GitLab instance. Config has no fixed default;
   corral checks `GITLAB_HOST`, then `GL_HOST`, and otherwise uses `gitlab.com`. Set this
   field for a self-hosted instance. corral never infers it from the Git remote.
+- **`tokenLifetimeDays`** (integer, default `1`, minimum `1`): the token expires at
+  00:00 UTC this many days after the current UTC date. See
+  [Set the token lifetime](../how-to/gitlab.md#set-the-token-lifetime).
 - **`grants`** (list of [grant entries](#gitlab-grant-entries)): the projects and groups
   the session token reaches, each with its permissions. The default is one grant with
   the `read` preset on the project detected from `origin`. Once any layer sets
   `grants`, the default no longer applies.
-- **Token lifetime:** fixed at one day, GitLab's minimum expiry granularity.
 
 ##### GitLab grant entries
 

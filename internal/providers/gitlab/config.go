@@ -13,6 +13,8 @@ type Config struct {
 	// Host is the GitLab instance host (no scheme). Empty => $GITLAB_HOST/$GL_HOST, then gitlab.com.
 	// Must be set explicitly for self-hosted instances — never inferred from .git/config.
 	Host string `yaml:"host"`
+	// TokenLifetimeDays nil => 1; the instance enforces its own maximum.
+	TokenLifetimeDays *int `yaml:"tokenLifetimeDays"`
 	// TokenGrants empty => the read preset on the origin project. The default stays in code because
 	// YAML lists merge additively.
 	TokenGrants []Grant `yaml:"grants"`
@@ -91,6 +93,13 @@ func (g Config) Grants() string {
 	return "scoped GitLab fine-grained personal access token (env: GITLAB_TOKEN + forwarded glab vars)"
 }
 
+func (g Config) EffectiveTokenLifetimeDays() int {
+	if g.TokenLifetimeDays == nil {
+		return 1
+	}
+	return *g.TokenLifetimeDays
+}
+
 func (g Config) EffectiveGrants() []Grant {
 	if len(g.TokenGrants) > 0 {
 		return g.TokenGrants
@@ -109,8 +118,12 @@ func (gr Grant) EffectivePermissions() []string {
 	return appendUnique(slices.Clone(presets[gr.effectivePreset()]), gr.Permissions)
 }
 
-// Validate checks the grants. GitLab validates targets and permission names at Mint.
+// Validate checks the token lifetime and the grants. GitLab validates targets, permission names,
+// and the maximum lifetime at Mint.
 func (g Config) Validate() error {
+	if d := g.TokenLifetimeDays; d != nil && *d < 1 {
+		return fmt.Errorf("providers.gitlab.tokenLifetimeDays: %d must be at least 1", *d)
+	}
 	for i, gr := range g.TokenGrants {
 		if gr.Project != "" && gr.Group != "" {
 			return fmt.Errorf("providers.gitlab.grants[%d]: set at most one of project or group (got project %q and group %q); use one grant per target", i, gr.Project, gr.Group)
