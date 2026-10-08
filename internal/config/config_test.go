@@ -800,6 +800,20 @@ func TestGitlabValidation(t *testing.T) {
 	}
 }
 
+func TestGitlabTokenLifetimeDays(t *testing.T) {
+	cfg, _, err := loadFrom(t, "/home/u", "providers:\n  gitlab:\n    enabled: true\n", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers.Gitlab.EffectiveTokenLifetimeDays(); got != 1 {
+		t.Errorf("default tokenLifetimeDays = %d, want 1", got)
+	}
+
+	if _, _, err := loadFrom(t, "/home/u", "providers:\n  gitlab:\n    enabled: false\n    tokenLifetimeDays: 0\n", "", ""); err == nil || !strings.Contains(err.Error(), "providers.gitlab.tokenLifetimeDays") {
+		t.Errorf("tokenLifetimeDays 0 while disabled: want an error naming providers.gitlab.tokenLifetimeDays, got %v", err)
+	}
+}
+
 // Grants from two layers accumulate append-unique; the provider merges entries on the same target
 // at mint time.
 func TestGitlabGrantsMergeAcrossLayers(t *testing.T) {

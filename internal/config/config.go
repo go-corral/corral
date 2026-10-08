@@ -299,6 +299,7 @@ providers:
   # force-union into any user list (append-unique merge).
   gitlab:
     enabled: false
+    tokenLifetimeDays: 1
 policy:
   secretScan:
     entropyThreshold: 0

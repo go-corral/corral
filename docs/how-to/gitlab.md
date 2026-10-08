@@ -6,7 +6,7 @@ The session token:
 
 - belongs to your GitLab user, so GitLab attributes API actions and pushes to you.
 - holds only the permissions you grant, on the projects and groups you name.
-- expires after one day, GitLab's minimum expiry granularity.
+- expires at the next midnight UTC by default. See [Set the token lifetime](#set-the-token-lifetime).
 
 ## Requirements
 
@@ -127,6 +127,21 @@ GitLab documents which REST endpoints each permission covers in [fine-grained to
 
 Some `glab` commands use the GraphQL API, which fine-grained tokens don't fully cover. If a `glab` command fails with `401` or `403` although the permission is granted, call the REST endpoint through `glab api` instead.
 
+## Set the token lifetime
+
+By default (`tokenLifetimeDays: 1`), the token expires at the next midnight UTC.  GitLab sets token expiry as a date and ends the token at 00:00 UTC on that date, so a session started at 23:30 UTC is actually only valid for 30 minutes.
+
+To keep the token longer, set the number of days after the current UTC date:
+
+```yaml
+providers:
+  gitlab:
+    enabled: true
+    tokenLifetimeDays: 7
+```
+
+The GitLab instance enforces its own maximum token lifetime, by default 365 days. corral revokes the token when the session ends. A longer lifetime only matters when revocation fails.
+
 ## Verify the session
 
 Launch a new session, then run:
@@ -146,6 +161,7 @@ The startup banner lists each target with its preset and any permissions beyond 
 ## Fix common failures
 
 - **Creating the token returns `400 Bad Request`:** the instance runs a GitLab version older than 19.2. Upgrade GitLab, or set `optional: true` only if the session can continue without GitLab access.
+- **Creating the token returns `422 Unprocessable Entity` with `Expiration date must be before <date>`:** `tokenLifetimeDays` exceeds the instance's maximum token lifetime. Lower `tokenLifetimeDays` so the expiry falls before the date GitLab names.
 - **Creating the token returns `404 Not Found`:** fine-grained personal access tokens are turned off on the instance, or your user is not a member of a target. The error lists the targets.
 - **Creating the token returns `403 Forbidden`:** the host token is a fine-grained token that lacks `create_personal_access_token` or a requested permission. Add the missing permissions to the host token, or use a legacy token with the `api` scope.
 - **`project "..." not found` or `group "..." not found`:** the target does not exist, or the host token can't see it. Check the path or numeric ID.
