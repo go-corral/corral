@@ -292,8 +292,11 @@ func Call(path string, req Request, payload []byte, fsys policy.FS) Response {
 	if err := json.NewEncoder(conn).Encode(header{Request: req, Size: len(payload)}); err != nil {
 		return Response{Error: fmt.Sprintf("write sidecar request: %v", err)}
 	}
-	if _, err := conn.Write(payload); err != nil {
-		return Response{Error: fmt.Sprintf("write sidecar request: %v", err)}
+	// A zero-length write fails with EPIPE once the server has answered and closed.
+	if len(payload) > 0 {
+		if _, err := conn.Write(payload); err != nil {
+			return Response{Error: fmt.Sprintf("write sidecar request: %v", err)}
+		}
 	}
 	r := bufio.NewReader(conn)
 	for {
