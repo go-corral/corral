@@ -110,10 +110,23 @@ drive(0, "", "signal"); // infra failure -> MUST return a deny, NOT throw
 r = await handlers.user_bash({ command: "x", cwd: "/" });
 check(r && r.result && r.result.exitCode === 1, "user_bash fails closed by RETURN (not throw) on infra error");
 
-// ---- before_agent_start: note ----
-drive(0, JSON.stringify({ hookSpecificOutput: { additionalContext: "NOTE" } }));
-r = await handlers.before_agent_start();
-check(r && r.message && r.message.content === "NOTE", "before_agent_start returns the note as a message");
+// ---- before_agent_start: note section on each run, none on failure, never throws ----
+const note = JSON.stringify({ hookSpecificOutput: { additionalContext: "NOTE" } });
+for (const [exit, stdout, want] of [
+  [0, note, { corral_sandbox_note: "NOTE" }],
+  [0, note, { corral_sandbox_note: "NOTE" }],
+  [1, note, {}],
+  [0, "", {}],
+]) {
+  drive(exit, stdout);
+  const start = { systemPromptOptions: { sections: {} } };
+  r = await handlers.before_agent_start(start).catch(() => "threw");
+  check(r === undefined, `before_agent_start returns undefined (exit ${exit}, stdout ${stdout || "empty"})`);
+  check(
+    JSON.stringify(start.systemPromptOptions.sections) === JSON.stringify(want),
+    `before_agent_start sets sections to ${JSON.stringify(want)} (exit ${exit}, stdout ${stdout || "empty"})`,
+  );
+}
 
 // ---- input: prompt secret scan (advisory: continue on clean/error, swallow+notify on hit) ----
 let notified = null;
