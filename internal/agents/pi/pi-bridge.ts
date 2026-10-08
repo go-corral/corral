@@ -203,22 +203,19 @@ export default (pi) => {
     }
   });
 
-  // before_agent_start: inject corral's model-only sandbox note (corral hook session-start
-  // returns it as hookSpecificOutput.additionalContext). Re-injected each turn, so it
-  // survives compaction. Informational — never throw; a missing note simply omits it.
-  pi.on("before_agent_start", async () => {
+  // before_agent_start: set corral's model-only sandbox note (corral hook session-start
+  // returns it as hookSpecificOutput.additionalContext) as a system prompt section. pi needs
+  // it on each run, but stores it once per session. Informational — never throw.
+  pi.on("before_agent_start", async (event) => {
     try {
       const res = callCorral(["hook", "session-start"], {
         hook_event_name: "SessionStart",
         session_id: SESSION_ID,
         cwd: process.cwd(),
       });
-      if (!res.ran || res.status !== 0 || res.stdout === "") return undefined;
+      if (!res.ran || res.status !== 0) return;
       const note = JSON.parse(res.stdout)?.hookSpecificOutput?.additionalContext;
-      if (!note) return undefined;
-      return { message: { customType: "corral.sandbox-note", content: note } };
-    } catch (e) {
-      return undefined;
-    }
+      if (note) event.systemPromptOptions.sections.corral_sandbox_note = note;
+    } catch (e) {}
   });
 };

@@ -86,6 +86,8 @@ policy extension named `corral-policy.ts` and passes it to pi with the `-e` flag
 extension checks tool calls, tool results, and prompts. It exists only for that
 corral-launched session.
 
+corral requires pi 0.86.0 or later. The policy extension adds the sandbox note to pi's system prompt as a section. pi stores this section once per session.
+
 `corral sync pi` installs `corral-presence.ts` in pi's global extensions directory.
 This extension does not enforce policy. It warns once when pi starts without
 corral, because the per-launch policy extension is absent from a bare `pi` process.
