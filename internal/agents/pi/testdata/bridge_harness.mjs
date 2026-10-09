@@ -109,6 +109,7 @@ check(r === undefined, "user_bash allow returns undefined");
 drive(0, "", "signal"); // infra failure -> MUST return a deny, NOT throw
 r = await handlers.user_bash({ command: "x", cwd: "/" });
 check(r && r.result && r.result.exitCode === 1, "user_bash fails closed by RETURN (not throw) on infra error");
+check(r && r.result && r.result.output.includes("did not run: SIGKILL"), "user_bash fail-closed text names the cause");
 
 // ---- before_agent_start: note section on each run, none on failure, never throws ----
 const note = JSON.stringify({ hookSpecificOutput: { additionalContext: "NOTE" } });

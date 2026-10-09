@@ -12,7 +12,13 @@ security boundaries, see the [threat model](../explanation/threat-model.md).
 
 ## The hook blocked my command
 
-When corral blocks a tool call, find the latest denied event in the audit log:
+A hook deny starts with `blocked by corral policy [hook:<rule>]`. It has a reason and a `Fix:` part. The entries below say what each rule matches and give its fix.
+
+```text
+blocked by corral policy [hook:blocked-path]: access to /srv/keys (resolved "/srv/keys/a.txt" -> "/srv/keys/a.txt"). Fix: Ask the user to remove the entry from `providers.block.directories` or `providers.block.files` in the config that adds it.
+```
+
+The audit log records the same rule name. Find the latest denied event:
 
 ```sh
 for log in ~/.local/state/corral/audit/*/corral-audit.jsonl; do jq -c 'select(.action == "deny")' "$log" | tail -n 1; done
@@ -20,34 +26,33 @@ for log in ~/.local/state/corral/audit/*/corral-audit.jsonl; do jq -c 'select(.a
 
 The command prints the latest denied event of each log. Each agent config directory has its own log, the startup banner contains the path. Use the correct [audit-log path](#reading-the-audit-log) if you configured a custom path.
 
-- **`blocked-path`:** The call reaches an always-blocked directory or a path added
-  under `providers.block`. If a custom block is no longer intended, change that config
-  outside the agent session. An always-blocked directory cannot be granted through
-  `providers.paths`; use supported access such as the SSH or Kubernetes provider or an
-  environment credential instead.
-- **`ai-ignore`:** The path matches `.aiignore`, `.aiexclude`, or another configured
-  exclusion source. Change the exclusion only if the agent should have access.
-- **`secret-scan`:** File content matches a known credential format or the configured
-  entropy threshold. For a verified false positive, add the directory to
-  [`policy.secretScan.skipPaths`](../reference/config.md#policysecretscan). Setting
-  `entropyThreshold: 0` disables only the entropy heuristic; known formats remain
-  enabled.
-- **`bash`:** The command contains a blocked operation such as pipe-to-shell, a
-  destructive delete, world-writable `chmod`, or a redirect involving a sensitive
-  path. Rewrite the command, or perform the operation yourself outside the agent
-  session after reviewing it.
-- **`path-pattern`:** The path looks sensitive or is protected against agent edits,
-  such as corral's config, audit log, or an agent hook registration. Make deliberate
-  administrative changes outside the agent session.
+- **`always-blocked`:** The call reaches an [always-blocked path](../explanation/threat-model.md#1-always-blocked-paths) or a path under one. No setting opens it. Supported access goes through a provider, such as the SSH or Kubernetes provider. For a cloud credential in an environment variable, add the variable to [`providers.env.passthrough`](../reference/config.md#providersenv).
+- **`blocked-path`:** The call reaches a path that `providers.block` adds. Remove the entry from `providers.block.directories` or `providers.block.files` in the config that adds it.
+- **`ai-ignore`:** The path matches `.aiignore`, `.aiexclude`, or another configured exclusion source. If the agent needs the path, change the AI ignore file or `providers.aiignore.sources`.
+- **`bash`:** The command contains a blocked operation such as pipe-to-shell, a destructive delete, world-writable `chmod`, or a redirect involving a sensitive path. No setting allows the command. Do the task without the blocked operation, or run the command yourself outside the session.
+- **`path-pattern`:** The path looks sensitive or is protected against agent edits, such as corral's config, audit log, or an agent hook registration. No setting exempts the path. Do this step yourself outside the session.
+- **`secret-scan`:** File content matches a known credential format or the configured entropy threshold. When a Read matches a file that holds no real credential, add the directory to [`policy.secretScan.skipPaths`](../reference/config.md#policysecretscan). For a Write or an MCP call, the agent uses a placeholder or an environment variable reference instead of the value. For a high-entropy false positive, raise `entropyThreshold`, or set it to `0` to turn off the entropy heuristic. No setting exempts a known format in written content or MCP arguments.
 
-The [threat model](../explanation/threat-model.md) describes rules that cannot be
-relaxed by configuration.
+The [threat model](../explanation/threat-model.md) describes rules that cannot be relaxed by configuration.
+
+## The sandbox blocks silently
+
+The sandbox (`os` layer) gives no policy message. On Linux, a masked directory is empty, a masked file reads as `File content masked by corral`, a file under a masked directory or an unmounted path reads as `No such file or directory`, and a write to a read-only path fails with `Read-only file system`. A write outside the working directory and the granted paths can also work on Linux, but it goes to sandbox-private storage that the host does not see. On macOS, a masked path or a path without a grant fails with `Operation not permitted`. A path that is missing in the sandbox can exist on the host. The hook reads the text of a Bash command, but not what the started processes do. So a shell probe that works does not show that a tool call is allowed.
+
+A path grant cannot open an always-blocked path, a `providers.block` entry, or a path that an AI ignore source matches. For a `providers.block` entry, remove the entry. For an AI ignore match, change the AI ignore file. For any other path, add a `providers.paths.ro` grant to read or a `providers.paths.rw` grant to write, as in [A tool cannot use a file under `$HOME`](#a-tool-cannot-use-a-file-under-home).
 
 ## Every tool call is blocked with `cannot evaluate policy`
 
-The hook in the session cannot reach the sidecar of `corral run`, so it blocks each call. The message ends with the cause. Exit the agent and start a new session with `corral run`.
+The hook in the session cannot reach the sidecar of `corral run`, so it blocks each call. The message starts with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy:` and names the cause. Exit the agent and start a new session with `corral run`.
 
 After a corral upgrade the hook could become incompatible, restarting the session will help then.
+
+## A tool output is withheld
+
+The tool call ran, but corral replaced its output before the agent saw it. The replacement starts with `output withheld by corral policy [hook:<rule>]`.
+
+- **`response-secret`:** The output contains a known credential format or a value above the entropy threshold. The agent passes the credential through an environment variable or a file path instead of printing it. For a high-entropy false positive, raise [`policy.secretScan.entropyThreshold`](../reference/config.md#policysecretscan).
+- **`fail-closed`:** corral could not scan the output, for example because it is larger than the scan limit or the sidecar does not answer. The message names the cause.
 
 ## The kubeconfig `Read` block
 

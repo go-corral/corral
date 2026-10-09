@@ -3,6 +3,8 @@ package pi
 import (
 	"strings"
 	"testing"
+
+	"github.com/go-corral/corral/internal/policy"
 )
 
 // TestPiBridgeSourceWellFormed pins the embedded bridge's load-bearing shape so a careless
@@ -29,6 +31,19 @@ func TestPiBridgeSourceWellFormed(t *testing.T) {
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("embedded pi bridge missing %q", want)
+		}
+	}
+}
+
+// The bridge holds a copy of corral's fail-closed texts, because it cannot ask corral for them
+// when corral does not run.
+func TestPiBridgeFailureTexts(t *testing.T) {
+	src := string(bridgeSource)
+	for _, text := range []string{policy.FailClosed("\x00"), policy.Unscanned("\x00")} {
+		for _, part := range strings.Split(text, "\x00") {
+			if !strings.Contains(src, part) {
+				t.Errorf("embedded pi bridge missing %q", part)
+			}
 		}
 	}
 }

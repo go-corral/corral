@@ -47,6 +47,7 @@ func Main(args []string, version string) int {
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
+	hookVersion = version
 	switch cmd {
 	case "run":
 		return cmdRun(rest, version)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/go-corral/corral/internal/agents"
@@ -36,6 +37,9 @@ const (
 	decisionExit2 = "exit2"
 )
 
+// hookVersion is the corral version, set once by Main. The session-start note names it.
+var hookVersion = "dev"
+
 // hookDispatch maps each hook event to its handler. cmdHook fails closed on unknown events.
 var hookDispatch = map[string]func(args []string) int{
 	eventPreToolUse:       cmdHookPreToolUse,
@@ -59,8 +63,7 @@ func cmdHook(args []string) int {
 	if h, ok := hookDispatch[args[0]]; ok {
 		return h(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "corral hook: unknown event %q, blocking (fail-closed)\n", args[0])
-	return policy.ExitBlock
+	return policy.BlockFailClosed(os.Stderr, "unknown hook event %q", args[0])
 }
 
 // cmdHookSessionStart injects a model-only note about the sandbox into the session context.
@@ -77,7 +80,7 @@ func runSessionStartHook(stdin io.Reader, stdout io.Writer) int {
 		return policy.ExitAllow // not sandboxed → say nothing
 	}
 	return policy.WriteSessionStartContext(stdout, sandboxSystemNote(
-		os.Getenv(sandbox.BackendNotesEnvVar), os.Getenv(sandbox.ProviderNotesEnvVar),
+		runtime.GOOS, hookVersion, os.Getenv(sandbox.BackendNotesEnvVar), os.Getenv(sandbox.ProviderNotesEnvVar),
 	))
 }
 
@@ -97,7 +100,7 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 	// When the policy cannot be evaluated, it scans for known credential formats only.
 	resp := evaluate(sidecar.Request{Type: eventUserPromptSubmit}, data)
 	if resp.Error != "" {
-		if code, handled := promptSecretWarn(ev, 0, policy.IncidentHint, nil, stdout); handled {
+		if code, handled := promptSecretWarn(ev, 0, nil, stdout); handled {
 			return code
 		}
 	} else {
@@ -139,8 +142,8 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 
 // promptSecretWarn scans the submitted prompt for secret material. On a hit it emits a soft
 // warn-and-resubmit notice and audit-logs the decision through aud when set (kind only, never
-// the prompt or value). An empty hint selects the built-in one.
-func promptSecretWarn(ev *policy.HookEvent, entropy float64, hint string, aud policy.AuditFunc, stdout io.Writer) (int, bool) {
+// the prompt or value).
+func promptSecretWarn(ev *policy.HookEvent, entropy float64, aud policy.AuditFunc, stdout io.Writer) (int, bool) {
 	if ev == nil || ev.Prompt == "" {
 		return policy.ExitAllow, false
 	}
@@ -158,10 +161,7 @@ func promptSecretWarn(ev *policy.HookEvent, entropy float64, hint string, aud po
 		_ = f.Close()
 	}
 	auditPromptSecret(aud, ev, kind)
-	if hint == "" {
-		hint = policy.IncidentHint
-	}
-	return policy.WriteUserPromptBlock(stdout, promptSecretWarning(kind, hint)), true
+	return policy.WriteUserPromptBlock(stdout, promptSecretWarning(kind)), true
 }
 
 // auditPromptSecret records the prompt-secret-scan decision under its own recover.
@@ -247,23 +247,29 @@ func presenceWarning() string {
 
 // promptSecretWarning is the user-facing notice when a submitted prompt appears to contain a
 // credential. Advisory: the prompt is swallowed and resubmitting proceeds. Names only the kind.
-func promptSecretWarning(kind policy.SecretKind, hint string) string {
+func promptSecretWarning(kind policy.SecretKind) string {
 	return strings.Join([]string{
 		fmt.Sprintf("⚠  corral: your prompt appears to contain %s — it was NOT sent.", kind),
 		"   A secret typed into a prompt goes straight to the model provider. Remove or",
 		"   pseudonymize it and resubmit. (To send this prompt anyway, just resubmit it.)",
-		"   " + hint,
 	}, "\n")
 }
 
 // sandboxSystemNote is the terse, model-facing description of the corral environment injected
-// at session start. backendNotes and providerNotes are launcher-authored, appended as bullets.
-func sandboxSystemNote(backendNotes, providerNotes string) string {
+// at session start. goos selects how a sandbox deny reads. backendNotes and providerNotes are
+// launcher-authored, appended as bullets.
+func sandboxSystemNote(goos, version, backendNotes, providerNotes string) string {
+	silentDeny := "a masked directory is empty, a masked file reads as `File content masked by corral`, a file under a masked directory or an unmounted path reads as `No such file or directory`, and a write to a read-only path fails with `Read-only file system`. A write outside the working directory and the granted paths can also work, but it goes to sandbox-private storage that the user does not see"
+	if goos == "darwin" {
+		silentDeny = "a masked path or a path without a grant fails with `Operation not permitted`"
+	}
 	lines := []string{
-		"You are running inside corral, a security sandbox. For this session:",
+		"You are running inside corral " + version + ", a security sandbox. For this session:",
 		"- Writable: the working directory. Most other paths are read-only or absent.",
-		"- Paths containing sensitive information (for example ~/.ssh, ~/.gnupg, ~/.aws, ~/.kube, ~/.config/gcloud, ~/.azure) are masked",
-		"- Tool calls are policy-checked: credential reads/writes and destructive commands may be blocked.",
+		"- Always-blocked: `" + strings.Join(config.AlwaysBlockedPaths, "`, `") + "`. No setting can open them. If one of them is a symlink, its target is blocked too.",
+		"- Two layers can block you. The sandbox (`os`) gives no policy message: " + silentDeny + ". A path that is missing here can exist on the host.",
+		"- The policy hook (`hook`) checks your own tool calls. It blocks credential access, secrets, destructive commands, and edits to corral's own files. Its deny starts with `blocked by corral policy [hook:<rule>]` and names a fix. When a call ran but corral hid its output, the message starts with `output withheld by corral policy [hook:<rule>]`. It reads the text of a Bash command, but not what the started processes do. A shell probe that works does not show that a tool call is allowed.",
+		"- When something is blocked, propose a fix to the user. For a hook deny, propose the named fix. For a sandbox deny, propose a `providers.paths.ro` grant to read or a `providers.paths.rw` grant to write, unless the path is always-blocked, in the `block` list, or excluded by an AI ignore file. Never work around a block with a rename, a subprocess, or a symlink. In Claude Code, `dangerouslyDisableSandbox` removes only its own per-command sandbox, never corral's.",
 		"- Put scratch files, scripts, and intermediate output in a `scratchpad/` directory in the working directory, not /tmp. The harness may point you at a /tmp scratchpad path, but /tmp here is sandbox-private and the user can't see it; the working directory is writable and visible to you both.",
 	}
 	lines = appendNoteBullets(lines, backendNotes)
@@ -301,8 +307,7 @@ func cmdHookPreToolUse(args []string) int {
 	decision := fs.String("decision", decisionJSON, fmt.Sprintf("how to report a block: %q (clean policy decision) or %q", decisionJSON, decisionExit2))
 	if err := fs.Parse(args); err != nil || (*decision != decisionJSON && *decision != decisionExit2) {
 		// A gate that can't parse its own flags must block.
-		fmt.Fprintln(os.Stderr, "corral: bad hook arguments, blocking (fail-closed)")
-		return policy.ExitBlock
+		return policy.BlockFailClosed(os.Stderr, "bad hook arguments")
 	}
 
 	stop := policy.InstallFailClosedSignals(os.Stderr)
@@ -310,19 +315,16 @@ func cmdHookPreToolUse(args []string) int {
 
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, policy.MaxEventBytes+1))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "corral: cannot read hook input, blocking: %v\n", err)
-		return policy.ExitBlock
+		return policy.BlockFailClosed(os.Stderr, "cannot read hook input: %v", err)
 	}
 	resp := evaluate(sidecar.Request{Type: eventPreToolUse, Decision: *decision}, data)
 	if resp.Error != "" {
-		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, blocking (fail-closed): %s\n", resp.Error)
-		return policy.ExitBlock
+		return policy.BlockFailClosed(os.Stderr, "cannot evaluate policy: %s", resp.Error)
 	}
 	if resp.Stdout != "" {
 		if _, err := io.WriteString(os.Stdout, resp.Stdout); err != nil {
 			// A deny JSON that never reached the agent must not become an allow.
-			fmt.Fprintf(os.Stderr, "corral: cannot write the policy decision, blocking: %v\n", err)
-			return policy.ExitBlock
+			return policy.BlockFailClosed(os.Stderr, "cannot write the policy decision: %v", err)
 		}
 	}
 	fmt.Fprint(os.Stderr, resp.Stderr)
@@ -345,7 +347,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			fmt.Fprintf(os.Stderr, "corral: internal error, withholding the tool response (fail-closed): %v\n", rec)
-			code = gate.Replace("[corral] tool response withheld — internal error before the scan could run (fail-closed)")
+			code = gate.Replace(policy.Unscanned("internal error"))
 		}
 	}()
 
@@ -354,11 +356,11 @@ func cmdHookPostToolUse(args []string) (code int) {
 		// Learn the tool name before withholding: otherwise pre-parse paths fall back to the
 		// Bash schema, which an mcp__* caller silently ignores.
 		gate.ObserveShapeFrom(os.Stdin)
-		return gate.Replace("[corral] tool response withheld — bad hook arguments (fail-closed)")
+		return gate.Replace(policy.Unscanned("bad hook arguments"))
 	}
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, policy.MaxEventBytes+1))
 	if err != nil {
-		return gate.Replace("[corral] tool response withheld — could not read it to scan (fail-closed)")
+		return gate.Replace(policy.Unscanned("cannot read the output"))
 	}
 	if ev, err := policy.ParseEvent(data); err == nil {
 		gate.Observe(ev.ToolName, ev.ResponseBytes())
@@ -368,7 +370,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 	resp := evaluate(sidecar.Request{Type: eventPostToolUse}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, withholding the tool response (fail-closed): %s\n", resp.Error)
-		return gate.Replace("[corral] tool response withheld — could not evaluate policy (fail-closed)")
+		return gate.Replace(policy.Unscanned("cannot evaluate policy"))
 	}
 	fmt.Fprint(os.Stderr, resp.Stderr)
 	return gate.Forward(resp.Stdout, resp.Code)
@@ -442,7 +444,6 @@ func policyHandler(in engineInputs) (sidecar.Handler, error) {
 func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, error)) sidecar.Handler {
 	aud := buildAuditor(in.cfg, in.auditPath)
 	entropy := in.cfg.Policy.SecretScan.EntropyThreshold
-	hint := in.cfg.Policy.IncidentHint
 	return func(req sidecar.Request, payload []byte, fsys policy.FS) sidecar.Response {
 		var stdout, stderr bytes.Buffer
 		var code int
@@ -458,10 +459,10 @@ func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, e
 			}
 			code = policy.RunHookWithAudit(eng, aud, fsys, bytes.NewReader(payload), &stdout, &stderr, present)
 		case eventPostToolUse:
-			code = policy.RunPostToolUseHook(entropy, 0, hint, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
+			code = policy.RunPostToolUseHook(entropy, 0, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
 		case eventUserPromptSubmit:
 			ev, _ := policy.ParseEvent(payload)
-			code, _ = promptSecretWarn(ev, entropy, hint, aud, &stdout)
+			code, _ = promptSecretWarn(ev, entropy, aud, &stdout)
 		default:
 			return sidecar.Response{Error: fmt.Sprintf("unknown request type %q", req.Type)}
 		}
@@ -500,7 +501,11 @@ func readPolicyFiles(in engineInputs) policyFiles {
 // event paths resolve in. It reads no process environment and no cwd.
 func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engine, error) {
 	cfg := in.cfg
-	roots, err := canonicalizeAll(cfg.EffectiveBlockedPaths(in.home), fsys)
+	alwaysRoots, err := canonicalizeAll(config.AlwaysBlockedExpanded(in.home), fsys)
+	if err != nil {
+		return nil, err
+	}
+	roots, err := canonicalizeAll(append(cfg.ConfigBlockedDirs(in.home), cfg.ConfigBlockedFiles(in.home)...), fsys)
 	if err != nil {
 		return nil, err
 	}
@@ -543,6 +548,7 @@ func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engi
 	auditBase, _ := policy.CanonicalizeRootIn(fsys, in.auditPath, "")
 
 	eng := policy.NewEngine(
+		&policy.BlockedPathRule{RuleName: "always-blocked", Roots: alwaysRoots},
 		&policy.BlockedPathRule{RuleName: "blocked-path", Roots: roots},
 		// Repo AI ignore globs: additive deny (no negation).
 		&policy.AIIgnoreRule{Root: aiRoot, Patterns: ai.Patterns},
@@ -553,7 +559,6 @@ func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engi
 		&policy.SecretScanRule{
 			EntropyThreshold: cfg.Policy.SecretScan.EntropyThreshold,
 			SkipRoots:        skip,
-			IncidentHint:     cfg.Policy.IncidentHint,
 		},
 	)
 	return eng, nil

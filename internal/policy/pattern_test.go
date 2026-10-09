@@ -275,6 +275,24 @@ func TestClassifySensitiveUnit(t *testing.T) {
 	}
 }
 
+// The reason names a secrets directory itself, or a path in it: rule reasons embed the phrase.
+func TestClassifySensitiveDirPhrase(t *testing.T) {
+	tests := []struct{ path, want string }{
+		{"/home/u/.ssh", "an SSH key directory"},
+		{"/home/u/.ssh/", "an SSH key directory"},
+		{"/home/u/.ssh/id_rsa", "a path in an SSH key directory"},
+		{"/home/u/.ssh/*", "a path in an SSH key directory"},
+		{"/srv/backup/.aws/credentials", "a path in an AWS credentials directory"},
+		{"/home/u/.config/gcloud", "a Google Cloud credentials directory"},
+		{"/home/u/.config/gcloud/creds.json", "a path in a Google Cloud credentials directory"},
+	}
+	for _, tt := range tests {
+		if got, _ := classifySensitive(tt.path); got != tt.want {
+			t.Errorf("classifySensitive(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestSelfConfigMatch(t *testing.T) {
 	cfg := "/home/u/.claude"
 	deny := []string{

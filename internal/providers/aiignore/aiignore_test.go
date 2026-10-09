@@ -225,7 +225,7 @@ func TestProviderMintContributesMasksAndNote(t *testing.T) {
 	if len(c.Status) > 0 && !strings.Contains(c.Status[0], string(filepath.Separator)+"secrets") {
 		t.Errorf("Status must name the masked path, got %v", c.Status)
 	}
-	if len(c.AgentNotes) != 1 || !strings.Contains(c.AgentNotes[0], "repo AI-ignore is active") {
+	if len(c.AgentNotes) != 1 || !strings.Contains(c.AgentNotes[0], "exclude paths from AI tools") {
 		t.Errorf("AgentNotes = %v", c.AgentNotes)
 	}
 }
@@ -281,5 +281,59 @@ func TestEffectiveSourcesFallback(t *testing.T) {
 	}
 	if got := (Config{Sources: []string{".gitignore"}}).EffectiveSources(); len(got) != 1 || got[0] != ".gitignore" {
 		t.Errorf("configured sources must win: %v", got)
+	}
+}
+
+func mintNote(t *testing.T, repo string, sources []string) string {
+	t.Helper()
+	c, err := New(sources).Mint(context.Background(), spec.Session{WorkDir: repo}, false)
+	if err != nil || c == nil || len(c.AgentNotes) != 1 {
+		t.Fatalf("Mint = %+v, %v", c, err)
+	}
+	return c.AgentNotes[0]
+}
+
+func TestMintNoteOneSource(t *testing.T) {
+	repo := t.TempDir()
+	src := filepath.Join(repo, ".aiignore")
+	writeIgnoreFile(t, src, "secrets/\n")
+	note := mintNote(t, repo, []string{".aiignore", ".aiexclude"})
+	for _, want := range []string{"the patterns `secrets/` in `" + src + "`", "Read the ignore files to check a path", "change these files."} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note lacks %q: %s", want, note)
+		}
+	}
+}
+
+func TestMintNoteTwoSources(t *testing.T) {
+	repo := t.TempDir()
+	a, b := filepath.Join(repo, ".aiignore"), filepath.Join(repo, ".aiexclude")
+	writeIgnoreFile(t, a, "a/\n")
+	writeIgnoreFile(t, b, "b/\n")
+	note := mintNote(t, repo, []string{".aiignore", ".aiexclude"})
+	if want := "the patterns `a/`, `b/` in `" + a + "`, `" + b + "`"; !strings.Contains(note, want) {
+		t.Errorf("note lacks %q: %s", want, note)
+	}
+}
+
+func TestMintNoteManyPatterns(t *testing.T) {
+	repo := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "p1/\np2/\np3/\np4/\np5/\np6/\np7/\np8/\n")
+	note := mintNote(t, repo, []string{".aiignore"})
+	if !strings.Contains(note, "`p6/` (+2 more)") || strings.Contains(note, "`p7/`") {
+		t.Errorf("note must list six patterns and count the rest: %s", note)
+	}
+}
+
+func TestMintNoteNegationSentence(t *testing.T) {
+	const sentence = "Corral ignores `!` lines, so a `!` line does not open a path."
+	repo := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "vault/\n")
+	if note := mintNote(t, repo, []string{".aiignore"}); strings.Contains(note, sentence) {
+		t.Errorf("unexpected negation sentence: %s", note)
+	}
+	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "!keep\nvault/\n")
+	if note := mintNote(t, repo, []string{".aiignore"}); !strings.HasSuffix(note, " "+sentence) {
+		t.Errorf("missing negation sentence: %s", note)
 	}
 }

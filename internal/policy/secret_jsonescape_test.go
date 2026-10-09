@@ -89,7 +89,7 @@ func TestPostToolUseWithholdsTokenAfterEscapedNewline(t *testing.T) {
 	}
 
 	var out, errw strings.Builder
-	code := RunPostToolUseHook(0, 0, "", nil, strings.NewReader(string(event)), NewPostToolUseGate(&out), &errw)
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(string(event)), NewPostToolUseGate(&out), &errw)
 	if code != ExitAllow { // ingress withholds via updatedToolOutput, not exit 2
 		t.Fatalf("exit code=%d, want ExitAllow (%d)", code, ExitAllow)
 	}
