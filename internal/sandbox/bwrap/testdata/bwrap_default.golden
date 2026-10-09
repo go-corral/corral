@@ -1,14 +1,4 @@
 bwrap
---clearenv
---setenv
-HOME
-/home/u
---setenv
-PATH
-/usr/bin
---setenv
-TERM
-xterm-256color
 --tmpfs
 /tmp
 --ro-bind

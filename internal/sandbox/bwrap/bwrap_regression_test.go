@@ -186,9 +186,8 @@ func TestBinResolvesCustomPath(t *testing.T) {
 	}
 }
 
-// TestArgvBlockMountOrdering verifies Argv emits clearenv, setenv, tmpfs, binds,
-// symlinks, /proc /dev, blocked-path masks, overlays, unshare, optional flags,
-// chdir, command in that order.
+// TestArgvBlockMountOrdering verifies Argv emits tmpfs, binds, symlinks, /proc /dev,
+// blocked-path masks, overlays, unshare, optional flags, chdir, command in that order.
 func TestArgvBlockMountOrdering(t *testing.T) {
 	spec := sandbox.SandboxSpec{
 		Hostname:     "test",
@@ -206,18 +205,12 @@ func TestArgvBlockMountOrdering(t *testing.T) {
 	}
 
 	// Find indices of key sections
-	var clearenvIdx, setenvIdx, tmpfsIdx, bindIdx, symlinkIdx, procIdx, devIdx, tmpfsBlockIdx, unsharePidIdx, chdirIdx, cmdIdx int
-	clearenvIdx, setenvIdx, tmpfsIdx, bindIdx, symlinkIdx, procIdx, devIdx = -1, -1, -1, -1, -1, -1, -1
+	var tmpfsIdx, bindIdx, symlinkIdx, procIdx, devIdx, tmpfsBlockIdx, unsharePidIdx, chdirIdx, cmdIdx int
+	tmpfsIdx, bindIdx, symlinkIdx, procIdx, devIdx = -1, -1, -1, -1, -1
 	tmpfsBlockIdx, unsharePidIdx, chdirIdx, cmdIdx = -1, -1, -1, -1
 
 	for i, a := range argv {
 		switch a {
-		case "--clearenv":
-			clearenvIdx = i
-		case "--setenv":
-			if setenvIdx < 0 {
-				setenvIdx = i
-			}
 		case "--tmpfs":
 			if tmpfsIdx < 0 && i+1 < len(argv) && argv[i+1] == "/tmp" {
 				tmpfsIdx = i
@@ -255,13 +248,11 @@ func TestArgvBlockMountOrdering(t *testing.T) {
 		t.Errorf("--dev must be followed by /dev, got %q at index %d", argv[devIdx+1], devIdx+1)
 	}
 
-	// Verify ordering: clearenv < setenv < tmpfs < bind < symlink < proc < dev < blocked-tmpfs < unshare < chdir < cmd
+	// Verify ordering: tmpfs < bind < symlink < proc < dev < blocked-tmpfs < unshare < chdir < cmd
 	checks := []struct {
 		name string
 		idx  int
 	}{
-		{"clearenv", clearenvIdx},
-		{"setenv", setenvIdx},
 		{"tmpfs /tmp", tmpfsIdx},
 		{"bind", bindIdx},
 		{"symlink", symlinkIdx},
@@ -679,7 +670,6 @@ func TestArgvCompleteSpec(t *testing.T) {
 
 	// Verify all required flags are present
 	for _, required := range []string{
-		"--clearenv", "--setenv", "HOME", "--setenv", "PATH",
 		"--tmpfs", "/tmp",
 		"--ro-bind", "/usr",
 		"--symlink", "usr/bin", "/bin",

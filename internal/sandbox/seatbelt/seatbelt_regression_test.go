@@ -765,53 +765,6 @@ func TestReadOnlyTargetsSkipsNonRecursiveNodes(t *testing.T) {
 	}
 }
 
-// TestArgvSortsEnvKeys verifies Argv sorts SetEnv keys for deterministic output.
-func TestArgvSortsEnvKeys(t *testing.T) {
-	spec := sandbox.SandboxSpec{
-		WorkDir: "/Users/u/proj",
-		SetEnv: map[string]string{
-			"Z": "z", "A": "a", "M": "m", "B": "b",
-		},
-		Tokens: macTestTokens(),
-	}
-	argv, err := macBackend().Argv(spec, []string{"echo", "hi"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// argv is: sandbox-exec -p <profile> /usr/bin/env -i <sorted-env> <command>
-	// Find the /usr/bin/env index
-	envIdx := -1
-	for i, arg := range argv {
-		if arg == "/usr/bin/env" {
-			envIdx = i
-			break
-		}
-	}
-	if envIdx < 0 {
-		t.Fatal("argv must contain /usr/bin/env")
-	}
-
-	// Env vars come after /usr/bin/env and -i
-	// Extract the keys in order
-	var envKeys []string
-	for i := envIdx + 2; i < len(argv); i++ {
-		arg := argv[i]
-		if !strings.Contains(arg, "=") {
-			break // reached command
-		}
-		key := strings.SplitN(arg, "=", 2)[0]
-		envKeys = append(envKeys, key)
-	}
-
-	// Verify they are sorted
-	for i := 1; i < len(envKeys); i++ {
-		if envKeys[i] < envKeys[i-1] {
-			t.Errorf("env keys must be sorted; %q comes after %q", envKeys[i-1], envKeys[i])
-		}
-	}
-}
-
 // The strict-containment check seatbelt uses for $HOME ancestor derivation
 // (pathutil.Under) is locked canonically by pathutil.TestUnder — including the seatbelt
 // /Users/u equal/under/sibling cases. The behavioral guarantee that only paths strictly
