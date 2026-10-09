@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/go-corral/corral/internal/health"
-	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -156,7 +155,7 @@ func (b Backend) bin() string {
 }
 
 func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
-	read, write, homePaths := compileMacOSBaseline(sandbox.RulesFor(spec), spec.Tokens, b.resolve)
+	read, write, ruleSeeds := compileMacOSBaseline(sandbox.RulesFor(spec), spec.Tokens, b.resolve)
 
 	var mountSeeds []string
 	for _, m := range spec.Mounts {
@@ -174,15 +173,15 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 
 	// Metadata ancestors: under deny-by-default reads, $HOME and the components
 	// above each allowed entry are unreadable, breaking tools that resolve a
-	// realpath by lstat-ing every component (kustomize, EvalSymlinks). Granting
-	// file-read-metadata on ancestors lets the walk proceed while directory
-	// contents stay unreadable.
+	// realpath by lstat-ing every component (kustomize, EvalSymlinks,
+	// realpath /etc/ssl/cert.pem). Granting file-read-metadata on ancestors lets
+	// the walk proceed while directory contents stay unreadable.
 	home := normalizeMacPath(spec.Tokens["HOME"])
-	seeds := make([]string, 0, len(homePaths)+len(mountSeeds)+2)
+	seeds := make([]string, 0, len(ruleSeeds)+len(mountSeeds)+2)
 	if home != "" {
 		seeds = append(seeds, home)
 	}
-	seeds = append(seeds, homePaths...)
+	seeds = append(seeds, ruleSeeds...)
 	seeds = append(seeds, mountSeeds...)
 	if sess := normalizeMacPath(spec.Tokens["SESSION_TMPDIR"]); sess != "" {
 		seeds = append(seeds, sess)
@@ -359,10 +358,9 @@ func (it sbItem) sbpl() string {
 // set. recursive:false → literal, regex:true → regex, else subpath;
 // resolveSymlinks fully canonicalizes and additionally grants each symlink node
 // it crossed; a rule whose token is missing/empty is skipped (fail-safe).
-// homePaths collects the readable paths under $HOME for metadata-ancestor
+// seeds collects every non-regex readable path for metadata-ancestor
 // derivation.
-func compileMacOSBaseline(rules []sandbox.Rule, tokens map[string]string, resolve symlinkResolver) (read, write []sbItem, homePaths []string) {
-	home := normalizeMacPath(tokens["HOME"])
+func compileMacOSBaseline(rules []sandbox.Rule, tokens map[string]string, resolve symlinkResolver) (read, write []sbItem, seeds []string) {
 	for _, r := range rules {
 		if !sandbox.ArchMatch(r, "macos") {
 			continue
@@ -380,11 +378,6 @@ func compileMacOSBaseline(rules []sandbox.Rule, tokens map[string]string, resolv
 		default:
 			kind = sbSubpath
 		}
-		seed := func(p string) {
-			if home != "" && pathutil.Under(p, home) {
-				homePaths = append(homePaths, p)
-			}
-		}
 		if kind != sbRegex {
 			if r.ResolveSymlinks {
 				var links []string
@@ -396,7 +389,7 @@ func compileMacOSBaseline(rules []sandbox.Rule, tokens map[string]string, resolv
 				for _, l := range links {
 					l = normalizeMacPath(l)
 					read = append(read, sbItem{kind: sbLiteral, val: l})
-					seed(l)
+					seeds = append(seeds, l)
 				}
 			}
 			val = normalizeMacPath(val)
@@ -407,10 +400,10 @@ func compileMacOSBaseline(rules []sandbox.Rule, tokens map[string]string, resolv
 			write = append(write, it)
 		}
 		if kind != sbRegex {
-			seed(val)
+			seeds = append(seeds, val)
 		}
 	}
-	return read, write, homePaths
+	return read, write, seeds
 }
 
 // metadataAncestors returns the sorted, de-duplicated ancestors of the seed
