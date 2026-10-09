@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.25.0](https://github.com/go-corral/corral/compare/v0.24.0...v0.25.0) (2026-10-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **pi:** add the sandbox-note to the system prompt ([#55](https://github.com/go-corral/corral/issues/55))
+
+### Features
+
+* **audit:** move the logs out of the sandbox ([#49](https://github.com/go-corral/corral/issues/49)) ([e70693c](https://github.com/go-corral/corral/commit/e70693c41d7109e0382f2804bc26edb51a7cb002))
+* **gitlab:** configure the token lifetime in days ([#53](https://github.com/go-corral/corral/issues/53)) ([3448b73](https://github.com/go-corral/corral/commit/3448b73a322f6ae011b14f34b4cee3badaeaffc4))
+* **pi:** add the sandbox-note to the system prompt ([#55](https://github.com/go-corral/corral/issues/55)) ([1bcb575](https://github.com/go-corral/corral/commit/1bcb575882c8d80c4e652bbfa968165d0c2e418b))
+
+
+### Bug Fixes
+
+* **config:** report config errors for the file that causes them ([#52](https://github.com/go-corral/corral/issues/52)) ([4d25b79](https://github.com/go-corral/corral/commit/4d25b798af37226f32c00ce18d91307a56acc4d4))
+* **deps:** bump golang.org/x/net to v0.60.0 ([#58](https://github.com/go-corral/corral/issues/58)) ([c7bb51c](https://github.com/go-corral/corral/commit/c7bb51c5bc5cba72ce10a29f4f19ecd1bebb553a))
+* **hook:** define the hook socket contract ([#50](https://github.com/go-corral/corral/issues/50)) ([c06fc19](https://github.com/go-corral/corral/commit/c06fc1943aa0b9b4d73c03046a21216a7bb97de4))
+* **sandbox:** do not put session env in argv ([#59](https://github.com/go-corral/corral/issues/59)) ([568383f](https://github.com/go-corral/corral/commit/568383f266259786ac3e1b2cb53782d07a25c994))
+* **sidecar:** skip the payload write for an empty payload ([#54](https://github.com/go-corral/corral/issues/54)) ([6781ff3](https://github.com/go-corral/corral/commit/6781ff3e47065242418c331c29620358fc14fdfc))
+
 ## [0.24.0](https://github.com/go-corral/corral/compare/v0.23.0...v0.24.0) (2026-10-05)
 
 This release comes with a few larger changes:
