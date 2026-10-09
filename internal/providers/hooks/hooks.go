@@ -26,7 +26,7 @@ const (
 	contributionVersion = 1
 	maxStderrBytes      = 64 << 10 // 64 KiB; display-only — overflow truncates what is shown
 	// maxContribPayloadBytes bounds what one hook passes into the sandbox (env values + notes),
-	// versus maxContribBytes on what corral reads. The destination is an execve argv, capped at
+	// versus maxContribBytes on what corral reads. The destination is an execve environment entry, capped at
 	// MAX_ARG_STRLEN (128 KiB); without the bound a large contribution surfaces as a cryptic backend
 	// E2BIG instead of an attributed hook failure here.
 	maxContribPayloadBytes = 64 << 10 // 64 KiB

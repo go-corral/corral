@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -128,8 +127,7 @@ func (b Backend) Prepare(spec *sandbox.SandboxSpec, w io.Writer) (sandbox.Launch
 }
 
 // Argv compiles spec into a full sandbox-exec invocation: the binary, the
-// profile inline via -p, then /usr/bin/env -i. Env keys are sorted for
-// deterministic (golden-testable) output.
+// profile inline via -p, then the command.
 func (b Backend) Argv(spec sandbox.SandboxSpec, command []string) ([]string, error) {
 	if len(command) == 0 {
 		return nil, errors.New("sandbox: empty command")
@@ -138,14 +136,7 @@ func (b Backend) Argv(spec sandbox.SandboxSpec, command []string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	bin := b.bin()
-
-	argv := []string{bin, "-p", profile, "/usr/bin/env", "-i"}
-	for _, k := range slices.Sorted(maps.Keys(spec.SetEnv)) {
-		argv = append(argv, k+"="+spec.SetEnv[k])
-	}
-	argv = append(argv, command...)
-	return argv, nil
+	return append([]string{b.bin(), "-p", profile}, command...), nil
 }
 
 func (b Backend) bin() string {

@@ -64,7 +64,9 @@ func TestGeneratedProfileSidecarSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = spec.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("in-sandbox client failed: %v\n%s", err, out)
 	}
 }

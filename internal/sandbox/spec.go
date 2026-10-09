@@ -2,6 +2,9 @@ package sandbox
 
 import (
 	"io"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/go-corral/corral/internal/health"
 )
@@ -103,10 +106,30 @@ type Backend interface {
 	// w; a returned error is fatal.
 	Prepare(spec *SandboxSpec, w io.Writer) (LaunchPrep, error)
 	// Argv returns the full argv to launch command inside the sandbox. The
-	// first element is the sandbox helper binary. Pure function of spec
-	// (Prepare has already folded any baseline contribution), keeping the
-	// argv golden-testable from a hand-built spec.
+	// first element is the sandbox helper binary; the caller starts it with
+	// spec.Environ() as its environment. Pure function of spec (Prepare has
+	// already folded any baseline contribution), keeping the argv
+	// golden-testable from a hand-built spec.
 	Argv(spec SandboxSpec, command []string) ([]string, error)
+}
+
+// IsLoaderEnv reports whether name is a dynamic loader variable: LD_ for ld.so, DYLD_ for dyld.
+// The loader applies it to the host-side helper itself, so a value that points into the sandbox
+// would run sandbox-written code on the host.
+func IsLoaderEnv(name string) bool {
+	return strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "DYLD_")
+}
+
+// Environ returns SetEnv as NAME=VALUE entries sorted by name, without loader variables.
+// The result is never nil: a nil exec.Cmd.Env inherits os.Environ().
+func (s SandboxSpec) Environ() []string {
+	env := make([]string, 0, len(s.SetEnv))
+	for _, k := range slices.Sorted(maps.Keys(s.SetEnv)) {
+		if !IsLoaderEnv(k) {
+			env = append(env, k+"="+s.SetEnv[k])
+		}
+	}
+	return env
 }
 
 // MountTarget is the in-sandbox path a mount lands at (Dst, or Src when empty).

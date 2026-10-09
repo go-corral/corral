@@ -76,7 +76,7 @@ func TestRunSupervisedRunsPostSessionWithDerivedExit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			code := runSupervised("/bin/sh", c.args, res)
+			code := runSupervised("/bin/sh", c.args, []string{}, res)
 			if code != c.wantCode {
 				t.Errorf("exit code = %d, want %d", code, c.wantCode)
 			}
@@ -142,7 +142,7 @@ func TestRunSupervisedPropagatesExitCodeAndCleansUp(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ran := false
 			res := resolvedWithCleanup(t, &ran)
-			got := runSupervised("/bin/sh", c.args, res)
+			got := runSupervised("/bin/sh", c.args, []string{}, res)
 			if got != c.want {
 				t.Errorf("exit code = %d, want %d", got, c.want)
 			}
@@ -153,31 +153,22 @@ func TestRunSupervisedPropagatesExitCodeAndCleansUp(t *testing.T) {
 	}
 }
 
-// TestRunSupervisedLaunchesEmptyEnv guards the /proc/1/environ leak fix: the sandbox launcher
-// (bwrap) is PID 1 of the unshared PID namespace, so its environ is readable from inside the
-// sandbox via /proc/1/environ. The launcher must therefore start it with an empty environment
-// rather than os.Environ(). The exec'd child still gets its filtered env through --setenv.
+// TestRunSupervisedLaunchesOnlyPassedEnv guards two leaks. The sandbox launcher (bwrap) is
+// PID 1 of the unshared PID namespace, so its environ is readable from inside the sandbox via
+// /proc/1/environ: no host variable may reach it. The sandbox environment must reach it as its
+// process environment, because any local user can read its argv.
 //
-// Two controls, because a single non-zero assertion can pass vacuously (a bad launcher path
-// makes runSupervised return 1 via fatalf; a typo in the probe name makes `test -n ""` exit 1):
-//
-//   - Positive control: launch /bin/sh directly with os.Environ() and assert the probe is
-//     present (exit 0). This proves /bin/sh launches as a child here and the probe name is
-//     spelled right, so a non-zero result from the negative control can only mean the env was
-//     actually empty — not that sh failed to start or the name was wrong.
-//   - Negative control: runSupervised (empty launcher env) must exit exactly 1, the code
-//     `test -n ""` returns on an unset var. exit 0 would mean the host env leaked back in.
-func TestRunSupervisedLaunchesEmptyEnv(t *testing.T) {
+// The positive control launches /bin/sh directly with os.Environ() and asserts the probe is
+// present. This proves /bin/sh launches as a child here and the probe name is spelled right, so
+// the host-probe check in the supervised script cannot pass vacuously.
+func TestRunSupervisedLaunchesOnlyPassedEnv(t *testing.T) {
 	const probe = "CORRAL_LAUNCH_ENV_PROBE"
+	const passed = "CORRAL_LAUNCH_ENV_PASSED"
 	t.Setenv(probe, "secret")
-	// runSupervised strips argv[0] (exec.Command(launcherAbs, argv[1:]...)), so the
-	// supervised call needs the launcher name as argv[0]; the bare exec.Command call does not.
 	detect := `test -n "$` + probe + `"`
-	supervisedArgs := []string{"sh", "-c", detect} // argv[0] stripped -> /bin/sh -c detect
-	bareArgs := []string{"-c", detect}             // -> /bin/sh -c detect
 
 	// Positive control: the detector must fire when the host env is passed through.
-	pos := exec.Command("/bin/sh", bareArgs...)
+	pos := exec.Command("/bin/sh", "-c", detect)
 	pos.Env = os.Environ()
 	posErr := pos.Run()
 	if posErr != nil {
@@ -188,22 +179,23 @@ func TestRunSupervisedLaunchesEmptyEnv(t *testing.T) {
 			probe, exitCode(posErr), posErr)
 	}
 
-	// Negative control: runSupervised must not pass the host env to its child.
 	res, err := providers.Resolve(context.Background(), providers.Session{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := runSupervised("/bin/sh", supervisedArgs, res)
+	// Distinct exit codes, because fatalf on a bad launcher path also returns 1. runSupervised
+	// strips argv[0] (exec.Command(launcherAbs, argv[1:]...)), so "sh" is a placeholder.
+	script := `test -n "$` + passed + `" || exit 2; ` + detect + ` && exit 3; exit 0`
+	code := runSupervised("/bin/sh", []string{"sh", "-c", script}, []string{passed + "=1"}, res)
 	switch code {
 	case 0:
-		t.Fatal("runSupervised passed the host env to its child (exit 0); the launcher must use an " +
-			"empty env so /proc/1/environ cannot leak host secrets — regression to os.Environ()")
-	case 1:
-		// probe correctly absent — the fix holds.
+		// passed variable present, host probe absent.
+	case 2:
+		t.Fatalf("runSupervised did not hand %s from its env list to the child", passed)
+	case 3:
+		t.Fatal("runSupervised passed the host env to its child; /proc/1/environ would leak host secrets")
 	default:
-		t.Fatalf("runSupervised exit %d, want exactly 1 (test -n on an unset var); the positive "+
-			"control already proved /bin/sh launches and the probe name is correct, so this is "+
-			"unexpected", code)
+		t.Fatalf("runSupervised exit %d, want 0", code)
 	}
 }
 
@@ -1172,8 +1164,8 @@ func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
 	}
-	// The pin rides in the cleared env (bwrap --setenv, Seatbelt env -i VAR=…) alongside the
-	// other active providers' notes (e.g. home), so match the bullet rather than the whole value.
+	// The pin rides in the env -i prefix alongside the other active providers' notes (e.g.
+	// home), so match the bullet rather than the whole value.
 	if !strings.Contains(stdout, sandbox.ProviderNotesEnvVar) || !strings.Contains(stdout, "- notes: Keep it terse.") {
 		t.Errorf("dry-run argv must carry the configured line attributed to notes:\n%s", stdout)
 	}
@@ -1205,12 +1197,7 @@ func TestRunDryRunPinsAuditPath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
 	}
-	// The pin rides in the cleared env: bwrap --setenv, Seatbelt env -i VAR=…
-	wantEnv := "--setenv " + sandbox.AuditPathEnvVar + " " + audit
-	if runtime.GOOS == "darwin" {
-		wantEnv = sandbox.AuditPathEnvVar + "=" + audit
-	}
-	if !strings.Contains(out, wantEnv) {
+	if !strings.Contains(out, auditPinArg(audit)) {
 		t.Errorf("dry-run argv must set %s to the audit path:\n%s", sandbox.AuditPathEnvVar, out)
 	}
 	// The pin is the only mention of the path: no bind of the directory or the file.
@@ -1246,7 +1233,8 @@ func TestRunDryRunStartsNoSidecar(t *testing.T) {
 }
 
 // A real launch serves the sidecar socket to the sandbox through a read-only bind and removes its
-// directory after the session. The fake bwrap finds the socket in its argv, checks it, and exits 5.
+// directory after the session. The fake bwrap finds the socket in its environment, checks it, and
+// exits 5.
 func TestRunServesSidecarForTheSession(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("drives the bwrap backend")
@@ -1268,17 +1256,13 @@ func TestRunServesSidecarForTheSession(t *testing.T) {
 	marker := filepath.Join(home, "socket-path")
 	argvFile := filepath.Join(home, "argv")
 	fakeBwrap := filepath.Join(home, "fake-bwrap")
+	sock := `"$` + sandbox.SidecarSocketEnvVar + `"`
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > " + argvFile + "\n" +
-		"while [ $# -gt 0 ]; do\n" +
-		"  if [ \"$1\" = " + sandbox.SidecarSocketEnvVar + " ]; then\n" +
-		"    printf %s \"$2\" > " + marker + "\n" +
-		"    test -S \"$2\" || exit 9\n" +
-		"    exit 5\n" +
-		"  fi\n" +
-		"  shift\n" +
-		"done\n" +
-		"exit 8\n"
+		"printf %s " + sock + " > " + marker + "\n" +
+		"test -n " + sock + " || exit 8\n" +
+		"test -S " + sock + " || exit 9\n" +
+		"exit 5\n"
 	if err := os.WriteFile(fakeBwrap, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1288,7 +1272,7 @@ func TestRunServesSidecarForTheSession(t *testing.T) {
 		code = cmdRun([]string{"--home", home, "--project", proj, "--backend", "bwrap", "--bwrap", fakeBwrap, "--command", "/bin/true"}, "dev")
 	})
 	if code != 5 {
-		t.Fatalf("cmdRun = %d, want 5 (8: no socket variable in argv, 9: no socket at the path)\n%s", code, stderr)
+		t.Fatalf("cmdRun = %d, want 5 (8: no socket variable in the environment, 9: no socket at the path)\n%s", code, stderr)
 	}
 	socket, err := os.ReadFile(marker)
 	if err != nil {
@@ -1422,10 +1406,7 @@ func TestRunDryRunPinsProfiles(t *testing.T) {
 	}
 	isolateConfigEnv(t, home, proj)
 
-	wantEnv := "--setenv " + sandbox.ProfilesEnvVar + " a,b"
-	if runtime.GOOS == "darwin" {
-		wantEnv = sandbox.ProfilesEnvVar + "=a,b"
-	}
+	wantEnv := "'" + sandbox.ProfilesEnvVar + "=a,b'"
 	for _, tc := range []struct {
 		name  string
 		flags []string
@@ -1554,8 +1535,8 @@ func TestRunRefusesAuditPathUnderAlwaysBlocked(t *testing.T) {
 }
 
 // TestRunBindsCustomClaudeConfigDir: a custom CLAUDE_CONFIG_DIR must be bound into the
-// sandbox and forwarded via --setenv, or the sandboxed claude loses its logged-in account +
-// trusted folders.
+// sandbox and forwarded in the sandbox environment, or the sandboxed claude loses its
+// logged-in account + trusted folders.
 func TestRunBindsCustomClaudeConfigDir(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1578,12 +1559,7 @@ func TestRunBindsCustomClaudeConfigDir(t *testing.T) {
 	if !strings.Contains(out, cfgDir) {
 		t.Errorf("custom CLAUDE_CONFIG_DIR not bound into sandbox argv:\n%s", out)
 	}
-	// CLAUDE_CONFIG_DIR must be forwarded into the cleared environment: bwrap uses
-	// --setenv, the Seatbelt backend uses `/usr/bin/env -i CLAUDE_CONFIG_DIR=…`.
-	wantEnv := "--setenv CLAUDE_CONFIG_DIR"
-	if runtime.GOOS == "darwin" {
-		wantEnv = "CLAUDE_CONFIG_DIR=" + cfgDir
-	}
+	wantEnv := "'CLAUDE_CONFIG_DIR=" + cfgDir + "'"
 	if !strings.Contains(out, wantEnv) {
 		t.Errorf("CLAUDE_CONFIG_DIR not forwarded (%q):\n%s", wantEnv, out)
 	}
@@ -1597,7 +1573,7 @@ func TestRunBindsCustomClaudeConfigDir(t *testing.T) {
 
 // TestRunForwardsEnvSet is the end-to-end guard that an env.set entry reaches the cleared
 // sandbox environment. Exercises the full launcher path (config load + validate →
-// applyEnvSet → spec → backend argv) on whichever backend compiles the spec.
+// applyEnvSet → spec → dry-run line) on whichever backend compiles the spec.
 func TestRunForwardsEnvSet(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1617,47 +1593,28 @@ func TestRunForwardsEnvSet(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
 	}
-	// bwrap forwards via `--setenv CORRAL_TEST_FOO bar`; the Seatbelt backend via
-	// `/usr/bin/env -i … CORRAL_TEST_FOO=bar`.
-	want := "--setenv CORRAL_TEST_FOO bar"
-	if runtime.GOOS == "darwin" {
-		want = "CORRAL_TEST_FOO=bar"
-	}
-	if !strings.Contains(out, want) {
+	// The dry run prints `env -i 'CORRAL_TEST_FOO=bar' … <helper> …` on both backends.
+	if want := "'CORRAL_TEST_FOO=bar'"; !strings.Contains(out, want) {
 		t.Errorf("env.set var not forwarded (%q):\n%s", want, out)
 	}
 }
 
-// envVal extracts KEY's value from a `/usr/bin/env -i KEY=VAL …` dry-run line. Temp
-// paths under /var/folders contain no shell-special chars, so they are unquoted and
-// space-delimited.
-// envVal extracts an env assignment's value from a shell-quoted dry-run argv. shellQuote runs each
-// arg through syntax.Quote, which single-quotes a KEY=value word (it would otherwise parse as a
-// shell assignment), so the assignment appears as 'KEY=value' — or bare KEY=value when a build ever
-// emits it unquoted. Match either at a word boundary and read the value up to the next quote or space.
+// envVal extracts KEY's value from a shell-quoted `env -i 'KEY=VAL' …` dry-run line. shellQuote
+// single-quotes a KEY=value word, because the shell would otherwise parse it as an assignment.
 func envVal(out, key string) string {
-	for _, pre := range []string{" '", " "} {
-		needle := pre + key + "="
-		i := strings.Index(out, needle)
-		if i < 0 {
-			continue
-		}
-		rest := out[i+len(needle):]
-		if j := strings.IndexAny(rest, "' "); j >= 0 {
-			return rest[:j]
-		}
-		return rest
-	}
-	return ""
+	_, rest, _ := strings.Cut(out, " '"+key+"=")
+	v, _, _ := strings.Cut(rest, "'")
+	return v
 }
 
 // TestEnvVal guards the argv parser TestRunMacOSIsolatesTempDir relies on: the dry-run argv is
 // shell-quoted, so env assignments appear single-quoted ('TMPDIR=…'), and the key match must not
 // bleed across a longer neighbour (CLAUDE_CODE_TMPDIR, TMPPREFIX). Runs anywhere (no /tmp needed).
 func TestEnvVal(t *testing.T) {
-	quoted := "sandbox-exec -p '(version 1)' /usr/bin/env -i " +
+	quoted := "env -i " +
 		"'CLAUDE_CODE_TMPDIR=/tmp/corral-501-abc' 'PATH=/usr/bin' 'TEMPDIR=/tmp/corral-501-abc' " +
-		"'TMP=/tmp/corral-501-abc' 'TMPDIR=/tmp/corral-501-abc' 'TMPPREFIX=/tmp/corral-501-abc/zsh' /claude"
+		"'TMP=/tmp/corral-501-abc' 'TMPDIR=/tmp/corral-501-abc' 'TMPPREFIX=/tmp/corral-501-abc/zsh' " +
+		"sandbox-exec -p '(version 1)' /claude"
 	for _, tc := range []struct{ key, want string }{
 		{"TMPDIR", "/tmp/corral-501-abc"},
 		{"TMP", "/tmp/corral-501-abc"},
@@ -1674,9 +1631,5 @@ func TestEnvVal(t *testing.T) {
 	// A key must not match a longer neighbour: with only CLAUDE_CODE_TMPDIR present, "TMPDIR" is absent.
 	if got := envVal("cmd -i 'CLAUDE_CODE_TMPDIR=/x' end", "TMPDIR"); got != "" {
 		t.Errorf(`envVal must not match CLAUDE_CODE_TMPDIR for key "TMPDIR", got %q`, got)
-	}
-	// The bare (unquoted) form still parses.
-	if got := envVal("cmd -i CLAUDE_CODE_TMPDIR=/x TMP=/y TMPDIR=/z end", "TMPDIR"); got != "/z" {
-		t.Errorf("envVal bare TMPDIR = %q, want /z", got)
 	}
 }

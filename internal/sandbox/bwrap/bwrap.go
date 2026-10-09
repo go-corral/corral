@@ -150,9 +150,11 @@ func (b Backend) Argv(spec sandbox.SandboxSpec, command []string) ([]string, err
 
 	args := []string{bin}
 
-	args = append(args, "--clearenv")
+	// Loader variables are not in bwrap's own environment, so they reach the command here.
 	for _, k := range slices.Sorted(maps.Keys(spec.SetEnv)) {
-		args = append(args, "--setenv", k, spec.SetEnv[k])
+		if sandbox.IsLoaderEnv(k) {
+			args = append(args, "--setenv", k, spec.SetEnv[k])
+		}
 	}
 
 	// Fresh tmpfs mounts first, so a later bind whose destination lands under

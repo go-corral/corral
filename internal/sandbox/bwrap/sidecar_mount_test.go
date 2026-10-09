@@ -76,7 +76,9 @@ func TestReadOnlySidecarDirBlocksReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = spec.Environ()
+			out, err := cmd.CombinedOutput()
 			if err != nil {
 				if strings.Contains(string(out), "Creating new namespace failed") {
 					t.Skipf("bwrap cannot run here: %s", out)

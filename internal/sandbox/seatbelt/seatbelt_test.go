@@ -301,7 +301,8 @@ func TestCompileMacOSResolveSymlinks(t *testing.T) {
 	}
 }
 
-func TestSeatbeltArgvEnvAndCommand(t *testing.T) {
+// Any local user can read a process's argv, so the session environment must stay out of it.
+func TestSeatbeltArgvCommand(t *testing.T) {
 	spec := fixedMacSpec()
 	spec.SetEnv = map[string]string{"B": "2", "A": "1"}
 	argv, err := macBackend().Argv(withTok(spec, macTestTokens()), []string{"claude", "--model", "opus"})
@@ -311,8 +312,8 @@ func TestSeatbeltArgvEnvAndCommand(t *testing.T) {
 	if argv[0] != "sandbox-exec" || argv[1] != "-p" {
 		t.Errorf("argv must start with `sandbox-exec -p`; got %v", argv[:2])
 	}
-	// After the profile: `/usr/bin/env -i A=1 B=2 claude --model opus`.
-	want := []string{"/usr/bin/env", "-i", "A=1", "B=2", "claude", "--model", "opus"}
+	// After the profile: only the command.
+	want := []string{"claude", "--model", "opus"}
 	if got := argv[3:]; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("argv tail = %v, want %v", got, want)
 	}

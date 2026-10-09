@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -25,13 +24,9 @@ func isolateAuditPin(t *testing.T) string {
 	return home
 }
 
-// auditPinArg is how the dry-run argv sets CORRAL_AUDIT_PATH to path: bwrap --setenv,
-// Seatbelt env -i VAR=…
+// auditPinArg is how the dry-run env -i prefix sets CORRAL_AUDIT_PATH to path.
 func auditPinArg(path string) string {
-	if runtime.GOOS == "darwin" {
-		return sandbox.AuditPathEnvVar + "=" + path
-	}
-	return "--setenv " + sandbox.AuditPathEnvVar + " " + path
+	return "'" + sandbox.AuditPathEnvVar + "=" + path + "'"
 }
 
 // The launcher pins the default audit log under XDG_STATE_HOME when it is absolute, else under

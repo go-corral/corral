@@ -504,8 +504,8 @@ func TestPreStartNonOptionalViolationAborts(t *testing.T) {
 }
 
 // The contribution's env names and values get the same scrutiny config's env.set gets, because
-// they come from a script rather than from corral's own code: a name that is not a POSIX
-// variable name would otherwise reach `bwrap --setenv` and define something else, a NUL byte
+// they come from a script rather than from corral's own code: a name with `=` would otherwise
+// split its NAME=VALUE environment entry and define something else, a NUL byte
 // cannot survive execve, and an oversized payload would fail the launch in the backend with no
 // attribution. Each is an attributed hook failure instead.
 func TestPreStartEnvAndNoteValidation(t *testing.T) {

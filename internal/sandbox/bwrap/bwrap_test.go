@@ -166,23 +166,15 @@ func TestBwrapEmptyCommand(t *testing.T) {
 	}
 }
 
-func TestBwrapEnvDeterministic(t *testing.T) {
-	// Map iteration order must not leak into the argv.
-	spec := sandbox.SandboxSpec{SetEnv: map[string]string{"Z": "1", "A": "2", "M": "3"}}
+// Loader variables must not reach bwrap's own environment, so they travel in its argv.
+func TestBwrapArgvSetsLoaderEnv(t *testing.T) {
+	spec := sandbox.SandboxSpec{SetEnv: map[string]string{"LD_LIBRARY_PATH": "/work/lib"}}
 	argv, err := New("").Argv(spec, []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expect A, M, Z order.
-	var keys []string
-	for i := 0; i < len(argv)-1; i++ {
-		if argv[i] == "--setenv" {
-			keys = append(keys, argv[i+1])
-		}
-	}
-	want := []string{"A", "M", "Z"}
-	if strings.Join(keys, ",") != strings.Join(want, ",") {
-		t.Errorf("env keys = %v, want %v", keys, want)
+	if !strings.Contains(strings.Join(argv, " "), "--setenv LD_LIBRARY_PATH /work/lib") {
+		t.Errorf("LD_LIBRARY_PATH must reach the command through --setenv: %q", argv)
 	}
 }
 

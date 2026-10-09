@@ -309,7 +309,7 @@ func cmdRun(args []string, version string) int {
 			prep.Cleanup()
 			return fatalf(os.Stderr, "build sandbox command: %v", err)
 		}
-		fmt.Println(shellQuote(argv))
+		fmt.Println(shellQuote(slices.Concat([]string{"env", "-i"}, spec.Environ(), argv)))
 		// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
 		if len(previewOnly) > 0 {
 			c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
@@ -446,7 +446,7 @@ func cmdRun(args []string, version string) int {
 	fmt.Fprintln(os.Stderr)
 
 	// We outlive the child to serve the sidecar; the deferred teardown reclaims backend resources.
-	return runSupervised(launcherAbs, argv, res)
+	return runSupervised(launcherAbs, argv, spec.Environ(), res)
 }
 
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the
@@ -474,7 +474,7 @@ func sameDir(a, b string) bool {
 
 // runSupervised launches the sandbox as a child, forwards signals, waits for exit, then runs
 // session-end hooks and provider cleanup. Returns the child's exit code.
-func runSupervised(launcherAbs string, argv []string, res *providers.Resolved) int {
+func runSupervised(launcherAbs string, argv, env []string, res *providers.Resolved) int {
 	c := report.StyleFor(os.Stderr)
 	// Surface a teardown confirmation per provider as it is cleaned up.
 	res.OnTeardown = teardownReporter(os.Stderr, c)
@@ -488,9 +488,9 @@ func runSupervised(launcherAbs string, argv []string, res *providers.Resolved) i
 
 	cmd := exec.Command(launcherAbs, argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	// Empty, not nil (nil would re-inherit os.Environ()): bwrap is PID 1 and its environ is
-	// readable via /proc/1/environ.
-	cmd.Env = []string{}
+	// No host variable may reach the helper: bwrap is PID 1 and /proc/1/environ is readable inside
+	// the sandbox. The values travel here, not in argv, which any local user can read.
+	cmd.Env = env
 	if err := cmd.Start(); err != nil {
 		// The child never started — fire the session-end hooks with a zero SessionExit.
 		runPostSessionHooks(res, providers.SessionExit{})
