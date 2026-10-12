@@ -200,11 +200,14 @@ hostname: corral
 # mach-lookup, re-allowing only the curated allowlist plus mach.allow (a trailing "*" in an
 # allow entry is a name prefix). Set "open" to fall back to allow-default mach-lookup with
 # just the scoped sandbox-escape denies. bwrap (Linux) has no knobs yet.
+# grantUserTemp: true also grants the per-user temp directory (/var/folders/…/T), which is
+# shared with every program of the user on the host; see docs/reference/config.md.
 sandbox:
   seatbelt:
     mach:
       lookup: strict
       allow: []
+    grantUserTemp: false
   bwrap: {}
 # Which coding agent corral sandboxes ("claude" or "pi"); see docs/reference/agents.md.
 agent: claude

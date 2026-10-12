@@ -68,6 +68,7 @@ Tokens (`$HOME`, `$AGENT_CONFIG_DIR`, …) are expanded per launch.
 | `/etc` | ro | node | /etc symlink (kernel readlink to /private/etc) |
 | `/tmp` | ro | node | /tmp symlink (kernel readlink to /private/tmp) |
 | `/var` | ro | node | /var symlink node — REQUIRED to resolve /var/... paths (e.g. /bin/sh reads /var/select/sh). Grants no /var CONTENT: the broad /private/var is absent. |
+| `/dev` | ro | node | /dev listing: libc ttyname() scans it for the pty name. Grants no device node. |
 | `/dev/null` | rw | node | Null device |
 | `/dev/zero` | rw | node | Zero device |
 | `/dev/tty` | rw | node | Controlling terminal |

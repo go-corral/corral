@@ -79,35 +79,73 @@ func TestBackendDoctor(t *testing.T) {
 	}
 }
 
-// AgentNotes surfaces the macOS Seatbelt quirks to the model — the /tmp/$TMPDIR temp-dir fact
-// and the harmless SIP-tool (xcrun/git/clang) temp-cache warning. Static and secret-free; the
-// launcher folds them into the sandbox note (sandbox.BackendNotesEnvVar).
+// AgentNotes surfaces the macOS Seatbelt quirks to the model: the /tmp/$TMPDIR temp-dir fact,
+// the harmless SIP-tool (xcrun/git/clang) cache warning, the real 513 failure and its fix,
+// and the Swift nested-sandbox error. Static and secret-free; the launcher folds
+// them into the sandbox note (sandbox.BackendNotesEnvVar).
 func TestBackendAgentNotes(t *testing.T) {
 	notes := New("", Config{}).AgentNotes()
-	if len(notes) != 2 {
-		t.Fatalf("seatbelt AgentNotes should return two notes (temp dir + SIP-tool warning), got %v", notes)
+	if len(notes) != 4 {
+		t.Fatalf("seatbelt AgentNotes should return four notes (temp dir, xcrun warning, 513 error, Swift sandbox), got %v", notes)
 	}
-	// First: the /tmp/$TMPDIR temp-dir fact (the Seatbelt profile denies /tmp; Prepare repoints
-	// $TMPDIR at a per-session dir).
 	if !strings.Contains(notes[0], "$TMPDIR") || !strings.Contains(notes[0], "/tmp") {
 		t.Errorf("first seatbelt AgentNote should point at $TMPDIR and mention /tmp, got %q", notes[0])
 	}
-	// Second: the cosmetic SIP-tool temp-cache warning, so the model does not chase it as a real
-	// failure. Names the recognizable xcrun_db marker and tells the model to ignore it.
-	if !strings.Contains(notes[1], "xcrun") || !strings.Contains(notes[1], "ignore") {
-		t.Errorf("second seatbelt AgentNote should name the xcrun/SIP-tool warning and say to ignore it, got %q", notes[1])
+	// Only the xcrun_db warning is harmless; the note must not extend that to the 513 error.
+	if !strings.Contains(notes[1], "xcrun_db") || !strings.Contains(notes[1], "harmless") || !strings.Contains(notes[1], "ignore") || strings.Contains(notes[1], "513") {
+		t.Errorf("second seatbelt AgentNote should call only the xcrun_db warning harmless, got %q", notes[1])
+	}
+	for _, want := range []string{"NSCocoaErrorDomain Code=513", "sandbox.seatbelt.grantUserTemp: true"} {
+		if !strings.Contains(notes[2], want) {
+			t.Errorf("third seatbelt AgentNote should name %q, got %q", want, notes[2])
+		}
+	}
+	if strings.Contains(notes[2], "harmless") {
+		t.Errorf("the 513 note must not call the error harmless, got %q", notes[2])
+	}
+	for _, want := range []string{"sandbox_apply", "swift build --disable-sandbox", "OTHER_SWIFT_FLAGS=-disable-sandbox", "corral's sandbox stays in force"} {
+		if !strings.Contains(notes[3], want) {
+			t.Errorf("fourth seatbelt AgentNote should name %q, got %q", want, notes[3])
+		}
 	}
 }
 
-// Strict mach-lookup adds a third AgentNote so the model recognizes an opaque Mach denial instead of
-// retrying blindly; open mode omits it.
-func TestBackendAgentNotesStrict(t *testing.T) {
-	notes := New("", Config{Mach: Mach{Lookup: "strict"}}).AgentNotes()
+// With the grant on, one note replaces both temp notes; the Swift note stays.
+func TestBackendAgentNotesGrantUserTemp(t *testing.T) {
+	notes := New("", Config{GrantUserTemp: true}).AgentNotes()
 	if len(notes) != 3 {
-		t.Fatalf("strict seatbelt AgentNotes should return three notes, got %v", notes)
+		t.Fatalf("seatbelt AgentNotes with grantUserTemp should return three notes (temp dir, granted dir, Swift sandbox), got %v", notes)
 	}
-	if !strings.Contains(notes[2], "mach-lookup") || !strings.Contains(notes[2], "corral-mach") {
-		t.Errorf("third seatbelt AgentNote should describe the strict mach-lookup denial, got %q", notes[2])
+	if !strings.Contains(notes[1], "/var/folders/<bucket>/<hash>/T") || !strings.Contains(notes[1], "writable") || !strings.Contains(notes[1], "shared") {
+		t.Errorf("second seatbelt AgentNote should say the per-user temp directory is writable and shared, got %q", notes[1])
+	}
+	for _, n := range notes {
+		if strings.Contains(n, "xcrun_db") || strings.Contains(n, "513") {
+			t.Errorf("the grant must replace the xcrun_db and 513 notes, got %q", n)
+		}
+	}
+	if !strings.Contains(notes[2], "sandbox_apply") {
+		t.Errorf("the Swift note must stay with the grant, got %q", notes[2])
+	}
+}
+
+// Strict mach-lookup adds a last AgentNote so the model recognizes an opaque Mach denial instead of
+// retrying blindly; open mode omits it. The grant does not change that.
+func TestBackendAgentNotesStrict(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  Config
+		want int
+	}{
+		{Config{Mach: Mach{Lookup: "strict"}}, 5},
+		{Config{Mach: Mach{Lookup: "strict"}, GrantUserTemp: true}, 4},
+	} {
+		notes := New("", tc.cfg).AgentNotes()
+		if len(notes) != tc.want {
+			t.Fatalf("strict seatbelt AgentNotes (grantUserTemp=%v) should return %d notes, got %v", tc.cfg.GrantUserTemp, tc.want, notes)
+		}
+		if last := notes[len(notes)-1]; !strings.Contains(last, "mach-lookup") || !strings.Contains(last, "corral-mach") {
+			t.Errorf("last seatbelt AgentNote should describe the strict mach-lookup denial, got %q", last)
+		}
 	}
 }
 

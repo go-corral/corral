@@ -146,6 +146,12 @@
       "archs": ["macos"]
     },
     {
+      "path": "/dev",
+      "description": "/dev listing: libc ttyname() scans it for the pty name. Grants no device node.",
+      "recursive": false,
+      "archs": ["macos"]
+    },
+    {
       "path": "/dev/null",
       "description": "Null device",
       "writeable": true,

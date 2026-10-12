@@ -233,7 +233,7 @@ func cmdRun(args []string, version string) int {
 	backend := newBackend(backendKind, *bwrapPath, cfg.Sandbox)
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
-	checks := sessionWarnings(cfg, backend.ReadOnlyTargets(spec))
+	checks := sessionWarnings(cfg, backendKind, backend.ReadOnlyTargets(spec))
 	warnings := slices.Clone(resBuiltin.Warnings)
 	// Startup readiness advisory: each agent reports its own set.
 	if hostHome, herr := os.UserHomeDir(); herr == nil {

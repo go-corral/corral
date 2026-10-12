@@ -307,7 +307,8 @@ func writeWrapped(w io.Writer, c report.Style, label string, words []string, rea
 // validateWarnings inspects the current backend's read-only targets without preparing a sandbox.
 func validateWarnings(cfg *config.Config, home string, env map[string]string) []health.Check {
 	var roTargets []string
-	if kind, err := sandbox.DefaultKind(); err == nil {
+	kind, err := sandbox.DefaultKind()
+	if err == nil {
 		spec := sandbox.SandboxSpec{Tokens: map[string]string{
 			"HOME":             home,
 			"AGENT_CONFIG_DIR": cfg.AgentConfigDir(home, env),
@@ -315,7 +316,7 @@ func validateWarnings(cfg *config.Config, home string, env map[string]string) []
 		}}
 		roTargets = newBackend(kind, "", cfg.Sandbox).ReadOnlyTargets(spec)
 	}
-	return sessionWarnings(cfg, roTargets)
+	return sessionWarnings(cfg, kind, roTargets)
 }
 
 // resolvedFloorExtras returns filesystem masks absent from the lexical always-blocked set.

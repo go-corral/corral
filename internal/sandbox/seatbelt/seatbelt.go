@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -24,16 +25,43 @@ import (
 // let a session exec any host binary unless process-exec* is denied and
 // re-allowed for the readable set.
 type Backend struct {
-	Path    string
-	cfg     Config
-	resolve symlinkResolver
+	Path     string
+	cfg      Config
+	resolve  symlinkResolver
+	userTemp func() (string, error)
 }
 
 func New(path string, cfg Config) Backend {
 	if path == "" {
 		path = "sandbox-exec"
 	}
-	return Backend{Path: path, cfg: cfg, resolve: realSymlink{}}
+	return Backend{Path: path, cfg: cfg, resolve: realSymlink{}, userTemp: darwinUserTemp}
+}
+
+var errNotDarwin = errors.New("only available on macOS")
+
+// darwinUserTemp returns $TMPDIR, which launchd points at the per-user temp directory.
+func darwinUserTemp() (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", errNotDarwin
+	}
+	return os.TempDir(), nil
+}
+
+var userTempRe = regexp.MustCompile(`^/var/folders/[^/]+/[^/]+/T$`)
+
+// userTempDir resolves the per-user temp directory and accepts only the shape
+// /var/folders/<bucket>/<hash>/T.
+func (b Backend) userTempDir() (string, error) {
+	raw, err := b.userTemp()
+	if err != nil {
+		return "", fmt.Errorf("sandbox.seatbelt.grantUserTemp: resolve the per-user temp directory: %w", err)
+	}
+	dir := filepath.Clean(raw)
+	if !userTempRe.MatchString(dir) {
+		return "", fmt.Errorf("sandbox.seatbelt.grantUserTemp: %q is not a /var/folders/<bucket>/<hash>/T directory", raw)
+	}
+	return dir, nil
 }
 
 func (b Backend) Name() string { return "seatbelt" }
@@ -79,8 +107,21 @@ func (b Backend) ReadOnlyTargets(spec sandbox.SandboxSpec) []string {
 const tmpAgentNote = "/tmp is not accessible; use the directory named by $TMPDIR for temporary files."
 
 const xcrunTempNote = "macOS SIP tools (xcrun, /usr/bin/git, /usr/bin/clang) may print a harmless " +
-	"\"couldn't create cache file ... xcrun_db-* (Operation not permitted)\" warning — they use a " +
-	"sandbox-denied temp dir, not $TMPDIR; the command still succeeds, so ignore it and do not try to fix it."
+	"\"couldn't create cache file ... xcrun_db-* (Operation not permitted)\" warning: they cannot write " +
+	"their cache into the denied per-user temp directory; the command still succeeds, so ignore the " +
+	"warning and do not try to fix it."
+
+const userTempDeniedNote = "\"NSCocoaErrorDomain Code=513\" from a tool that writes files is a real failure: " +
+	"the tool writes through the per-user temp directory (/var/folders/<bucket>/<hash>/T), which this " +
+	"sandbox denies. Ask the user to set sandbox.seatbelt.grantUserTemp: true."
+
+const userTempGrantedNote = "The per-user temp directory /var/folders/<bucket>/<hash>/T is writable and is " +
+	"shared with programs on the host; files and unix sockets in it belong to other programs."
+
+const swiftSandboxNote = "\"sandbox-exec: sandbox_apply: Operation not permitted\" means a tool could not start " +
+	"its own nested sandbox, as Swift does for macro expansion and package plugins. Use " +
+	"`swift build --disable-sandbox` or `xcodebuild ... OTHER_SWIFT_FLAGS=-disable-sandbox`; corral's " +
+	"sandbox stays in force."
 
 // machStrictNote heads off wasted turns under strict mach-lookup. A denied Mach
 // service surfaces as a generic failure or a hang, not an obvious sandbox denial.
@@ -90,7 +131,13 @@ const machStrictNote = "macOS strict mach-lookup is on: a command that fails or 
 	"sandbox.seatbelt.mach.allow, or fall back to sandbox.seatbelt.mach.lookup: open."
 
 func (b Backend) AgentNotes() []string {
-	notes := []string{tmpAgentNote, xcrunTempNote}
+	notes := []string{tmpAgentNote}
+	if b.cfg.GrantUserTemp {
+		notes = append(notes, userTempGrantedNote)
+	} else {
+		notes = append(notes, xcrunTempNote, userTempDeniedNote)
+	}
+	notes = append(notes, swiftSandboxNote)
 	if b.cfg.Mach.Strict() {
 		notes = append(notes, machStrictNote)
 	}
@@ -100,7 +147,8 @@ func (b Backend) AgentNotes() []string {
 // Prepare creates a private session temp dir and repoints temp variables and
 // $SESSION_TMPDIR. macOS shares the host $TMPDIR across processes, so isolation
 // prevents cross-process reads and predictable-name races. Failure is fail-safe:
-// launch continues without temp access and emits a warning.
+// launch continues without temp access and emits a warning. A refused per-user
+// temp grant aborts the launch instead.
 func (b Backend) Prepare(spec *sandbox.SandboxSpec, w io.Writer) (sandbox.LaunchPrep, error) {
 	prep := sandbox.LaunchPrep{Cleanup: func() {}, Chdir: spec.WorkDir}
 	if spec.SetEnv == nil {
@@ -108,6 +156,20 @@ func (b Backend) Prepare(spec *sandbox.SandboxSpec, w io.Writer) (sandbox.Launch
 	}
 	if spec.Tokens == nil {
 		spec.Tokens = map[string]string{}
+	}
+
+	// The grant goes first: a refused directory fails the launch before any
+	// session state exists. Off macOS (a dry run) the grant is skipped with a notice.
+	if b.cfg.GrantUserTemp {
+		dir, err := b.userTempDir()
+		switch {
+		case errors.Is(err, errNotDarwin):
+			fmt.Fprintln(w, "sandbox.seatbelt.grantUserTemp is only available on macOS; the per-user temp directory is not granted")
+		case err != nil:
+			return prep, err
+		default:
+			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: dir})
+		}
 	}
 
 	d, err := os.MkdirTemp("/tmp", fmt.Sprintf("corral-%d-", os.Getuid()))
@@ -264,9 +326,9 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 	if sock := spec.SetEnv[sandbox.SidecarSocketEnvVar]; sock != "" {
 		sock = normalizeMacPath(sock)
 		sb.WriteString(";; Policy sidecar socket: the hook connects to it, which needs file-write-data on the\n")
-		sb.WriteString(";; socket node and network-outbound to it. The directory stays unwritable even under a\n")
-		sb.WriteString(";; writable grant, so the socket cannot be removed or replaced.\n")
-		fmt.Fprintf(&sb, "(deny file-write* (subpath \"%s\"))\n", sbplEscape(path.Dir(sock)))
+		sb.WriteString(";; socket node and network-outbound to it. Every session's sidecar directory stays\n")
+		sb.WriteString(";; unwritable even under a writable grant, so no socket can be removed or replaced.\n")
+		fmt.Fprintf(&sb, "(deny file-write* (regex #\"^%s/%s\"))\n", regexp.QuoteMeta(path.Dir(path.Dir(sock))), sandbox.SidecarDirPrefix)
 		fmt.Fprintf(&sb, "(allow file-write-data (literal \"%s\"))\n", sbplEscape(sock))
 		fmt.Fprintf(&sb, "(allow network-outbound (remote unix-socket (path-literal \"%s\")))\n\n", sbplEscape(sock))
 	}

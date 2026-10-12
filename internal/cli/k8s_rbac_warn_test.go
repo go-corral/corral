@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/providers/kubernetes"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 // The RBAC write-access lint itself lives on kubernetes.Config.Warnings (tested in
@@ -14,7 +15,7 @@ func TestSessionWarningsSurfaceKubernetesLint(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Providers.Kubernetes.Enabled = true
 	cfg.Providers.Kubernetes.Permissions = []kubernetes.Permission{{ClusterWide: true, ClusterRole: "edit"}}
-	w := sessionWarnings(cfg, nil)
+	w := sessionWarnings(cfg, sandbox.KindBwrap, nil)
 	if len(w) != 1 || w[0].Label != "kubernetes" || w[0].Value != `role "edit" is not a known read-only role` {
 		t.Errorf("sessionWarnings must include the kubernetes RBAC lint, got %+v", w)
 	}

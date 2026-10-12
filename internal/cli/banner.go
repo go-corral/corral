@@ -16,19 +16,27 @@ import (
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/registry"
+	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sandbox/seatbelt"
 )
 
 // sessionWarnings returns advisory notices about the effective config, shared by the `run`
-// banner and `corral validate`. roTargets is the resolved backend's read-only baseline targets,
-// supplied by the caller so the warning matches the backend that compiles the spec.
-func sessionWarnings(cfg *config.Config, roTargets []string) []health.Check {
+// banner and `corral validate`. kind is the resolved backend and roTargets its read-only
+// baseline targets, supplied by the caller so the warnings match the backend that compiles
+// the spec.
+func sessionWarnings(cfg *config.Config, kind sandbox.Kind, roTargets []string) []health.Check {
 	var w []health.Check
 
 	// Provider-owned lints: each provider Config authors its own advisories; the registry
 	// sweeps them in canonical order. Only the paths.rw overlap check stays here — it needs
 	// the resolved backend's read-only targets, which only this layer has.
 	w = append(w, registry.ConfigWarnings(cfg)...)
+
+	// The Seatbelt config is not a provider, and only the Seatbelt backend applies it.
+	if kind == sandbox.KindSeatbelt && cfg.Sandbox.Seatbelt.GrantUserTemp {
+		w = append(w, health.Check{State: health.Warn, Label: "sandbox.seatbelt.grantUserTemp", Value: "grants the shared per-user temp directory",
+			Reason: "the sandbox can read and write other programs' files in it and connect to their unix sockets"})
+	}
 
 	// A paths.rw grant that covers a baseline read-only system path re-exposes it as
 	// writable, overriding corral's default protection. The always-blocked paths cannot be

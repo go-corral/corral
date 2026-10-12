@@ -24,6 +24,7 @@ sandbox:
     mach:
       lookup: strict
       allow: []
+    grantUserTemp: false
   bwrap: {}
 hostname: corral
 agent: claude
@@ -110,12 +111,16 @@ only the section for the selected backend.
   matches a service-name prefix. Entries must be non-empty and contain no whitespace
   or quotes. A bare `*` is rejected because it would match every service. This list
   has no effect in `open` mode.
+- **`sandbox.seatbelt.grantUserTemp`** (boolean, default `false`) grants the macOS per-user temp directory, `/var/folders/<bucket>/<hash>/T`, read-write.
 - **`sandbox.bwrap`** is an empty map. The Linux backend has no configurable
   backend-specific settings.
 
 > [!warning]
 > `sandbox.seatbelt.mach.lookup: open` permits access to services outside corral's
 > allowlist. Prefer adding the required service to `mach.allow`.
+
+> [!warning]
+> `sandbox.seatbelt.grantUserTemp: true` opens a directory that every program of the user shares. The sandbox can read and write their files and connect to their unix sockets. `corral run` shows a warning and asks for confirmation unless `--yes` is set.
 
 ### `hostname`
 

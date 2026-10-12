@@ -1,6 +1,7 @@
 package seatbelt
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -507,6 +508,125 @@ func TestSeatbeltVarDeniedByAbsence(t *testing.T) {
 	}
 }
 
+// The /dev literal lets libc's ttyname() list the directory for the pty name. A
+// literal opens no device node, so the explicit baseline nodes stay the only
+// readable ones, and ReadOnlyTargets skips it (no subtree to re-expose).
+func TestSeatbeltDevListableOnly(t *testing.T) {
+	read, write, _ := compileMacOSBaseline(sandbox.BaselineRules(), macTestTokens(), noResolve{})
+	if !hasItem(read, sbLiteral, "/dev") {
+		t.Error("/dev must be a read literal (ttyname scans the directory)")
+	}
+	if hasItem(read, sbSubpath, "/dev") {
+		t.Error("/dev must not be a read subpath (would open every device node)")
+	}
+	if hasItem(write, sbLiteral, "/dev") || hasItem(write, sbSubpath, "/dev") {
+		t.Error("/dev must not be writable")
+	}
+	if targets := macBackend().ReadOnlyTargets(withTok(sandbox.SandboxSpec{}, macTestTokens())); contains(targets, "/dev") {
+		t.Error("/dev literal must not be a read-only target (no subtree for a paths.rw grant to re-expose)")
+	}
+}
+
+// The per-user temp grant resolves through the injected resolver and accepts only
+// /var/folders/<bucket>/<hash>/T. Any other value fails the launch before the session
+// temp directory exists.
+func TestPrepareGrantUserTemp(t *testing.T) {
+	requireTmpWritable(t)
+	cases := []struct {
+		name string
+		dir  string
+		err  error
+		want string // the granted mount; empty for a refused launch
+	}{
+		{name: "trailing slash", dir: "/var/folders/zz/abc123/T/", want: "/var/folders/zz/abc123/T"},
+		{name: "outside /var/folders", dir: "/tmp"},
+		{name: "wrong depth", dir: "/var/folders/zz/T"},
+		{name: "resolver error", err: errors.New("resolver failed")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New("", Config{GrantUserTemp: true})
+			b.userTemp = func() (string, error) { return tc.dir, tc.err }
+			spec := sandbox.SandboxSpec{WorkDir: "/Users/u/proj"}
+			prep, err := b.Prepare(&spec, io.Discard)
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "sandbox.seatbelt.grantUserTemp") {
+					t.Fatalf("Prepare must fail and name the setting, got err=%v mounts=%v", err, spec.Mounts)
+				}
+				if spec.Tokens["SESSION_TMPDIR"] != "" {
+					t.Error("a refused grant must not create the session temp directory")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(prep.Cleanup)
+			if len(spec.Mounts) != 1 || spec.Mounts[0].Src != tc.want || spec.Mounts[0].ReadOnly {
+				t.Errorf("want one read-write mount of %q, got %+v", tc.want, spec.Mounts)
+			}
+		})
+	}
+}
+
+// Off macOS the grant is skipped with a notice, so a shared config still dry-runs on Linux.
+func TestPrepareGrantUserTempNotDarwin(t *testing.T) {
+	requireTmpWritable(t)
+	b := New("", Config{GrantUserTemp: true})
+	b.userTemp = func() (string, error) { return "", errNotDarwin }
+	var w strings.Builder
+	spec := sandbox.SandboxSpec{WorkDir: "/Users/u/proj"}
+	prep, err := b.Prepare(&spec, &w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(prep.Cleanup)
+	if len(spec.Mounts) != 0 || !strings.Contains(w.String(), "only available on macOS") {
+		t.Errorf("want no mount and a notice, got mounts=%+v notice=%q", spec.Mounts, w.String())
+	}
+}
+
+// allowBlock returns the body of the first (allow <op> …) block with the given header.
+func allowBlock(profile, header string) string {
+	i := strings.Index(profile, header)
+	if i < 0 {
+		return ""
+	}
+	rest := profile[i:]
+	return rest[:strings.Index(rest, "\n)\n")]
+}
+
+// The granted per-user temp directory is a read-write subpath like any mount, so the
+// sidecar deny and the blocked-path deny, which come after the allow blocks, still win
+// inside it. The sidecar deny covers every session's sidecar directory in it, not only
+// this session's.
+func TestSeatbeltProfileGrantUserTemp(t *testing.T) {
+	spec := fixedMacSpec()
+	spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: "/var/folders/zz/abc123/T"}) // what Prepare appends for the grant
+	spec.BlockedPaths = append(spec.BlockedPaths, "/var/folders/zz/abc123/T/masked")
+	spec.SetEnv[sandbox.SidecarSocketEnvVar] = "/var/folders/zz/abc123/T/corral-sidecar-1/sock"
+	profile, err := macBackend().profile(withTok(spec, macTestTokens()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := `(subpath "/private/var/folders/zz/abc123/T")`
+	for _, header := range []string{"(allow file-write*\n", "(allow file-read*\n"} {
+		if !strings.Contains(allowBlock(profile, header), grant) {
+			t.Errorf("%s block must hold %s; profile:\n%s", strings.TrimSpace(header), grant, profile)
+		}
+	}
+	lastAllow := strings.Index(profile, "(allow process-exec*\n")
+	for _, rule := range []string{
+		`(deny file-read* file-write* process-exec*`,
+		`  (subpath "/private/var/folders/zz/abc123/T/masked")`,
+		`(deny file-write* (regex #"^/private/var/folders/zz/abc123/T/corral-sidecar-"))`,
+	} {
+		if i := strings.Index(profile, rule); i < lastAllow {
+			t.Errorf("%s must come after the allow blocks (found at %d, last allow at %d)", rule, i, lastAllow)
+		}
+	}
+}
+
 func TestSeatbeltSessionTempIsolatedUnderTmp(t *testing.T) {
 	profile, err := macBackend().profile(withTok(fixedMacSpec(), macTestTokens()))
 	if err != nil {
@@ -552,7 +672,7 @@ func TestSeatbeltProfileSidecarSocket(t *testing.T) {
 	}
 	last := max(strings.Index(profile, "(allow file-write*\n"), strings.Index(profile, "(deny network*)"))
 	for _, rule := range []string{
-		`(deny file-write* (subpath "/private/var/folders/xy/T/corral-sidecar-1"))`,
+		`(deny file-write* (regex #"^/private/var/folders/xy/T/corral-sidecar-"))`,
 		`(allow file-write-data (literal "/private/var/folders/xy/T/corral-sidecar-1/sock"))`,
 		`(allow network-outbound (remote unix-socket (path-literal "/private/var/folders/xy/T/corral-sidecar-1/sock")))`,
 	} {

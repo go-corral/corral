@@ -179,6 +179,29 @@ at the correct location. A normal ancestor grant remains valid: for example,
 granting a real dotfiles directory is allowed even when `~/.ssh` points into it,
 because the resolved SSH directory is masked inside the grant.
 
+## `NSCocoaErrorDomain Code=513` on macOS
+
+A tool that writes files fails with `NSCocoaErrorDomain Code=513`. The tool writes in the per-user temp directory, `/var/folders/<bucket>/<hash>/T`, which the sandbox denies by default. Set [`sandbox.seatbelt.grantUserTemp: true`](../reference/config.md#sandbox).
+
+The `couldn't create cache file ... xcrun_db-*` warning from `xcrun`, `/usr/bin/git`, and `/usr/bin/clang` has the same cause but is harmless.
+
+## `sandbox-exec: sandbox_apply: Operation not permitted`
+
+Swift runs macro expansion and package plugin builds in a sandbox of its own. The kernel refuses a nested Seatbelt profile, so `swift build` on a package with a macro or a plugin fails with this error. Turn off the compiler's own sandbox.
+
+```sh
+swift build --disable-sandbox
+xcodebuild -scheme <scheme> OTHER_SWIFT_FLAGS=-disable-sandbox
+```
+
+## `xcodebuild` cannot write derived data
+
+`xcodebuild` writes derived data to `~/Library/Developer/Xcode/DerivedData`. When the session cannot write that directory, grant it with `providers.paths.rw: [~/Library/Developer/Xcode/DerivedData]`, which keeps the cache between sessions. Or point the derived data at a directory under the working directory:
+
+```sh
+xcodebuild -scheme <scheme> -derivedDataPath ./DerivedData build
+```
+
 ## Config changes seem ignored
 
 - Run `corral validate` to see the built-in, global, `.corral.yml` and `.corral.local.yml` sources ordered by priority.

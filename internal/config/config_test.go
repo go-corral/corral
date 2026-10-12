@@ -569,6 +569,26 @@ func TestMachDefaultsToStrict(t *testing.T) {
 	}
 }
 
+// The default (no config) keeps the macOS per-user temp directory denied; grantUserTemp: true
+// is the opt-in.
+func TestGrantUserTempDefaultsToFalse(t *testing.T) {
+	cfg, _, err := loadFrom(t, "/home/u", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.Seatbelt.GrantUserTemp {
+		t.Error("grantUserTemp should default to false")
+	}
+
+	on, _, err := loadFrom(t, "/home/u", "sandbox:\n  seatbelt:\n    grantUserTemp: true\n", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !on.Sandbox.Seatbelt.GrantUserTemp {
+		t.Error("sandbox.seatbelt.grantUserTemp: true must load")
+	}
+}
+
 func TestMountOverlapAlwaysBlockedRejected(t *testing.T) {
 	if _, _, err := loadFrom(t, "/home/u", "providers:\n  paths:\n    rw: [~/.ssh]\n", "", ""); err == nil ||
 		!strings.Contains(err.Error(), "always-blocked path") {
