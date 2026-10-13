@@ -179,6 +179,8 @@ func (p *provider) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*s
 	dirs, files := ConcreteMasks(d.Root, d.Patterns)
 	masked := append(append([]string{}, dirs...), files...)
 
+	note := "the patterns " + spec.SummarizeQuoted(d.Patterns) + " in `" + strings.Join(d.Files, "`, `") + "` exclude paths from AI tools. " +
+		"The sandbox masks the paths that match now, and the hook blocks every match, also for files created later. Read the ignore files to check a path. The user can change these files."
 	head := fmt.Sprintf("%d pattern(s) from %s — masking %d dir(s) + %d file(s)",
 		len(d.Patterns), strings.Join(baseNames(d.Files), "/"), len(dirs), len(files))
 	if len(masked) > 0 {
@@ -187,13 +189,7 @@ func (p *provider) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*s
 	status := []string{head}
 	if negs := NegationCount(d.Patterns); negs > 0 {
 		status = append(status, fmt.Sprintf("%d \"!\" re-include pattern(s) ignored (corral has no negation); it may mask more than the source intends", negs))
-	}
-
-	// The model-facing note: the hook blocks every pattern match, so the model
-	// should not probe or retry these paths.
-	note := "repo AI-ignore is active: paths matching " + strings.Join(baseNames(d.Files), "/") + " are blocked (reads fail, even for files created later)"
-	if len(masked) > 0 {
-		note += "; currently masked: " + spec.SummarizeQuoted(masked)
+		note += " Corral ignores `!` lines, so a `!` line does not open a path."
 	}
 
 	return &spec.Contribution{

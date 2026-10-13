@@ -9,6 +9,8 @@ import (
 // sandbox.seatbelt).
 type Config struct {
 	Mach Mach `yaml:"mach"`
+	// GrantUserTemp grants the per-user temp directory (/var/folders/<bucket>/<hash>/T) read-write.
+	GrantUserTemp bool `yaml:"grantUserTemp"`
 }
 
 // Validate checks the mach knobs: lookup is open|strict, and each allow entry

@@ -31,6 +31,31 @@ go after `--`, for example `corral run pi -- --help`.
 `corral sync` for Claude Code or `corral sync pi` for pi, then confirm the result with
 `corral doctor`.
 
+## Deny format
+
+Every deny from a policy rule has one format:
+
+```text
+blocked by corral policy [hook:<rule>]: <reason>. Fix: <fix text>
+```
+
+- `[hook:<rule>]` names the layer and the rule that denied the call: `always-blocked`, `blocked-path`, `ai-ignore`, `bash`, `path-pattern`, or `secret-scan`.
+- `Fix:` names the setting that the agent proposes to the user. A fix that starts with `None, by design.` has no setting.
+
+Claude Code receives the text as `permissionDecisionReason` of the `PreToolUse` decision. The pi policy extension calls the hook with `--decision exit2` and shows the stderr line as the block reason. The stderr line has the same text after the prefix `corral: `.
+
+When corral cannot check a call, the rule is `fail-closed`, the reason is the error, and the fix is `None. Corral could not check this call, so it blocked it. Tell the user the error.` Both agents receive this text as the stderr line after the prefix `corral: `, with exit status 2.
+
+When a call ran but corral hid its output, the replacement output has this format:
+
+```text
+output withheld by corral policy [hook:<rule>]: <reason>. The call ran. Fix: <fix text>
+```
+
+The rule is `response-secret` for a credential in the output, or `fail-closed` when corral could not scan the output. Both agents receive this text in place of the tool output.
+
+For the fix of each rule, see [The hook blocked my command](../how-to/troubleshooting.md#the-hook-blocked-my-command) and [A tool output is withheld](../how-to/troubleshooting.md#a-tool-output-is-withheld).
+
 ## Claude Code
 
 `corral sync` registers `PreToolUse`, `PostToolUse`, `SessionStart`, and

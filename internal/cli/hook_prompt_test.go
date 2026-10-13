@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -33,8 +32,8 @@ func isolatePromptHook(t *testing.T) {
 	startTestSidecar(t, dir, dir)
 }
 
-// A prompt carrying a secret is swallowed with a warning that names the kind and the
-// incident next step — and never echoes the secret value.
+// A prompt carrying a secret is swallowed with a warning that names the kind — and never
+// echoes the secret value.
 func TestUserPromptSubmitWarnsOnSecret(t *testing.T) {
 	isolatePromptHook(t)
 
@@ -43,7 +42,7 @@ func TestUserPromptSubmitWarnsOnSecret(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("the warning rides in JSON → exit 0, got %d", code)
 	}
-	for _, want := range []string{`"decision"`, `"block"`, "AWS access key id", "rotate/revoke"} {
+	for _, want := range []string{`"decision"`, `"block"`, "AWS access key id", "NOT sent"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("a secret-bearing prompt must warn (missing %q):\n%s", want, out.String())
 		}
@@ -95,7 +94,7 @@ func TestUserPromptSubmitDifferentSecretWarnsAgain(t *testing.T) {
 }
 
 // Inside the sandbox without a reachable sidecar, the scan still runs with its default
-// settings: a recognized secret is blocked with the built-in hint, a clean prompt is allowed.
+// settings: a recognized secret is blocked, a clean prompt is allowed.
 func TestUserPromptSubmitDeadSidecarScansDefaults(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv(sandbox.SandboxEnvVar, "1")
@@ -105,7 +104,7 @@ func TestUserPromptSubmitDeadSidecarScansDefaults(t *testing.T) {
 	if code := runUserPromptSubmitHook(strings.NewReader(promptEvent("s1", "key "+promptAWSKey)), &secret); code != 0 {
 		t.Fatalf("the warning rides in JSON → exit 0, got %d", code)
 	}
-	for _, want := range []string{`"block"`, "AWS access key id", policy.IncidentHint} {
+	for _, want := range []string{`"block"`, "AWS access key id", "NOT sent"} {
 		if !strings.Contains(secret.String(), want) {
 			t.Errorf("a secret-bearing prompt must warn (missing %q):\n%s", want, secret.String())
 		}

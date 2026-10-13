@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,8 +110,10 @@ func TestRunHookNeverReturnsOtherCodes(t *testing.T) {
 	}
 }
 
+// Both presentations carry the same reason: the layer marker, the rule's reason, and its fix.
 func TestRunHookJSONDenyShape(t *testing.T) {
-	eng, home, ssh := hookEngine(t)
+	home, ssh := setupHomeWithSSH(t)
+	eng := NewEngine(&BlockedPathRule{Roots: []string{ssh}})
 	payload := mustJSON(map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "Read",
@@ -139,8 +142,20 @@ func TestRunHookJSONDenyShape(t *testing.T) {
 	if parsed.HookSpecificOutput.PermissionDecision != "deny" {
 		t.Errorf("permissionDecision = %q, want deny", parsed.HookSpecificOutput.PermissionDecision)
 	}
-	if !strings.Contains(parsed.HookSpecificOutput.PermissionDecisionReason, "block-ssh") {
-		t.Errorf("reason missing rule name: %q", parsed.HookSpecificOutput.PermissionDecisionReason)
+	reason := parsed.HookSpecificOutput.PermissionDecisionReason
+	if !strings.HasPrefix(reason, "blocked by corral policy [hook:blocked-path]: ") {
+		t.Errorf("reason must start with the layer marker: %q", reason)
+	}
+	if !strings.HasSuffix(reason, ". Fix: "+Fixes["blocked-path"]) {
+		t.Errorf("reason must end with the blocked-path fix: %q", reason)
+	}
+
+	var exit2Err bytes.Buffer
+	if code := RunHookWith(eng, bytes.NewReader(payload), io.Discard, &exit2Err, PresentExit2); code != ExitBlock {
+		t.Fatalf("exit-2 deny should exit 2, got %d", code)
+	}
+	if got := exit2Err.String(); got != "corral: "+reason+"\n" {
+		t.Errorf("exit-2 stderr = %q, want the JSON reason %q after the corral prefix", got, reason)
 	}
 }
 

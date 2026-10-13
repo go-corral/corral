@@ -48,31 +48,33 @@ func RunHookWith(eng *Engine, r io.Reader, out, errw io.Writer, present Presenta
 	return RunHookWithAudit(eng, nil, OSFS{}, r, out, errw, present)
 }
 
+// BlockFailClosed writes the FailClosed text to w and returns ExitBlock.
+func BlockFailClosed(w io.Writer, format string, a ...any) int {
+	fmt.Fprintf(w, "corral: %s\n", FailClosed(fmt.Sprintf(format, a...)))
+	return ExitBlock
+}
+
 // RunHookWithAudit evaluates the event's paths in fsys. It never returns a code other than
 // ExitAllow or ExitBlock (fail-closed). It installs no signal handlers and does not call os.Exit,
 // so it is testable.
 func RunHookWithAudit(eng *Engine, aud AuditFunc, fsys FS, r io.Reader, out, errw io.Writer, present Presentation) (code int) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			fmt.Fprintf(errw, "corral: internal error, blocking (fail-closed): %v\n", rec)
-			code = ExitBlock
+			code = BlockFailClosed(errw, "internal error: %v", rec)
 		}
 	}()
 
 	data, err := io.ReadAll(io.LimitReader(r, MaxEventBytes+1))
 	if err != nil {
-		fmt.Fprintf(errw, "corral: cannot read hook input, blocking: %v\n", err)
-		return ExitBlock
+		return BlockFailClosed(errw, "cannot read hook input: %v", err)
 	}
 	if len(data) > MaxEventBytes {
-		fmt.Fprintf(errw, "corral: hook input exceeds %d bytes, blocking\n", MaxEventBytes)
-		return ExitBlock
+		return BlockFailClosed(errw, "hook input exceeds %d bytes", MaxEventBytes)
 	}
 
 	ev, err := ParseEvent(data)
 	if err != nil {
-		fmt.Fprintf(errw, "corral: cannot parse hook event, blocking: %v\n", err)
-		return ExitBlock
+		return BlockFailClosed(errw, "cannot parse hook event: %v", err)
 	}
 	ev.fsys = fsys
 
@@ -80,8 +82,7 @@ func RunHookWithAudit(eng *Engine, aud AuditFunc, fsys FS, r io.Reader, out, err
 	if err != nil {
 		// Never echo the raw error, which could contain tool input.
 		safeAudit(aud, ev, Decision{Action: Deny, Rule: "engine-error", Reason: "policy evaluation error"}, errw)
-		fmt.Fprintf(errw, "corral: policy evaluation error, blocking: %v\n", err)
-		return ExitBlock
+		return BlockFailClosed(errw, "policy evaluation error: %v", err)
 	}
 
 	safeAudit(aud, ev, dec, errw)
@@ -107,7 +108,7 @@ func safeAudit(aud AuditFunc, ev *HookEvent, dec Decision, errw io.Writer) {
 }
 
 func presentDeny(dec Decision, out, errw io.Writer, present Presentation) int {
-	reason := fmt.Sprintf("blocked by corral policy [%s]: %s", dec.Rule, dec.Reason)
+	reason := fmt.Sprintf("blocked by corral policy [hook:%s]: %s. Fix: %s", dec.Rule, dec.Reason, Fixes[dec.Rule])
 	if present == PresentJSON {
 		payload, err := json.Marshal(denyOutput{
 			HookSpecificOutput: preToolUseDeny{
@@ -332,7 +333,7 @@ func InstallPostToolUseSignals(g *PostToolUseGate, errw io.Writer) (stop func())
 			return
 		}
 		fmt.Fprintf(errw, "corral: received %v, withholding the tool response (fail-closed)\n", s)
-		os.Exit(g.Replace("[corral] tool response withheld — the secret scan was interrupted before it could finish (fail-closed)"))
+		os.Exit(g.Replace(Unscanned("the scan was interrupted")))
 	}()
 	return func() { signal.Stop(ch); close(ch) }
 }
@@ -342,26 +343,26 @@ func InstallPostToolUseSignals(g *PostToolUseGate, errw io.Writer) (stop func())
 // replace the response, not exit 2 or decision:block — neither withholds a PostToolUse result. So
 // every error path and a recovered panic replaces the response with a withheld-marker; an unscanned
 // response never reaches the model. A clean response is allowed (exit 0, no output).
-func RunPostToolUseHook(entropyThreshold float64, maxScanBytes int64, incidentHint string, aud AuditFunc, r io.Reader, gate *PostToolUseGate, errw io.Writer) (code int) {
+func RunPostToolUseHook(entropyThreshold float64, maxScanBytes int64, aud AuditFunc, r io.Reader, gate *PostToolUseGate, errw io.Writer) (code int) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			fmt.Fprintf(errw, "corral: internal error scanning tool response, withholding (fail-closed): %v\n", rec)
-			code = gate.Replace("[corral] tool response withheld — internal error while scanning it (fail-closed)")
+			code = gate.Replace(Unscanned("internal error"))
 		}
 	}()
 
 	data, err := io.ReadAll(io.LimitReader(r, MaxEventBytes+1))
 	if err != nil {
-		return gate.Replace("[corral] tool response withheld — could not read it to scan (fail-closed)")
+		return gate.Replace(Unscanned("cannot read the output"))
 	}
 	if len(data) > MaxEventBytes {
 		gate.Observe(probeToolName(data), nil)
-		return gate.Replace("[corral] tool response withheld — exceeds the scan size cap (fail-closed)")
+		return gate.Replace(Unscanned("larger than the scan limit"))
 	}
 	ev, err := ParseEvent(data)
 	if err != nil {
 		gate.Observe(probeToolName(data), nil)
-		return gate.Replace("[corral] tool response withheld — could not parse the hook event (fail-closed)")
+		return gate.Replace(Unscanned("cannot parse hook event"))
 	}
 	gate.Observe(ev.ToolName, nil)
 
@@ -371,7 +372,7 @@ func RunPostToolUseHook(entropyThreshold float64, maxScanBytes int64, incidentHi
 	}
 	gate.Observe(ev.ToolName, resp)
 	if kind, hit := ScanResponseBytes(capForScan(resp, maxScanBytes), entropyThreshold); hit {
-		marker := fmt.Sprintf("[corral policy] This %s tool response was withheld: it contained %s, and corral kept it out of the model context to prevent secret exposure. %s", ev.ToolName, kind, incidentHintOr(incidentHint))
+		marker := withheld("response-secret", fmt.Sprintf("the %s output contained %s", ev.ToolName, kind), responseSecretFix)
 		safeAudit(aud, ev, Decision{
 			Action: Deny,
 			Rule:   "response-secret",
@@ -449,8 +450,7 @@ func InstallFailClosedSignals(errw io.Writer) (stop func()) {
 		if !ok {
 			return
 		}
-		fmt.Fprintf(errw, "corral: received %v, blocking (fail-closed)\n", s)
-		os.Exit(ExitBlock)
+		os.Exit(BlockFailClosed(errw, "interrupted by %v", s))
 	}()
 	return func() { signal.Stop(ch); close(ch) }
 }

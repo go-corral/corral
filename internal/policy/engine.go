@@ -19,6 +19,15 @@ func NewEngine(rules ...Rule) *Engine {
 	return &Engine{rules: rules}
 }
 
+// RuleNames returns the name of each rule in evaluation order.
+func (e *Engine) RuleNames() []string {
+	names := make([]string, 0, len(e.rules))
+	for _, r := range e.rules {
+		names = append(names, r.Name())
+	}
+	return names
+}
+
 // Evaluate runs every rule. The first Deny short-circuits. A rule may match with an Allow — an
 // audit-only "note" whose Rule/Reason is carried on the returned Allow decision. A later Deny
 // wins over an earlier note. If no rule denies, the result is Allow (annotated with the first
@@ -82,7 +91,7 @@ func (r *BlockedPathRule) Evaluate(ev *HookEvent) (Decision, bool, error) {
 				return Decision{
 					Action: Deny,
 					Rule:   r.Name(),
-					Reason: fmt.Sprintf("access to %s is blocked by corral policy (resolved %q -> %q)", root, raw, canon),
+					Reason: fmt.Sprintf("access to %s (resolved %q -> %q)", root, raw, canon),
 				}, true, nil
 			}
 		}

@@ -632,7 +632,7 @@ func TestEffectiveBlockedSplit(t *testing.T) {
 	all := cfg.EffectiveBlockedPaths(home)
 	for _, want := range []string{"/home/u/.ssh", "/custom/dir", "/repo/.env", "/repo/config.local"} {
 		if !containsStr(all, want) {
-			t.Errorf("EffectiveBlockedPaths (hook deny roots) missing %q: %v", want, all)
+			t.Errorf("EffectiveBlockedPaths missing %q: %v", want, all)
 		}
 	}
 }

@@ -116,25 +116,23 @@ func TestLocalEngineInputsHomeLookupError(t *testing.T) {
 	}
 }
 
-// The always-blocked paths are unioned with config block.directories/block.files. newEngine
-// builds from its inputs alone: the process HOME and cwd point elsewhere.
+// The always-blocked paths and config block.directories/block.files each deny under their own
+// rule name. A config entry equal to an always-blocked directory reports always-blocked. newEngine builds from its inputs alone: the process HOME and cwd point elsewhere.
 func TestNewEngineAlwaysBlockedUnion(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 
 	home := t.TempDir()
-	sshDir := filepath.Join(home, ".ssh")
-	if err := os.MkdirAll(sshDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	projDir := filepath.Join(home, "proj")
-	if err := os.MkdirAll(projDir, 0o755); err != nil {
-		t.Fatal(err)
+	customBlocked := filepath.Join(home, "custom-blocked")
+	for _, dir := range []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), projDir, customBlocked} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	customBlocked := filepath.Join(home, "custom-blocked")
 	cfg := &config.Config{}
-	cfg.Providers.Block.Directories = []string{customBlocked}
+	cfg.Providers.Block.Directories = []string{customBlocked, filepath.Join(home, ".aws")}
 
 	in := engineInputs{
 		cfg:       cfg,
@@ -148,48 +146,47 @@ func TestNewEngineAlwaysBlockedUnion(t *testing.T) {
 		t.Fatalf("newEngine must succeed with a valid config and home; got %v", err)
 	}
 
-	// Test 1: Verify that the always-blocked path ~/.ssh/id_rsa is blocked
-	// Create a PreToolUse event targeting a file in the always-blocked set
-	sshKeyPath := filepath.Join(sshDir, "id_rsa")
-	if err := os.WriteFile(sshKeyPath, []byte("fake-key"), 0o600); err != nil {
+	for _, tc := range []struct {
+		file string
+		rule string
+	}{
+		{filepath.Join(home, ".ssh", "id_rsa"), "always-blocked"},
+		{filepath.Join(customBlocked, "file.txt"), "blocked-path"},
+		{filepath.Join(home, ".aws", "credentials"), "always-blocked"},
+	} {
+		event, _ := json.Marshal(map[string]any{
+			"hook_event_name": "PreToolUse",
+			"tool_name":       "Read",
+			"tool_input":      map[string]any{"file_path": tc.file},
+			"cwd":             home,
+		})
+		var stderr strings.Builder
+		if code := policy.RunHook(eng, strings.NewReader(string(event)), &stderr); code != policy.ExitBlock {
+			t.Errorf("%s must be blocked, got code %d (want %d)", tc.file, code, policy.ExitBlock)
+		}
+		if want := "[hook:" + tc.rule + "]"; !strings.Contains(stderr.String(), want) {
+			t.Errorf("%s: deny must carry %s, got %q", tc.file, want, stderr.String())
+		}
+	}
+}
+
+// Every rule of the engine has a fix.
+func TestEveryRuleHasAFix(t *testing.T) {
+	home := t.TempDir()
+	in := engineInputs{
+		cfg:       &config.Config{},
+		home:      home,
+		env:       map[string]string{"HOME": home},
+		workDir:   home,
+		auditPath: filepath.Join(home, "corral-audit.jsonl"),
+	}
+	eng, err := newEngine(in, readPolicyFiles(in), policy.OSFS{})
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Use the correct event format: hook_event_name, tool_name, tool_input with file_path key
-	eventData1 := map[string]any{
-		"hook_event_name": "PreToolUse",
-		"tool_name":       "Read",
-		"tool_input":      map[string]any{"file_path": sshKeyPath},
-		"cwd":             home,
-	}
-	eventBytes1, _ := json.Marshal(eventData1)
-	var stderr1 strings.Builder
-
-	code1 := policy.RunHook(eng, strings.NewReader(string(eventBytes1)), &stderr1)
-	if code1 != policy.ExitBlock {
-		t.Errorf("always-blocked path ~/.ssh/id_rsa must be blocked, got code %d (want %d)", code1, policy.ExitBlock)
-	}
-
-	// Test 2: Verify that the custom blocked path is also blocked
-	customPath := filepath.Join(customBlocked, "file.txt")
-	if err := os.MkdirAll(customBlocked, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(customPath, []byte("data"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	eventData2 := map[string]any{
-		"hook_event_name": "PreToolUse",
-		"tool_name":       "Read",
-		"tool_input":      map[string]any{"file_path": customPath},
-		"cwd":             home,
-	}
-	eventBytes2, _ := json.Marshal(eventData2)
-	var stderr2 strings.Builder
-
-	code2 := policy.RunHook(eng, strings.NewReader(string(eventBytes2)), &stderr2)
-	if code2 != policy.ExitBlock {
-		t.Errorf("custom blocked path must be blocked, got code %d (want %d)", code2, policy.ExitBlock)
+	for _, name := range eng.RuleNames() {
+		if _, ok := policy.Fixes[name]; !ok {
+			t.Errorf("rule %q has no entry in policy.Fixes", name)
+		}
 	}
 }

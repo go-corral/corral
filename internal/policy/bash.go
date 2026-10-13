@@ -248,20 +248,20 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 
 	for _, sc := range pb.pipeDests {
 		if shellInterpreters[sc.name] {
-			return deny(fmt.Sprintf("piping into %q executes arbitrary downloaded code and is blocked", sc.name))
+			return deny(fmt.Sprintf("piping into %q executes arbitrary downloaded code", sc.name))
 		}
 	}
 	if pb.shellProcSubst {
-		return deny("a shell interpreter driven by process substitution can execute dynamic or downloaded code and is blocked")
+		return deny("a shell interpreter driven by process substitution can execute dynamic or downloaded code")
 	}
 
 	for _, sc := range pb.cmds {
 		for _, a := range sc.args() {
 			switch a.text {
 			case "--dangerously-skip-permissions":
-				return deny("`--dangerously-skip-permissions` disables Claude Code's own safety and is blocked")
+				return deny("`--dangerously-skip-permissions` disables Claude Code's own safety")
 			case "--no-verify":
-				return deny("`--no-verify` bypasses commit/push hooks and is blocked")
+				return deny("`--no-verify` bypasses commit/push hooks")
 			}
 		}
 
@@ -270,7 +270,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 			// Command name hidden behind a shell expansion: block only when an argument is a
 			// secret path or corral's own config; a benign expanded command is unaffected.
 			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
-				return deny(fmt.Sprintf("a command whose name is hidden by a shell expansion targets %s and cannot be verified safe, so it is blocked", reason))
+				return deny(fmt.Sprintf("a command whose name is hidden by a shell expansion targets %s and cannot be verified safe", reason))
 			}
 		case "rm":
 			if reason, hit := checkRM(sc, sp, ev); hit {
@@ -286,7 +286,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 			}
 		case "shred", "truncate", "wipe":
 			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
-				return deny(fmt.Sprintf("%s of %s is blocked", sc.name, reason))
+				return deny(fmt.Sprintf("%s of %s", sc.name, reason))
 			}
 		case "find":
 			if reason, hit := checkFind(sc, sp, ev); hit {
@@ -296,13 +296,13 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 
 		if netTools[sc.name] {
 			if kw, hit := credExfil(sc); hit {
-				return deny(fmt.Sprintf("network command %q with a credential-looking argument (%s) is blocked as possible exfiltration", sc.name, kw))
+				return deny(fmt.Sprintf("network command %q with a credential-looking argument (%s) is possible exfiltration", sc.name, kw))
 			}
 		}
 
 		if fileReaders[sc.name] {
 			if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, false); hit {
-				return deny(fmt.Sprintf("reading %s via `%s` bypasses the Read gate and is blocked", reason, sc.name))
+				return deny(fmt.Sprintf("reading %s via `%s` bypasses the Read gate", reason, sc.name))
 			}
 		}
 	}
@@ -313,9 +313,9 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 		}
 		if reason, self, hit := matchSensitive(rd.target, rd.expanded, ev, sp, true); hit {
 			if self {
-				return deny(fmt.Sprintf("redirecting output into %s would disable corral and is blocked", reason))
+				return deny(fmt.Sprintf("redirecting output into %s would disable corral", reason))
 			}
-			return deny(fmt.Sprintf("redirecting output into %s is blocked", reason))
+			return deny(fmt.Sprintf("redirecting output into %s", reason))
 		}
 	}
 
@@ -370,7 +370,7 @@ func checkFind(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 		return "", false
 	}
 	if reason, _, hit := firstSensitiveArg(sc.args(), ev, sp, true); hit {
-		return fmt.Sprintf("find -delete targeting %s is blocked", reason), true
+		return fmt.Sprintf("find -delete targeting %s", reason), true
 	}
 	return "", false
 }
@@ -385,9 +385,9 @@ func checkLn(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 		}
 		if reason, self, hit := matchSensitive(a.text, a.hasExpansion, ev, sp, true); hit {
 			if self {
-				return fmt.Sprintf("creating a link to %s would disable corral and is blocked", reason), true
+				return fmt.Sprintf("creating a link to %s would disable corral", reason), true
 			}
-			return fmt.Sprintf("creating a link to %s is blocked", reason), true
+			return fmt.Sprintf("creating a link to %s", reason), true
 		}
 	}
 	return "", false

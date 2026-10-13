@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/go-corral/corral/internal/policy"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 const (
@@ -105,7 +106,7 @@ type Server struct {
 // Start creates a mode 0700 directory under the host temp dir and serves h on
 // a socket inside it.
 func Start(h Handler) (*Server, error) {
-	dir, err := os.MkdirTemp("", "corral-sidecar-*")
+	dir, err := os.MkdirTemp("", sandbox.SidecarDirPrefix+"*")
 	if err != nil {
 		return nil, err
 	}

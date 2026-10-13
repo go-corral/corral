@@ -12,6 +12,7 @@ import (
 	"github.com/go-corral/corral/internal/providers"
 	"github.com/go-corral/corral/internal/providers/block"
 	"github.com/go-corral/corral/internal/providers/paths"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 func TestSessionWarnings(t *testing.T) {
@@ -29,7 +30,7 @@ func TestSessionWarnings(t *testing.T) {
 		{State: health.Warn, Label: "paths.rw", Value: `"/usr" re-exposes "/usr" as writable`,
 			Reason: "it overlaps a baseline read-only system path and overrides corral's default protection"},
 	}
-	if got := sessionWarnings(cfg, roTargets); !slices.Equal(got, want) {
+	if got := sessionWarnings(cfg, sandbox.KindBwrap, roTargets); !slices.Equal(got, want) {
 		t.Errorf("sessionWarnings = %+v, want %+v", got, want)
 	}
 
@@ -38,13 +39,30 @@ func TestSessionWarnings(t *testing.T) {
 	// not just a grant that equals or contains the RO target.
 	child := &config.Config{}
 	child.Providers.Paths.RW = []string{"/usr/local/bin"}
-	if cw := sessionWarnings(child, roTargets); len(cw) != 1 || cw[0].Value != `"/usr/local/bin" re-exposes "/usr" as writable` {
+	if cw := sessionWarnings(child, sandbox.KindBwrap, roTargets); len(cw) != 1 || cw[0].Value != `"/usr/local/bin" re-exposes "/usr" as writable` {
 		t.Errorf("a grant nested under a read-only baseline path must warn, got: %+v", cw)
 	}
 
 	// A clean config (no docker, no overlapping grant) warns about nothing.
-	if got := sessionWarnings(&config.Config{}, roTargets); len(got) != 0 {
+	if got := sessionWarnings(&config.Config{}, sandbox.KindBwrap, roTargets); len(got) != 0 {
 		t.Errorf("clean config should produce no warnings, got: %v", got)
+	}
+}
+
+// The grantUserTemp advisory joins the shared set only for the Seatbelt backend: bwrap
+// ignores the sandbox.seatbelt node, so a shared config must not warn on Linux.
+func TestSessionWarningsSeatbeltGrantUserTemp(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Sandbox.Seatbelt.GrantUserTemp = true
+	got := sessionWarnings(cfg, sandbox.KindSeatbelt, nil)
+	if len(got) != 1 || got[0].State != health.Warn || got[0].Label != "sandbox.seatbelt.grantUserTemp" {
+		t.Errorf("seatbelt with grantUserTemp must warn once for the setting, got %+v", got)
+	}
+	if got := sessionWarnings(cfg, sandbox.KindBwrap, nil); len(got) != 0 {
+		t.Errorf("bwrap must ignore grantUserTemp, got %+v", got)
+	}
+	if got := sessionWarnings(&config.Config{}, sandbox.KindSeatbelt, nil); len(got) != 0 {
+		t.Errorf("grantUserTemp false must not warn, got %+v", got)
 	}
 }
 
@@ -57,7 +75,7 @@ func TestSessionWarningsMacPrivateNormalization(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Providers.Paths.RW = []string{"/var/log", "/etc/ssl", "/tmp/scratch"}
 	roTargets := []string{"/private/var/log", "/private/etc/ssl", "/private/tmp/scratch"}
-	warnings := sessionWarnings(cfg, roTargets)
+	warnings := sessionWarnings(cfg, sandbox.KindBwrap, roTargets)
 	if len(warnings) != 3 {
 		t.Errorf("each /var|/etc|/tmp grant must overlap its /private-normalized target; want 3 warnings, got %d: %v", len(warnings), warnings)
 	}
@@ -77,7 +95,7 @@ func TestSessionWarningsRawFormPreserved(t *testing.T) {
 	cfg.Providers.Paths.RW = []string{"/var/log", "/usr/local"}
 	// bwrap-style (non-/private) targets, incl. a bare /var node.
 	roTargets := []string{"/var", "/usr"}
-	warnings := sessionWarnings(cfg, roTargets)
+	warnings := sessionWarnings(cfg, sandbox.KindBwrap, roTargets)
 	if len(warnings) != 2 {
 		t.Errorf("raw-form overlaps (/var/log⊂/var, /usr/local⊂/usr) must still warn; want 2, got %d: %v", len(warnings), warnings)
 	}

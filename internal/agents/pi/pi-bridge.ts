@@ -26,7 +26,7 @@ const CORRAL = process.env.CORRAL_BIN || "corral";
 const HOOK_TIMEOUT_MS = 15000;
 const MAX_BUFFER = 64 * 1024 * 1024;
 const SESSION_ID = "pi-" + process.pid;
-const GENERIC_WITHHELD = "[corral] tool response withheld by policy (fail-closed).";
+const GENERIC_WITHHELD = unscanned("the policy hook output is unreadable");
 
 // pi tool name/key -> Claude tool name/keys, so corral's name-gated rules (sensitive-path
 // classification, the write-content secret scan, the /etc + self-protect write guards) apply
@@ -64,7 +64,7 @@ function toClaude(piName, input) {
 // callCorral runs `corral <args>` with the hook event on stdin. pi.exec ignores child stdin,
 // so we use child_process directly. ran=false means corral could not be executed or did not
 // finish (missing binary, timeout, signal, non-numeric status) — an infra failure the caller
-// treats as fail-closed.
+// treats as fail-closed. why names the cause of a failed run.
 function callCorral(args, event) {
   const r = spawnSync(CORRAL, args, {
     input: JSON.stringify(event),
@@ -74,6 +74,7 @@ function callCorral(args, event) {
   });
   return {
     ran: !r.error && r.signal == null && typeof r.status === "number",
+    why: r.error ? r.error.code || r.error.message : r.signal || "exit status " + r.status,
     status: r.status,
     stdout: (r.stdout || "").trim(),
     stderr: (r.stderr || "").trim(),
@@ -82,6 +83,14 @@ function callCorral(args, event) {
 
 function blockReason(res) {
   return res.stderr || "blocked by corral policy";
+}
+
+function failClosed(detail) {
+  return "blocked by corral policy [hook:fail-closed]: " + detail + ". Fix: None. Corral could not check this call, so it blocked it. Tell the user the error.";
+}
+
+function unscanned(why) {
+  return "output withheld by corral policy [hook:fail-closed]: corral could not scan the output (" + why + "). The call ran. Fix: Tell the user the error.";
 }
 
 function withheld(text) {
@@ -128,7 +137,7 @@ export default (pi) => {
       tool_name: mapped.tool_name,
       tool_input: mapped.tool_input,
     });
-    if (!res.ran) throw new Error("corral policy hook did not run; blocking (fail-closed)");
+    if (!res.ran) throw new Error(failClosed("the policy hook did not run: " + res.why));
     if (res.status !== 0) return { block: true, reason: blockReason(res) };
     return undefined; // allow
   });
@@ -148,12 +157,12 @@ export default (pi) => {
         tool_response: Array.isArray(event.content) ? event.content : [],
       });
       if (!res.ran || res.status !== 0) {
-        return withheld("[corral] tool response withheld — policy hook error (fail-closed).");
+        return withheld(unscanned("the policy hook failed: " + res.why));
       }
       if (res.stdout === "") return undefined; // clean: keep the original result
       return withheld(markerFrom(res.stdout)); // corral withheld it
     } catch (e) {
-      return withheld("[corral] tool response withheld — bridge error (fail-closed).");
+      return withheld(unscanned("the pi bridge failed"));
     }
   });
 
@@ -170,11 +179,11 @@ export default (pi) => {
         tool_name: "Bash",
         tool_input: { command: event.command },
       });
-      if (!res.ran) return denyBash("[corral] command blocked — policy hook error (fail-closed).");
+      if (!res.ran) return denyBash(failClosed("the policy hook did not run: " + res.why));
       if (res.status !== 0) return denyBash(blockReason(res));
       return undefined; // allow: pi runs the real command
     } catch (e) {
-      return denyBash("[corral] command blocked — bridge error (fail-closed).");
+      return denyBash(failClosed("the pi bridge failed"));
     }
   });
 

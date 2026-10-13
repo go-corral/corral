@@ -135,7 +135,7 @@ func TestPolicyHandler(t *testing.T) {
 	}
 
 	resp = h(sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}, blocked, policy.OSFS{})
-	if resp.Code != policy.ExitBlock || resp.Stdout != "" || !strings.Contains(resp.Stderr, "[blocked-path]") || resp.Error != "" {
+	if resp.Code != policy.ExitBlock || resp.Stdout != "" || !strings.Contains(resp.Stderr, "[hook:blocked-path]") || resp.Error != "" {
 		t.Errorf("exit2 deny: got %+v", resp)
 	}
 
@@ -202,8 +202,8 @@ func TestPolicyHandlerResolvesRootsInTheEventFS(t *testing.T) {
 		t.Fatal(err)
 	}
 	for file, rule := range map[string]string{
-		filepath.Join(vault, "creds"):          "[blocked-path]",
-		filepath.Join(in.workDir, "notes.txt"): "[ai-ignore]",
+		filepath.Join(vault, "creds"):          "[hook:blocked-path]",
+		filepath.Join(in.workDir, "notes.txt"): "[hook:ai-ignore]",
 	} {
 		event := []byte(preToolUseEvent(t, in.home, file))
 		resp := h(sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}, event, lexicalFS{dir: link})
@@ -383,7 +383,7 @@ func TestCmdHookPreToolUseRejectsUnknownDecision(t *testing.T) {
 	if code != policy.ExitBlock {
 		t.Errorf("got exit %d, want %d", code, policy.ExitBlock)
 	}
-	if !strings.Contains(stderr, "corral: bad hook arguments, blocking (fail-closed)") {
+	if !strings.Contains(stderr, "corral: "+policy.FailClosed("bad hook arguments")) {
 		t.Errorf("stderr = %q, want the bad-arguments message", stderr)
 	}
 	if out != "" {
@@ -411,7 +411,7 @@ func TestCmdHookPreToolUseWithoutSidecarBlocks(t *testing.T) {
 			if code != policy.ExitBlock {
 				t.Errorf("got exit %d, want %d", code, policy.ExitBlock)
 			}
-			if !strings.Contains(stderr, "cannot evaluate policy, blocking (fail-closed): ") || !strings.Contains(stderr, tc.want) {
+			if !strings.Contains(stderr, "[hook:fail-closed]: cannot evaluate policy: ") || !strings.Contains(stderr, tc.want) {
 				t.Errorf("stderr must name the cause %q, got %q", tc.want, stderr)
 			}
 		})

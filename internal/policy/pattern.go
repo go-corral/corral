@@ -79,7 +79,7 @@ func (r *PathPatternRule) evalPaths(ev *HookEvent) (Decision, bool, error) {
 			return Decision{}, false, err
 		}
 		if reason, hit := classifySensitive(canon); hit {
-			return r.deny(fmt.Sprintf("%s is %s; %s it is blocked by corral policy (resolved %q)", canon, reason, verb(ev.ToolName), raw)), true, nil
+			return r.deny(fmt.Sprintf("%s is %s (resolved %q)", canon, reason, raw)), true, nil
 		}
 		if write {
 			if d, hit := r.writeGuards(canon); hit {
@@ -96,10 +96,10 @@ func (r *PathPatternRule) writeGuards(canon string) (Decision, bool) {
 	// Match against the conventional /etc name: on macOS Canonicalize resolves /etc → /private/etc,
 	// which would otherwise slip past this gate.
 	if etc := logicalSysPath(canon); Within(etc, "/etc") {
-		return r.deny(fmt.Sprintf("writing under /etc (%q) is blocked by corral policy", canon)), true
+		return r.deny(fmt.Sprintf("writing under /etc (%q)", canon)), true
 	}
 	if reason, ok := selfConfigMatch(canon, selfProtect{configDir: r.AgentConfigDir, footprint: r.Footprint, allFootprints: r.AllFootprints, hookPaths: r.HookPaths, extraPaths: r.ExtraProtectedPaths, auditLogBase: r.AuditLogBase}); ok {
-		return r.deny(fmt.Sprintf("%q is %s; editing it would disable enforcement and is blocked", canon, reason)), true
+		return r.deny(fmt.Sprintf("%q is %s; editing it would disable enforcement", canon, reason)), true
 	}
 	return Decision{}, false
 }
@@ -132,7 +132,7 @@ func (r *PathPatternRule) evalGlob(ev *HookEvent) (Decision, bool, error) {
 			continue
 		}
 		if reason, hit := classifySensitive(c); hit {
-			return r.deny(fmt.Sprintf("%s targets %s; enumerating it is blocked by corral policy", ev.ToolName, reason)), true, nil
+			return r.deny(fmt.Sprintf("%s targets %s", ev.ToolName, reason)), true, nil
 		}
 	}
 	return Decision{}, false, nil
@@ -140,11 +140,4 @@ func (r *PathPatternRule) evalGlob(ev *HookEvent) (Decision, bool, error) {
 
 func (r *PathPatternRule) deny(reason string) Decision {
 	return Decision{Action: Deny, Rule: r.Name(), Reason: reason}
-}
-
-func verb(tool string) string {
-	if writeStyleTools[tool] {
-		return "writing"
-	}
-	return "reading"
 }

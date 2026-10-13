@@ -5,6 +5,7 @@ package block
 
 import (
 	"context"
+	"strings"
 
 	"github.com/go-corral/corral/internal/providers/spec"
 )
@@ -27,10 +28,11 @@ func (b *block) Available(ctx context.Context) bool { return true }
 // Mint is pure. It authors no Status row: the banner's blocked row already names
 // these paths.
 func (b *block) Mint(ctx context.Context, _ spec.Session, dryRun bool) (*spec.Contribution, error) {
+	// Every entry, with no cap: the agent checks a failed path against this list.
 	masked := append(append([]string{}, b.dirs...), b.files...)
 	return &spec.Contribution{
 		BlockedDirs:  b.dirs,
 		BlockedFiles: b.files,
-		AgentNotes:   []string{"config additionally masks these paths (reads fail, they are not merely empty): " + spec.SummarizeQuoted(masked)},
+		AgentNotes:   []string{"`providers.block` masks these paths, and the user can remove an entry: `" + strings.Join(masked, "`, `") + "`"},
 	}, nil
 }

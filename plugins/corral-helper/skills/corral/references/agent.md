@@ -87,6 +87,13 @@ record's `rule` and `reason`; the current session logs to the host file in
 `$CORRAL_AUDIT_PATH` (`echo "$CORRAL_AUDIT_PATH"` inside the session). The sandbox cannot open that file unless the workdir or a `providers.paths` grant contains it. When neither contains it, ask the user to read it on the host. Then follow
 [troubleshooting.md](how-to/troubleshooting.md).
 
+## When a call is blocked
+
+1. Read the layer marker. A deny that starts with `blocked by corral policy [hook:<rule>]` comes from the hook. An output that starts with `output withheld by corral policy [hook:<rule>]` also comes from the hook: the call ran, but corral hid its output.
+2. For a hook deny or a withheld output, read the `Fix:` part. Propose the named fix to the user. Use [troubleshooting.md](how-to/troubleshooting.md#the-hook-blocked-my-command) for each rule.
+3. For an error with no corral marker, use [troubleshooting.md](how-to/troubleshooting.md#the-sandbox-blocks-silently).
+4. Never retry a blocked call with `dangerouslyDisableSandbox` or through a subprocess. `dangerouslyDisableSandbox` removes only the agent's own per-command sandbox, never corral's. The hook reads the text of a Bash command, but not what the started processes do. So a shell probe that works does not show that a tool call is allowed.
+
 ## Run commands for the user
 
 Agent arguments go after `--`:

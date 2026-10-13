@@ -49,6 +49,7 @@ Use these interfaces before proposing a fix:
 | `corral validate`                      | Config report: sources with approval state, warnings, settings including the private home, agent settings, environment names, and providers, and a tree of path grants. It does not show per-field provenance or host availability.    |
 | `corral run --dry-run -- <agent args>` | The sandbox command that would launch, without running session hooks or creating temporary credentials.                                                                                                                                |
 | The audit record's `rule` and `reason` | The policy decision behind a blocked tool call.                                                                                                                                                                                        |
+| A `[hook:<rule>]` deny or withheld output | The hook layer and the rule that denied the call or hid its output. The `Fix:` part names the setting to propose to the user, or states that the block is by design.                                                                |
 
 In the validation path tree, only rows with an `rw` or `ro` access token are grants; terminal
 styling also makes them bold. Do not infer access from grouping branches. `--list` expands
