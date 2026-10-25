@@ -9,7 +9,7 @@
 | 3     | `.corral.yml`                                                         | Intended to be commited with the project as project-scoped defaults |
 | 4     | `.corral.local.yml`                                                   | Intended to be gitignored, personal project-scoped settings         |
 
-All settings (profiles too) are merged with lists being appended and uniqued so they can't contain duplicate entries. [`agents.<agent>.args`](#agentsagentargs) is the exception: the highest layer or profile that sets it replaces the whole list. The config syntax is checked and corral aborts when it's invalid.
+All settings (profiles too) are merged with lists being appended and uniqued so they can't contain duplicate entries. [`agents.<agent>.args`](#agentsagentargs) is the exception: its layers are appended without removing duplicates. The config syntax is checked and corral aborts when it's invalid.
 
 Run [`corral validate`](commands.md#corral-validate) to list loaded config files and inspect the effective configuration.
 
@@ -215,8 +215,8 @@ pi has no settings besides [`args`](#agentsagentargs). See
 - **Applies to:** `agents.claude.args` and `agents.pi.args`.
 - **Behavior:** arguments that `corral run` passes to the agent it starts, before any
   arguments given after `--`. pi receives them after its policy extension flag. Each list
-  entry is one argument. The highest config layer or profile that sets `args` replaces the
-  list from lower layers; `args: []` clears it.
+  entry is one argument. Config layers and profiles append their entries in order and keep
+  duplicates, so a flag can repeat across layers.
 
 ```yaml
 agents:

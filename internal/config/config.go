@@ -703,7 +703,7 @@ func mergeMapAt(path []string, base, over map[string]any) map[string]any {
 			if bl, ok1 := bv.([]any); ok1 {
 				if ol, ok2 := ov.([]any); ok2 {
 					if isArgvPath(kp) {
-						out[k] = ol
+						out[k] = append(slices.Clone(bl), ol...)
 					} else {
 						out[k] = unionAny(bl, ol)
 					}
@@ -717,7 +717,8 @@ func mergeMapAt(path []string, base, over map[string]any) map[string]any {
 }
 
 // isArgvPath reports whether path names an agents.<agent>.args list, at the top level or
-// inside a profile. An argv is one command line, so a higher layer replaces it.
+// inside a profile. An argv repeats tokens (`--add-dir a --add-dir b`), so its layers
+// concatenate instead of merging append-unique.
 func isArgvPath(path []string) bool {
 	if len(path) == 5 && path[0] == "profiles" {
 		path = path[2:]
