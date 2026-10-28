@@ -2,7 +2,7 @@
 name: corral
 description: >-
   Help install, configure, run, update, uninstall, and troubleshoot corral, the coding-agent
-  sandbox for Claude Code and pi. Trigger when the user mentions corral, an agent sandbox,
+  sandbox for Claude Code, pi, and opencode. Trigger when the user mentions corral, an agent sandbox,
   doctor/sync/validate/run, .corral.yml, provider setup, filesystem or environment grants,
   session hooks, agent notes or the session-start note, blocked tool calls, the audit log,
   always-blocked paths, masked credential directories, or a vague report that the sandbox

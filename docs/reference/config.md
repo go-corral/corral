@@ -135,7 +135,7 @@ only the section for the selected backend.
 
 - **Type:** string
 - **Default:** `claude`
-- **Valid:** `claude`, `pi`. Other values are rejected when config loads.
+- **Valid:** `claude`, `pi`, `opencode`. Other values are rejected when config loads.
 - **Behavior:** selects the agent that corral starts. A `corral run <agent>` positional,
   such as `corral run pi`, overrides this setting for one launch. Per-agent settings
   live under [`agents`](#agentsclaudeclaudeaiconnectors).
@@ -207,6 +207,14 @@ checks this variable before loading account or organization connectors.
 
 pi has no settings besides [`args`](#agentsagentargs). See
 [the agents reference](agents.md#pi) for pi's fixed sandbox behavior.
+
+### `agents.opencode`
+
+- **Type:** empty map
+- **Default:** `{}`
+
+opencode currently has no agent-specific settings, including `args`. See
+[the agents reference](agents.md#opencode) for opencode's fixed sandbox behavior.
 
 ### `agents.<agent>.args`
 

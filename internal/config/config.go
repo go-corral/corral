@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/agents/claude"
+	"github.com/go-corral/corral/internal/agents/opencode"
 	"github.com/go-corral/corral/internal/agents/pi"
 
 	"github.com/go-corral/corral/internal/audit"
@@ -91,6 +92,8 @@ func (c *Config) agentConfig() agents.AgentConfig {
 	switch c.EffectiveAgent() {
 	case "pi":
 		return c.Agents.Pi
+	case "opencode":
+		return c.Agents.Opencode
 	default:
 		return c.Agents.Claude
 	}
@@ -123,8 +126,9 @@ func (c *Config) AgentConfigPaths() []agents.ConfigPath {
 // Agents holds per-agent configuration. Each field is the owning agent package's
 // Config type. Adding an agent adds a sibling field here.
 type Agents struct {
-	Claude claude.Config `yaml:"claude"`
-	Pi     pi.Config     `yaml:"pi"`
+	Claude   claude.Config   `yaml:"claude"`
+	Pi       pi.Config       `yaml:"pi"`
+	Opencode opencode.Config `yaml:"opencode"`
 }
 
 // Providers configures corral's config sections and feature providers. Each field
@@ -214,7 +218,7 @@ sandbox:
       allow: []
     grantUserTemp: false
   bwrap: {}
-# Which coding agent corral sandboxes ("claude" or "pi"); see docs/reference/agents.md.
+# Which coding agent corral sandboxes ("claude", "pi" or "opencode"); see docs/reference/agents.md.
 agent: claude
 # Per-agent configuration. claude.ai account connectors (Context7/Atlassian/Zoom,
 # auto-injected by a Claude subscription login) are OFF inside the sandbox by default —

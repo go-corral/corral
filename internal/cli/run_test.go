@@ -1720,3 +1720,42 @@ func TestRunDryRunPassesPiArgsAfterBridge(t *testing.T) {
 		t.Errorf("claude args leaked into the pi argv:\n%s", out)
 	}
 }
+
+func TestRunOpencodeActivatesPluginAndPinsStandalone(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"opencode", "--dry-run", "--home", home, "--project", proj, "--", "run", "hi"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d", code)
+	}
+	plugin := filepath.Join(home, ".cache", "corral", "opencode-policy", "index.js")
+	if _, err := os.Stat(plugin); err != nil {
+		t.Errorf("opencode plugin was not materialized at %q: %v", plugin, err)
+	}
+	if !strings.Contains(out, "OPENCODE_CONFIG_CONTENT=") || !strings.Contains(out, filepath.Dir(plugin)) {
+		t.Errorf("argv does not activate the plugin directory through OPENCODE_CONFIG_CONTENT:\n%s", out)
+	}
+	if !strings.Contains(out, "run hi --standalone") {
+		t.Errorf("argv does not pin --standalone:\n%s", out)
+	}
+}
+
+func TestRunOpencodeRejectsServerFlag(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	if code := cmdRun([]string{"opencode", "--dry-run", "--home", home, "--project", proj, "--", "--server", "http://127.0.0.1:1"}, "dev"); code == 0 {
+		t.Error("run opencode -- --server succeeded, want a launch error")
+	}
+}

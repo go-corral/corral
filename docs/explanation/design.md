@@ -55,9 +55,9 @@ The agent receives a shorter session note. It names the always-blocked paths, th
 
 The note also names access the agent needs to use correctly, such as `GITLAB_TOKEN`, the active Kubernetes roles, or a relevant command quirk. These notes contain metadata, not token values.
 
-## Apply the same policy to Claude Code and pi
+## Apply the same policy to every agent
 
-Claude Code and pi expose different ways to inspect their tool calls:
+Claude Code, pi, and opencode expose different ways to inspect their tool calls:
 
 - For **Claude Code**, `corral sync` registers commands for `PreToolUse`,
   `PostToolUse`, `SessionStart`, and `UserPromptSubmit` in `settings.json`.
@@ -69,6 +69,9 @@ Claude Code and pi expose different ways to inspect their tool calls:
 - For **pi**, each `corral run pi` mounts a read-only policy extension and passes it to
   pi. `corral sync pi` installs only the warning shown by a bare pi process; it does not
   install persistent policy enforcement.
+- For **opencode**, each `corral run opencode` mounts a read-only policy plugin and loads
+  it through `OPENCODE_CONFIG_CONTENT`, and pins opencode to a private `--standalone`
+  server inside the sandbox.
 
 Both integrations use the same path, command, prompt, and secret-scanning rules. For
 selection, state locations, and agent-specific settings, see the

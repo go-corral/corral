@@ -62,6 +62,13 @@ type Launch struct {
 	ExtensionAsset []byte
 	ExtensionName  string
 	ExtensionFlag  string
+	// ExtensionEnv, when set, activates the materialized extension through the environment
+	// instead of ExtensionFlag. It receives the bound extension path.
+	ExtensionEnv func(path string) map[string]string
+
+	// Args, when set, rewrites the agent's arguments (everything after the binary) or rejects
+	// them before launch.
+	Args func(args []string) ([]string, error)
 }
 
 // Footprint is an agent's static enforcement footprint: the config-dir marker plus the files

@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/agents/claude"
+	"github.com/go-corral/corral/internal/agents/opencode"
 	"github.com/go-corral/corral/internal/agents/pi"
 )
 
@@ -16,8 +17,9 @@ import (
 // missing here (or one whose agentConfig returns the wrong type) fails instead of falling back.
 func TestAgentConfigDispatch(t *testing.T) {
 	want := map[string]reflect.Type{
-		"claude": reflect.TypeOf(claude.Config{}),
-		"pi":     reflect.TypeOf(pi.Config{}),
+		"claude":   reflect.TypeOf(claude.Config{}),
+		"pi":       reflect.TypeOf(pi.Config{}),
+		"opencode": reflect.TypeOf(opencode.Config{}),
 	}
 	for _, name := range agents.Known() {
 		wantType, ok := want[name]

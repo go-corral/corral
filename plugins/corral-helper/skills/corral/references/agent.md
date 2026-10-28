@@ -61,6 +61,7 @@ add one without duplicating entries:
 ```sh
 alias claude='corral run --'
 alias pi='corral run pi --'
+alias opencode='corral run opencode --'
 ```
 
 Add only the alias for the selected agent. Explain that `command claude` or `command pi`

@@ -18,7 +18,7 @@ fixes a problem. When the locale is not UTF-8, the output uses ASCII: `[x]`, `[!
 corral run [agent] [flags] [-- agent-args]
 ```
 
-Launches `claude` (the default) or `pi` inside the sandbox. The agent positional, when given, must be the first token; everything after `--` is passed to the agent unchanged, after the arguments from [`agents.<agent>.args`](config.md#agentsagentargs). Before a real run, new or changed repository config, any enabled session-hook executable, and a kubeconfig in a sandbox-writable location require interactive [content approval](../explanation/trust-gate.md) before launch.
+Launches `claude` (the default), `pi`, or `opencode` inside the sandbox. The agent positional, when given, must be the first token; everything after `--` is passed to the agent unchanged, after the arguments from [`agents.<agent>.args`](config.md#agentsagentargs). Before a real run, new or changed repository config, any enabled session-hook executable, and a kubeconfig in a sandbox-writable location require interactive [content approval](../explanation/trust-gate.md) before launch.
 
 | Flag               | Effect                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |

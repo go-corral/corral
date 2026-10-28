@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -56,6 +57,9 @@ func materializeExtension(home, name string, data []byte) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
 	if cur, err := os.ReadFile(path); err != nil || !bytes.Equal(cur, data) {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return "", err
@@ -210,11 +214,18 @@ func cmdRun(args []string, version string) int {
 		if aerr != nil {
 			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
-		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
+		mount := assetPath
+		if launch.ExtensionEnv != nil {
+			// An env-activated extension is loaded as a directory.
+			mount = filepath.Dir(assetPath)
+			maps.Copy(spec.SetEnv, launch.ExtensionEnv(assetPath))
+		} else {
+			extensionArgs = []string{launch.ExtensionFlag, assetPath}
+		}
+		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: mount, Dst: mount, ReadOnly: true})
 		if self, serr := os.Executable(); serr == nil {
 			spec.SetEnv[sandbox.BinEnvVar] = self
 		}
-		extensionArgs = []string{launch.ExtensionFlag, assetPath}
 	}
 	// The config sections apply before the gate, so their warnings feed it and their masks are in
 	// the spec before any feature provider mounts.
@@ -248,9 +259,13 @@ func cmdRun(args []string, version string) int {
 	defer hookLog.Flush()
 	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
 	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
-	command := append([]string{commandBin}, extensionArgs...)
-	command = append(command, cfg.AgentArgs()...)
-	command = append(command, fs.Args()...)
+	agentArgs := slices.Concat(extensionArgs, cfg.AgentArgs(), fs.Args())
+	if launch.Args != nil {
+		if agentArgs, err = launch.Args(agentArgs); err != nil {
+			return fatalf(os.Stderr, "%v", err)
+		}
+	}
+	command := append([]string{commandBin}, agentArgs...)
 
 	// Side-effect-free preview of the feature providers: each one's static, secret-free contribution.
 	// Credential-minters and session hooks are named (previewOnly) rather than expanded.
