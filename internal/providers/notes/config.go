@@ -1,3 +1,5 @@
+// Package notes is the providers.notes config section: lines added to the agent's
+// session-start note.
 package notes
 
 import (

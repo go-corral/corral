@@ -127,10 +127,11 @@ type Agents struct {
 	Pi     pi.Config     `yaml:"pi"`
 }
 
-// Providers configures corral's sanitized-capability providers. Each field is
-// the owning provider package's Config type — a typed struct, not
-// map[string]any, so strict decode rejects a typo'd key. Field order is
-// declaration order (apply order, collision attribution, LIFO cleanup).
+// Providers configures corral's config sections and feature providers. Each field
+// is the owning package's Config type — a typed struct, not map[string]any, so
+// strict decode rejects a typo'd key. Field order is apply order: the config
+// sections (block through notes), then the feature providers in registry order
+// (collision attribution, LIFO cleanup).
 type Providers struct {
 	Block      block.Config      `yaml:"block"`
 	AIIgnore   aiignore.Config   `yaml:"aiignore"`

@@ -112,11 +112,8 @@ type DefaultParams struct {
 	// AgentRules are the agent's filesystem grants outside its config dir.
 	AgentRules []Rule
 
-	// BlockedPaths: always-blocked paths unioned with config block.directories,
-	// already ~-expanded.
+	// BlockedPaths are the always-blocked mask paths, already ~-expanded.
 	BlockedPaths []string
-	// BlockedFiles: config block.files, ~-expanded.
-	BlockedFiles []string
 
 	// EnvPassthrough is a strict allowlist: named vars are forwarded from
 	// HostEnv, anything else dropped.
@@ -163,7 +160,6 @@ func DefaultSpec(p DefaultParams) SandboxSpec {
 		Mounts:         mounts,
 		Tmpfs:          []string{"/tmp"},
 		BlockedPaths:   p.BlockedPaths,
-		BlockedFiles:   p.BlockedFiles,
 		SetEnv:         env,
 		TempEnvAliases: p.TempEnvAliases,
 		AgentRules:     p.AgentRules,

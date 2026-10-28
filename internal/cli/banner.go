@@ -27,9 +27,10 @@ import (
 func sessionWarnings(cfg *config.Config, kind sandbox.Kind, roTargets []string) []health.Check {
 	var w []health.Check
 
-	// Provider-owned lints: each provider Config authors its own advisories; the registry
-	// sweeps them in canonical order. Only the paths.rw overlap check stays here — it needs
-	// the resolved backend's read-only targets, which only this layer has.
+	// Provider-owned lints: each provider Config authors its own advisories. Only the
+	// paths.rw overlap check stays here — it needs the resolved backend's read-only targets, which only this layer has.
+	w = append(w, cfg.Providers.Block.Warnings()...)
+	w = append(w, cfg.Providers.Paths.Warnings()...)
 	w = append(w, registry.ConfigWarnings(cfg)...)
 
 	// The Seatbelt config is not a provider, and only the Seatbelt backend applies it.

@@ -458,9 +458,9 @@ func TestRunMintsOnlyAfterConfirmation(t *testing.T) {
 	}
 }
 
-// The banner reorder: phase-B mint runs between the gate and the banner body, so a preStart
+// The banner reorder: the feature-provider mint runs between the gate and the banner body, so a preStart
 // session hook's surfaced stderr lands above the config summary, and the providers tree prints
-// as one contiguous block (body's built-in rows immediately followed by the feature rows)
+// as one contiguous block (body's config-section rows immediately followed by the feature rows)
 // instead of splitting across the mint. Driven with the seatbelt backend, which is unavailable off
 // macOS, so the launch aborts cleanly after the body+notices have printed but before any exec.
 func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
@@ -491,7 +491,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })
 	resolveProviders = func(context.Context, providers.Session, []providers.Active) (*providers.Resolved, error) {
-		// Stand in for a preStart session hook's surfaced stderr, emitted during phase-B mint.
+		// Stand in for a preStart session hook's surfaced stderr, emitted during the feature-provider mint.
 		fmt.Fprintln(os.Stderr, hookEra)
 		return &providers.Resolved{Notices: []providers.Notice{{Provider: "hooks", Text: featureNote}}}, nil
 	}
@@ -504,7 +504,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 		t.Fatalf("the seatbelt backend is unavailable off macOS; the launch must abort non-zero, got %d\n%s", code, stderr)
 	}
 	iWarn := strings.Index(stderr, "root-equivalent") // header warning, above the gate
-	iHook := strings.Index(stderr, hookEra)           // phase-B mint output
+	iHook := strings.Index(stderr, hookEra)           // feature-provider mint output
 	iBody := strings.Index(stderr, "\nproviders ")    // banner body (providers section)
 	iNote := strings.Index(stderr, featureNote)       // feature-provider notice (tree tail)
 	if iWarn < 0 || iHook < 0 || iBody < 0 || iNote < 0 {
@@ -512,7 +512,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 	}
 	// The live hook output sits between the gate (below the header warning) and the tree.
 	if iWarn >= iHook || iHook >= iBody {
-		t.Errorf("phase-B hook output must fall between the gate and the banner body:\n%s", stderr)
+		t.Errorf("feature-provider hook output must fall between the gate and the banner body:\n%s", stderr)
 	}
 	// The providers tree is contiguous: body then feature notices, nothing between them.
 	if iBody >= iNote {
@@ -524,7 +524,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 }
 
 // TestRunSignalDuringMintAbortsClosed pins the mint-to-launch signal contract: an interrupt
-// during phase B must abort the launch through the fail-closed teardown, not kill corral
+// during the feature-provider mint must abort the launch through the fail-closed teardown, not kill corral
 // with the default disposition (which would skip every teardown — no defer survives signal
 // death). The seam delivers SIGTERM to the test process itself and blocks until the launch
 // ctx reflects it, so each regression stays loud: an uninstalled handler kills the whole
@@ -639,7 +639,7 @@ func TestRunSessionHooksEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		// home disabled keeps linkHome out of the path; the launch aborts in phase B either way.
+		// home disabled keeps linkHome out of the path; the launch aborts in the feature-provider mint either way.
 		cfg := "providers:\n  home:\n    enabled: false\n" + hooksYAML
 		if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
 			t.Fatal(err)
@@ -1101,8 +1101,8 @@ func TestRunDryRunReflectsConfig(t *testing.T) {
 }
 
 // TestRunDryRunReflectsPathsGrants: a providers.paths grant must reach the generated
-// argv via the built-in paths provider — the registry Enabled/Build wiring end-to-end
-// (the block and env siblings have their own guards; paths had none at this layer).
+// argv through applyConfigSections, end-to-end (the block and env siblings have their own
+// guards).
 func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1140,7 +1140,7 @@ func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 
 // TestRunDryRunReflectsNotesProvider: a configured providers.notes.agent line reaches
 // CORRAL_PROVIDER_NOTES attributed to "notes" in the previewed sandbox environment, and
-// authors no Status row in the startup banner (static config, like every built-in).
+// authors no Status row in the startup banner (static config, like every config section).
 func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1169,10 +1169,40 @@ func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 	if !strings.Contains(stdout, sandbox.ProviderNotesEnvVar) || !strings.Contains(stdout, "- notes: Keep it terse.") {
 		t.Errorf("dry-run argv must carry the configured line attributed to notes:\n%s", stdout)
 	}
-	// Static config authors no banner row: the built-in contract every provider in this
-	// registry table follows.
+	// Static config authors no banner row: only aiignore, which reports what it matched, has one.
 	if strings.Contains(stderr, "notes") {
 		t.Errorf("notes must author no banner status row:\n%s", stderr)
+	}
+}
+
+// TestRunCollisionNamesPathsOwner: a feature mount on a paths grant fails the launch and
+// names paths, not baseline, as the owner, on a dry run and on a real launch.
+func TestRunCollisionNamesPathsOwner(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	shared := filepath.Join(home, "shared")
+	for _, d := range []string{proj, shared} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := "providers:\n  paths:\n    ro: [" + shared + "]\n  home:\n    enabled: true\n    path: " + shared + "\n"
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	stubUpdateCheck(t)
+
+	for _, mode := range [][]string{{"--dry-run"}, {"--yes", "--backend", "seatbelt", "--command", "/usr/bin/false"}} {
+		var code int
+		stderr := captureStderr(t, func() {
+			_ = captureStdout(t, func() {
+				code = cmdRun(append(mode, "--home", home, "--project", proj), "dev")
+			})
+		})
+		if code == 0 || !strings.Contains(stderr, "already provided by paths") {
+			t.Errorf("%v: the launch must fail and name paths as the owner, exit=%d:\n%s", mode, code, stderr)
+		}
 	}
 }
 
@@ -1572,8 +1602,9 @@ func TestRunBindsCustomClaudeConfigDir(t *testing.T) {
 }
 
 // TestRunForwardsEnvSet is the end-to-end guard that an env.set entry reaches the cleared
-// sandbox environment. Exercises the full launcher path (config load + validate →
-// applyEnvSet → spec → dry-run line) on whichever backend compiles the spec.
+// sandbox environment, and that an override of a value corral sets warns in the banner.
+// Exercises the full launcher path (config load + validate → applyConfigSections → spec →
+// dry-run line) on whichever backend compiles the spec.
 func TestRunForwardsEnvSet(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1581,14 +1612,17 @@ func TestRunForwardsEnvSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
-		[]byte("providers:\n  env:\n    set:\n      - {name: CORRAL_TEST_FOO, value: bar}\n"), 0o644); err != nil {
+		[]byte("providers:\n  env:\n    set:\n      - {name: CORRAL_TEST_FOO, value: bar}\n      - {name: SHELL, value: /bin/bash}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	isolateConfigEnv(t, home, proj)
 
 	var code int
-	out := captureStdout(t, func() {
-		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+		})
 	})
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
@@ -1596,6 +1630,9 @@ func TestRunForwardsEnvSet(t *testing.T) {
 	// The dry run prints `env -i 'CORRAL_TEST_FOO=bar' … <helper> …` on both backends.
 	if want := "'CORRAL_TEST_FOO=bar'"; !strings.Contains(out, want) {
 		t.Errorf("env.set var not forwarded (%q):\n%s", want, out)
+	}
+	if want := `providers.env.set: "SHELL" overrides a value corral already sets for the sandbox`; !strings.Contains(stderr, want) {
+		t.Errorf("the override warning must show in the banner (%q):\n%s", want, stderr)
 	}
 }
 

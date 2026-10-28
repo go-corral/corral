@@ -46,29 +46,6 @@ type Contribution struct {
 	// honored from a Contribution returned alongside a Mint error, so a provider
 	// whose Mint ran host side effects still gets its paired postEnd.
 	PostSession func(ctx context.Context, exit SessionExit) error
-
-	// Built-in provider channels: the launcher half of the config-owned built-in
-	// providers (block, aiignore, paths, env).
-
-	// RWPaths/ROPaths are extra host paths granted same-path as Optional mounts.
-	// A missing path is skipped; a deliberate overlap with a baseline path is
-	// warn-and-allow.
-	RWPaths []string
-	ROPaths []string
-	// BlockedDirs/BlockedFiles extend the spec's FS mask, append-unique. The
-	// always-blocked paths are not carried here — they are baked into the spec.
-	BlockedDirs  []string
-	BlockedFiles []string
-	// EnvSet are config-pinned env entries applied in order. An entry may override a
-	// value corral already set (advisory warning, never a launch error).
-	EnvSet []EnvEntry
-}
-
-// EnvEntry is one EnvSet pair. A slice of pairs (not a map) so application stays
-// in declaration order.
-type EnvEntry struct {
-	Name  string
-	Value string
 }
 
 // SessionExit tells a PostSession hook how the agent session ended. Its zero

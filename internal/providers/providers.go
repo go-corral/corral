@@ -24,7 +24,6 @@ type (
 	Provider     = spec.Provider
 	Orphan       = spec.Orphan
 	Reaper       = spec.Reaper
-	EnvEntry     = spec.EnvEntry
 	SessionExit  = spec.SessionExit
 )
 
@@ -50,24 +49,24 @@ type Resolved struct {
 	AgentNotes   []Notice
 	// OnTeardown, when set, is called after each provider teardown with the teardown
 	// error and, for a failure, the residual-credential risk and remedy.
-	OnTeardown  func(provider string, err error, hint string)
-	mountOwners map[string]string
-	envOwners   map[string]string
+	OnTeardown func(provider string, err error, hint string)
+}
+
+// Owners names the source of mount targets and environment names that are in the spec
+// before Apply runs. A target or name that is not listed is attributed to "baseline".
+type Owners struct {
+	Mounts map[string]string
+	Env    map[string]string
 }
 
 type resolvedItem struct {
 	provider string
 	mounts   []sandbox.Mount
 	env      map[string]string
-	// built-in provider channels
-	rwPaths      []string
-	roPaths      []string
-	blockedDirs  []string
-	blockedFiles []string
-	envSet       []spec.EnvEntry
 }
 
-func noticesFor(provider string, lines []string) []Notice {
+// NoticesFor attributes each line to provider.
+func NoticesFor(provider string, lines []string) []Notice {
 	out := make([]Notice, len(lines))
 	for i, s := range lines {
 		out[i] = Notice{Provider: provider, Text: s}
@@ -76,16 +75,7 @@ func noticesFor(provider string, lines []string) []Notice {
 }
 
 func newResolvedItem(name string, c *Contribution) resolvedItem {
-	return resolvedItem{
-		provider:     name,
-		mounts:       c.Mounts,
-		env:          c.Env,
-		rwPaths:      c.RWPaths,
-		roPaths:      c.ROPaths,
-		blockedDirs:  c.BlockedDirs,
-		blockedFiles: c.BlockedFiles,
-		envSet:       c.EnvSet,
-	}
+	return resolvedItem{provider: name, mounts: c.Mounts, env: c.Env}
 }
 
 // namedCleanup pairs a teardown closure with its provider name for failure
@@ -151,8 +141,8 @@ func Resolve(ctx context.Context, sess Session, active []Active) (res *Resolved,
 			continue
 		}
 		res.items = append(res.items, newResolvedItem(p.Name(), c))
-		res.Notices = append(res.Notices, noticesFor(p.Name(), c.Status)...)
-		res.AgentNotes = append(res.AgentNotes, noticesFor(p.Name(), c.AgentNotes)...)
+		res.Notices = append(res.Notices, NoticesFor(p.Name(), c.Status)...)
+		res.AgentNotes = append(res.AgentNotes, NoticesFor(p.Name(), c.AgentNotes)...)
 		res.Warnings = append(res.Warnings, c.Warnings...)
 		if c.Cleanup != nil {
 			res.cleanups = append(res.cleanups, namedCleanup{provider: p.Name(), fn: c.Cleanup, hint: c.CleanupHint})
@@ -189,8 +179,8 @@ func ResolvePreview(ctx context.Context, sess Session, active []Active) (res *Re
 			continue
 		}
 		res.items = append(res.items, newResolvedItem(p.Name(), c))
-		res.Notices = append(res.Notices, noticesFor(p.Name(), c.Status)...)
-		res.AgentNotes = append(res.AgentNotes, noticesFor(p.Name(), c.AgentNotes)...)
+		res.Notices = append(res.Notices, NoticesFor(p.Name(), c.Status)...)
+		res.AgentNotes = append(res.AgentNotes, NoticesFor(p.Name(), c.AgentNotes)...)
 		res.Warnings = append(res.Warnings, c.Warnings...)
 	}
 	return res, notExpanded, nil
@@ -212,39 +202,24 @@ func (r *Resolved) Mounts() []sandbox.Mount {
 // (provider-vs-provider and provider-vs-baseline duplicate mounts/env keys, and a mount
 // landing in a blocked-path mask) before any mutation. A collision is a launch
 // error, never a silent override.
-//
-// prior is an earlier Apply phase's Resolved over the same spec; its entries are
-// already in the spec, so prior only refines attribution.
-func (r *Resolved) Apply(spec *sandbox.SandboxSpec, prior ...*Resolved) error {
+func (r *Resolved) Apply(spec *sandbox.SandboxSpec, owners Owners) error {
 	if r == nil {
 		return nil
 	}
 
 	seenMount := map[string]string{}
 	for _, m := range spec.Mounts {
-		seenMount[mountDst(m)] = "baseline"
+		seenMount[sandbox.MountTarget(m)] = "baseline"
 	}
-	for _, p := range prior {
-		if p == nil {
-			continue
-		}
-		for dst, owner := range p.mountOwners {
-			seenMount[dst] = owner
-		}
+	for dst, owner := range owners.Mounts {
+		seenMount[dst] = owner
 	}
-	blockedDirs := append([]string{}, spec.BlockedPaths...)
-	blockedFiles := append([]string{}, spec.BlockedFiles...)
 	seenEnv := map[string]string{}
 	for k := range spec.SetEnv {
 		seenEnv[k] = "baseline"
 	}
-	for _, p := range prior {
-		if p == nil {
-			continue
-		}
-		for k, owner := range p.envOwners {
-			seenEnv[k] = owner
-		}
+	for k, owner := range owners.Env {
+		seenEnv[k] = owner
 	}
 	// Pre-claim corral's own env channels so a provider Env can neither plant nor clobber them.
 	seenEnv[sandbox.ProviderNotesEnvVar] = "corral (reserved for provider notes)"
@@ -254,10 +229,8 @@ func (r *Resolved) Apply(spec *sandbox.SandboxSpec, prior ...*Resolved) error {
 	}
 
 	for _, it := range r.items {
-		blockedDirs = append(blockedDirs, it.blockedDirs...)
-		blockedFiles = append(blockedFiles, it.blockedFiles...)
 		for _, m := range it.mounts {
-			dst := mountDst(m)
+			dst := sandbox.MountTarget(m)
 			if dst == "" {
 				return fmt.Errorf("provider %q: mount has empty source and destination", it.provider)
 			}
@@ -265,12 +238,12 @@ func (r *Resolved) Apply(spec *sandbox.SandboxSpec, prior ...*Resolved) error {
 				return fmt.Errorf("provider %q: mount target %q already provided by %s", it.provider, dst, owner)
 			}
 			if !m.Overlay {
-				for _, b := range blockedDirs {
+				for _, b := range spec.BlockedPaths {
 					if pathutil.AtOrUnderClean(dst, b) {
 						return fmt.Errorf("provider %q: mount target %q is inside blocked path %q (would be masked)", it.provider, dst, b)
 					}
 				}
-				for _, b := range blockedFiles {
+				for _, b := range spec.BlockedFiles {
 					if pathutil.AtOrUnderClean(dst, b) {
 						return fmt.Errorf("provider %q: mount target %q is a blocked file %q (would be masked)", it.provider, dst, b)
 					}
@@ -284,84 +257,39 @@ func (r *Resolved) Apply(spec *sandbox.SandboxSpec, prior ...*Resolved) error {
 			}
 			seenEnv[k] = it.provider
 		}
-		// EnvSet names claim their key but don't collide here: overriding is
-		// warn-and-allow, and config already rejects duplicate set names.
-		for _, e := range it.envSet {
-			if _, ok := seenEnv[e.Name]; !ok {
-				seenEnv[e.Name] = it.provider + " (env.set)"
-			}
-		}
 	}
 
-	if r.mountOwners == nil {
-		r.mountOwners, r.envOwners = map[string]string{}, map[string]string{}
-	}
 	for _, it := range r.items {
-		// Built-in grant channel: same-path Optional mounts. A missing path is skipped.
-		for _, src := range it.rwPaths {
-			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: src, Optional: true})
-			r.mountOwners[src] = it.provider
-		}
-		for _, src := range it.roPaths {
-			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: src, ReadOnly: true, Optional: true})
-			r.mountOwners[src] = it.provider
-		}
-		spec.BlockedPaths = appendUnique(spec.BlockedPaths, it.blockedDirs)
-		spec.BlockedFiles = appendUnique(spec.BlockedFiles, it.blockedFiles)
-		if len(it.envSet) > 0 && spec.SetEnv == nil {
-			spec.SetEnv = map[string]string{}
-		}
-		for _, e := range it.envSet {
-			if old, ok := spec.SetEnv[e.Name]; ok && old != e.Value {
-				r.Warnings = append(r.Warnings, fmt.Sprintf("providers.env.set: %q overrides a value corral already sets for the sandbox", e.Name))
-			}
-			spec.SetEnv[e.Name] = e.Value
-			r.envOwners[e.Name] = it.provider + " (env.set)"
-		}
 		spec.Mounts = append(spec.Mounts, it.mounts...)
-		for _, m := range it.mounts {
-			r.mountOwners[mountDst(m)] = it.provider
-		}
 		if len(it.env) > 0 && spec.SetEnv == nil {
 			spec.SetEnv = map[string]string{}
 		}
 		for k, v := range it.env {
 			spec.SetEnv[k] = v
-			r.envOwners[k] = it.provider
 		}
 	}
-	// Fold the collected model-facing notes into the reserved env var as bullets.
-	// Append across phases: the second Apply must not clobber the first's notes.
-	if len(r.AgentNotes) > 0 {
-		if spec.SetEnv == nil {
-			spec.SetEnv = map[string]string{}
-		}
-		lines := make([]string, len(r.AgentNotes))
-		for i, n := range r.AgentNotes {
-			lines[i] = "- " + n.Provider + ": " + n.Text
-		}
-		notes := strings.Join(lines, "\n")
-		if prev := spec.SetEnv[sandbox.ProviderNotesEnvVar]; prev != "" {
-			notes = prev + "\n" + notes
-		}
-		spec.SetEnv[sandbox.ProviderNotesEnvVar] = notes
-	}
+	AppendAgentNotes(spec, r.AgentNotes)
 	return nil
 }
 
-// appendUnique appends the entries of add not already present in dst (order kept).
-func appendUnique(dst, add []string) []string {
-	seen := make(map[string]bool, len(dst))
-	for _, s := range dst {
-		seen[s] = true
+// AppendAgentNotes appends notes to the reserved provider-notes env var, one
+// "- <provider>: <text>" bullet per note, after the bullets already there.
+func AppendAgentNotes(spec *sandbox.SandboxSpec, notes []Notice) {
+	if len(notes) == 0 {
+		return
 	}
-	for _, s := range add {
-		if !seen[s] {
-			seen[s] = true
-			dst = append(dst, s)
-		}
+	if spec.SetEnv == nil {
+		spec.SetEnv = map[string]string{}
 	}
-	return dst
+	lines := make([]string, len(notes))
+	for i, n := range notes {
+		lines[i] = "- " + n.Provider + ": " + n.Text
+	}
+	v := strings.Join(lines, "\n")
+	if prev := spec.SetEnv[sandbox.ProviderNotesEnvVar]; prev != "" {
+		v = prev + "\n" + v
+	}
+	spec.SetEnv[sandbox.ProviderNotesEnvVar] = v
 }
 
 // Cleanup runs the teardown closures LIFO, joining any errors; idempotent. Each
@@ -403,11 +331,4 @@ func (r *Resolved) RunPostSession(ctx context.Context, exit SessionExit) error {
 	}
 	r.postSessions = nil
 	return errors.Join(errs...)
-}
-
-func mountDst(m sandbox.Mount) string {
-	if m.Dst != "" {
-		return m.Dst
-	}
-	return m.Src
 }

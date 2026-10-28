@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-corral/corral/internal/providers/spec"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -83,7 +82,7 @@ func TestResolveCollectsAgentNotesAndApplySetsEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := sandbox.SandboxSpec{}
-	if err := res.Apply(&spec); err != nil {
+	if err := res.Apply(&spec, Owners{}); err != nil {
 		t.Fatal(err)
 	}
 	want := "- gitlab: GITLAB_TOKEN holds a scoped token\n- home: $HOME is sandbox-private"
@@ -102,7 +101,7 @@ func TestApplyOmitsProviderNotesEnvWhenNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := sandbox.SandboxSpec{}
-	if err := res.Apply(&spec); err != nil {
+	if err := res.Apply(&spec, Owners{}); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok := spec.SetEnv[sandbox.ProviderNotesEnvVar]; ok {
@@ -121,7 +120,7 @@ func TestApplyRejectsProviderEnvClaimingNotesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := sandbox.SandboxSpec{}
-	if err := res.Apply(&spec); err == nil {
+	if err := res.Apply(&spec, Owners{}); err == nil {
 		t.Fatalf("a provider Env claiming %s must fail Apply closed", sandbox.ProviderNotesEnvVar)
 	}
 }
@@ -138,7 +137,7 @@ func TestApplyRejectsProviderEnvClaimingBackendNotesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := sandbox.SandboxSpec{}
-	if err := res.Apply(&spec); err == nil {
+	if err := res.Apply(&spec, Owners{}); err == nil {
 		t.Fatalf("a provider Env claiming %s must fail Apply closed", sandbox.BackendNotesEnvVar)
 	}
 }
@@ -161,7 +160,7 @@ func TestApplyRejectsProviderEnvClaimingControlMarkers(t *testing.T) {
 				t.Fatal(err)
 			}
 			spec := sandbox.SandboxSpec{}
-			err = res.Apply(&spec)
+			err = res.Apply(&spec, Owners{})
 			if err == nil {
 				t.Fatalf("a provider Env claiming %s must fail Apply closed", name)
 			}
@@ -653,7 +652,7 @@ func TestApplyMergesMountsAndEnv(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	spec := &sandbox.SandboxSpec{SetEnv: map[string]string{"HOME": "/home/u"}}
-	if err := res.Apply(spec); err != nil {
+	if err := res.Apply(spec, Owners{}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if len(spec.Mounts) != 1 || spec.Mounts[0].Dst != "/sock" {
@@ -670,7 +669,7 @@ func TestApplyRejectsEnvCollisionWithBaseline(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	spec := &sandbox.SandboxSpec{SetEnv: map[string]string{"HOME": "/home/u"}}
-	err := res.Apply(spec)
+	err := res.Apply(spec, Owners{})
 	if err == nil {
 		t.Fatal("expected collision error for env HOME already in baseline")
 	}
@@ -684,7 +683,7 @@ func TestApplyRejectsMountCollisionAcrossProviders(t *testing.T) {
 	b := &fakeProvider{name: "b", available: true, contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/d"}}}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: a}, {Provider: b}})
 	spec := &sandbox.SandboxSpec{}
-	if err := res.Apply(spec); err == nil {
+	if err := res.Apply(spec, Owners{}); err == nil {
 		t.Fatal("expected collision error for duplicate mount target across providers")
 	}
 	if len(spec.Mounts) != 0 {
@@ -698,7 +697,7 @@ func TestApplyRejectsMountInsideBlockedPath(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	spec := &sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}
-	if err := res.Apply(spec); err == nil {
+	if err := res.Apply(spec, Owners{}); err == nil {
 		t.Fatal("expected error: provider mount inside a blocked-path mask would be silently shadowed")
 	}
 }
@@ -712,7 +711,7 @@ func TestApplyAllowsOverlayInsideBlockedPath(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	spec := &sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}
-	if err := res.Apply(spec); err != nil {
+	if err := res.Apply(spec, Owners{}); err != nil {
 		t.Fatalf("overlay mount inside a blocked path must be allowed: %v", err)
 	}
 	if findMount(spec.Mounts, "/home/u/.ssh/config") == nil {
@@ -723,7 +722,7 @@ func TestApplyAllowsOverlayInsideBlockedPath(t *testing.T) {
 		Mounts: []sandbox.Mount{{Src: "/host/x", Dst: "/home/u/.ssh/x"}},
 	}}
 	res2, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p2}})
-	if err := res2.Apply(&sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}); err == nil {
+	if err := res2.Apply(&sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}, Owners{}); err == nil {
 		t.Error("a non-overlay mount inside a blocked path must still be rejected")
 	}
 }
@@ -772,63 +771,30 @@ func TestResolveUnwindUsesFreshContext(t *testing.T) {
 	}
 }
 
-// Cross-phase attribution: a phase-B collision with a phase-A contribution (a
-// paths grant, an env.set pin) must name the owning provider, not "baseline" —
-// phase A's Resolved rides into phase B's Apply as prior.
-func TestApplyAttributionSurvivesPhases(t *testing.T) {
-	phaseA := func(t *testing.T) (*Resolved, *sandbox.SandboxSpec) {
-		t.Helper()
-		a := &fakeProvider{name: "paths", available: true, contrib: &Contribution{RWPaths: []string{"/data"}}}
-		b := &fakeProvider{name: "env", available: true, contrib: &Contribution{EnvSet: []EnvEntry{{Name: "FOO", Value: "pinned"}}}}
-		res, err := Resolve(context.Background(), Session{}, []Active{{Provider: a}, {Provider: b}})
+// Owners attribution: a feature collision with a config section entry (a paths grant, an
+// env.set pin) names the section. A target that Owners does not list is "baseline".
+func TestApplyAttributionFromOwners(t *testing.T) {
+	owners := Owners{Mounts: map[string]string{"/data": "paths"}, Env: map[string]string{"FOO": "env (env.set)"}}
+	for _, tc := range []struct {
+		contrib *Contribution
+		want    string
+	}{
+		{&Contribution{Env: map[string]string{"FOO": "minted"}}, "already provided by env (env.set)"},
+		{&Contribution{Mounts: []sandbox.Mount{{Src: "/data"}}}, "already provided by paths"},
+		{&Contribution{Mounts: []sandbox.Mount{{Src: "/base"}}}, "already provided by baseline"},
+	} {
+		spec := &sandbox.SandboxSpec{
+			Mounts: []sandbox.Mount{{Src: "/data", Optional: true}, {Src: "/base"}},
+			SetEnv: map[string]string{"FOO": "pinned"},
+		}
+		res, err := Resolve(context.Background(), Session{}, []Active{{Provider: &fakeProvider{name: "feature", available: true, contrib: tc.contrib}}})
 		if err != nil {
-			t.Fatalf("phase A resolve: %v", err)
+			t.Fatal(err)
 		}
-		spec := &sandbox.SandboxSpec{}
-		if err := res.Apply(spec); err != nil {
-			t.Fatalf("phase A apply: %v", err)
+		if err := res.Apply(spec, owners); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("want an error with %q, got: %v", tc.want, err)
 		}
-		return res, spec
 	}
-
-	t.Run("minted env vs env.set", func(t *testing.T) {
-		prior, spec := phaseA(t)
-		m := &fakeProvider{name: "gitlab", available: true, contrib: &Contribution{Env: map[string]string{"FOO": "minted"}}}
-		res, err := Resolve(context.Background(), Session{}, []Active{{Provider: m}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		aerr := res.Apply(spec, prior)
-		if aerr == nil || !strings.Contains(aerr.Error(), `already provided by env (env.set)`) {
-			t.Errorf("collision must name the env.set owner, got: %v", aerr)
-		}
-	})
-
-	t.Run("mount vs paths grant", func(t *testing.T) {
-		prior, spec := phaseA(t)
-		m := &fakeProvider{name: "docker", available: true, contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/data"}}}}
-		res, err := Resolve(context.Background(), Session{}, []Active{{Provider: m}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		aerr := res.Apply(spec, prior)
-		if aerr == nil || !strings.Contains(aerr.Error(), `already provided by paths`) {
-			t.Errorf("collision must name the paths provider, got: %v", aerr)
-		}
-	})
-
-	t.Run("without prior the label degrades to baseline", func(t *testing.T) {
-		_, spec := phaseA(t)
-		m := &fakeProvider{name: "docker", available: true, contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/data"}}}}
-		res, err := Resolve(context.Background(), Session{}, []Active{{Provider: m}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		aerr := res.Apply(spec)
-		if aerr == nil || !strings.Contains(aerr.Error(), "already provided by baseline") {
-			t.Errorf("without prior the seed label applies, got: %v", aerr)
-		}
-	})
 }
 
 // cancelAndFail cancels the launch context inside Mint and then errors.
@@ -856,7 +822,7 @@ func TestApplyAllowsMultipleOverlaysInSameBlockedPath(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 	spec := &sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}
-	if err := res.Apply(spec); err != nil {
+	if err := res.Apply(spec, Owners{}); err != nil {
 		t.Fatalf("two overlays on the same blocked dir must be allowed: %v", err)
 	}
 	for _, dst := range []string{"/home/u/.ssh/config", "/home/u/.ssh/known_hosts"} {
@@ -869,7 +835,7 @@ func TestApplyAllowsMultipleOverlaysInSameBlockedPath(t *testing.T) {
 		Mounts: []sandbox.Mount{{Src: "/host/other", Dst: "/home/u/.ssh/config", ReadOnly: true, Overlay: true}},
 	}}
 	res2, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p1}, {Provider: dup}})
-	if err := res2.Apply(&sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}); err == nil {
+	if err := res2.Apply(&sandbox.SandboxSpec{BlockedPaths: []string{"/home/u/.ssh"}}, Owners{}); err == nil {
 		t.Error("two overlays at the same destination must collide (fail closed)")
 	}
 }
@@ -881,7 +847,7 @@ func TestApplyRejectsEmptyMount(t *testing.T) {
 	}}
 	res, _ := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	spec := &sandbox.SandboxSpec{}
-	if err := res.Apply(spec); err == nil {
+	if err := res.Apply(spec, Owners{}); err == nil {
 		t.Fatal("expected error for a mount with empty source and destination")
 	}
 	if len(spec.Mounts) != 0 {
@@ -909,7 +875,7 @@ func TestResolvePreviewFoldsExpandsNamesAndSkips(t *testing.T) {
 
 	// Previewable provider folded in, with its Status surfaced as a prefixed notice.
 	spec := &sandbox.SandboxSpec{}
-	if err := res.Apply(spec); err != nil {
+	if err := res.Apply(spec, Owners{}); err != nil {
 		t.Fatalf("Apply preview: %v", err)
 	}
 	if len(spec.Mounts) != 1 || spec.Mounts[0].Src != "/corral/home" {
@@ -985,215 +951,34 @@ func findMount(ms []sandbox.Mount, dst string) *sandbox.Mount {
 	return nil
 }
 
-// --- built-in contribution channels (block/aiignore/paths/env conversion) ---
-
-// A deny channel contributed by an earlier provider must be visible when a later
-// provider's mount is validated — a feature mount inside a config-contributed block
-// fails closed exactly as it did when config blocks were baked into the spec.
-func TestApplyDenyChannelBlocksLaterMount(t *testing.T) {
-	blocker := &fakeProvider{name: "block", available: true,
-		contrib: &Contribution{BlockedDirs: []string{"/data/secrets"}}}
+// A blocked file in the spec refuses a feature mount on it.
+func TestApplyBlockedFileRefusesMount(t *testing.T) {
 	feature := &fakeProvider{name: "docker", available: true,
-		contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/data/secrets/sock"}}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: blocker}, {Provider: feature}})
+		contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/data/token.txt"}}}}
+	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: feature}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := &sandbox.SandboxSpec{}
-	if err := res.Apply(spec); err == nil || !strings.Contains(err.Error(), "blocked path") {
-		t.Fatalf("mount inside a contributed block must fail closed, got %v", err)
+	spec := &sandbox.SandboxSpec{BlockedFiles: []string{"/data/token.txt"}}
+	if err := res.Apply(spec, Owners{}); err == nil || !strings.Contains(err.Error(), "blocked file") {
+		t.Fatalf("mount on a blocked file must fail closed, got %v", err)
 	}
 }
 
-// An Overlay mount stays exempt from a contributed deny channel (same exception as
-// spec-level blocks: overlays exist to re-grant vetted files on top of a mask).
-func TestApplyDenyChannelAllowsOverlay(t *testing.T) {
-	blocker := &fakeProvider{name: "block", available: true,
-		contrib: &Contribution{BlockedDirs: []string{"/home/u/.ssh"}}}
-	feature := &fakeProvider{name: "ssh", available: true,
-		contrib: &Contribution{Mounts: []sandbox.Mount{{Src: "/home/u/.ssh/config", Overlay: true, ReadOnly: true}}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: blocker}, {Provider: feature}})
+// Apply appends its notes after the bullets already in the spec: the config sections
+// write theirs first.
+func TestApplyAppendsNotesAfterExisting(t *testing.T) {
+	p := &fakeProvider{name: "docker", available: true, contrib: &Contribution{AgentNotes: []string{"second note"}}}
+	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: p}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := &sandbox.SandboxSpec{}
-	if err := res.Apply(spec); err != nil {
-		t.Fatalf("overlay on a contributed block must be allowed: %v", err)
-	}
-	if !containsString(spec.BlockedPaths, "/home/u/.ssh") {
-		t.Errorf("contributed block missing from spec: %v", spec.BlockedPaths)
-	}
-}
-
-// Deny channels merge append-unique with blocks already in the spec.
-func TestApplyDenyChannelAppendUnique(t *testing.T) {
-	blocker := &fakeProvider{name: "block", available: true,
-		contrib: &Contribution{BlockedDirs: []string{"/dup", "/new"}, BlockedFiles: []string{"/f/.env"}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: blocker}})
-	if err != nil {
+	sb := &sandbox.SandboxSpec{SetEnv: map[string]string{sandbox.ProviderNotesEnvVar: "- notes: first note"}}
+	if err := res.Apply(sb, Owners{}); err != nil {
 		t.Fatal(err)
 	}
-	spec := &sandbox.SandboxSpec{BlockedPaths: []string{"/dup"}}
-	if err := res.Apply(spec); err != nil {
-		t.Fatal(err)
-	}
-	if len(spec.BlockedPaths) != 2 || spec.BlockedPaths[0] != "/dup" || spec.BlockedPaths[1] != "/new" {
-		t.Errorf("append-unique merge broken: %v", spec.BlockedPaths)
-	}
-	if len(spec.BlockedFiles) != 1 || spec.BlockedFiles[0] != "/f/.env" {
-		t.Errorf("blocked files not applied: %v", spec.BlockedFiles)
-	}
-}
-
-// RW/RO path grants compile to same-path Optional mounts (missing paths skipped at
-// launch) and, unlike minted feature mounts, may duplicate a baseline mount
-// target: re-exposing a baseline path is the operator's deliberate, linted call.
-func TestApplyPathChannelsAreOptionalAndCollisionExempt(t *testing.T) {
-	paths := &fakeProvider{name: "paths", available: true,
-		contrib: &Contribution{RWPaths: []string{"/srv/work", "/usr"}, ROPaths: []string{"/etc/ssl"}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: paths}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec := &sandbox.SandboxSpec{Mounts: []sandbox.Mount{{Src: "/usr", ReadOnly: true}}} // baseline already exposes /usr
-	if err := res.Apply(spec); err != nil {
-		t.Fatalf("a paths grant over a baseline mount must not fail closed: %v", err)
-	}
-	var got []sandbox.Mount
-	for _, m := range spec.Mounts {
-		if m.Src == "/srv/work" || (m.Src == "/usr" && m.Optional) || m.Src == "/etc/ssl" {
-			got = append(got, m)
-		}
-	}
-	if len(got) != 3 {
-		t.Fatalf("expected 3 granted mounts, got %+v", spec.Mounts)
-	}
-	for _, m := range got {
-		if !m.Optional || m.Dst != "" || m.Overlay {
-			t.Errorf("path grant must be same-path + optional + non-overlay: %+v", m)
-		}
-	}
-	if got[2].Src != "/etc/ssl" || !got[2].ReadOnly {
-		t.Errorf("ro grant must be read-only: %+v", got[2])
-	}
-}
-
-// EnvSet overrides warn (never fail) and land in Resolved.Warnings for the pre-mint
-// gate; a fresh name sets silently.
-func TestApplyEnvSetWarnsOnOverride(t *testing.T) {
-	env := &fakeProvider{name: "env", available: true,
-		contrib: &Contribution{EnvSet: []spec.EnvEntry{{Name: "TERM", Value: "dumb"}, {Name: "FRESH", Value: "x"}}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: env}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sb := &sandbox.SandboxSpec{SetEnv: map[string]string{"TERM": "xterm"}}
-	if err := res.Apply(sb); err != nil {
-		t.Fatal(err)
-	}
-	if sb.SetEnv["TERM"] != "dumb" || sb.SetEnv["FRESH"] != "x" {
-		t.Errorf("env.set application broken: %v", sb.SetEnv)
-	}
-	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], `"TERM" overrides`) {
-		t.Errorf("override must produce exactly one advisory warning, got %v", res.Warnings)
-	}
-	// The warning names only the variable — neither the pinned nor the overridden
-	// value may ride a warning (they land in the banner and logs).
-	for _, v := range []string{"dumb", "xterm"} {
-		if strings.Contains(res.Warnings[0], v) {
-			t.Errorf("override warning must stay value-free, got %q", res.Warnings[0])
-		}
-	}
-}
-
-// A minted Env var colliding with a config-pinned EnvSet name fails closed and is
-// attributed to the env.set claimant.
-func TestApplyMintedEnvCollidesWithEnvSet(t *testing.T) {
-	env := &fakeProvider{name: "env", available: true,
-		contrib: &Contribution{EnvSet: []spec.EnvEntry{{Name: "GITLAB_TOKEN", Value: "pinned"}}}}
-	minter := &fakeProvider{name: "gitlab", available: true,
-		contrib: &Contribution{Env: map[string]string{"GITLAB_TOKEN": "minted"}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: env}, {Provider: minter}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sb := &sandbox.SandboxSpec{}
-	err = res.Apply(sb)
-	if err == nil || !strings.Contains(err.Error(), "env.set") {
-		t.Fatalf("minted env over a pinned env.set name must fail closed with attribution, got %v", err)
-	}
-}
-
-// Apply must append provider notes across two phases (built-ins pre-gate, feature
-// providers post-gate) — the second Apply must not clobber the first's notes.
-func TestApplyAppendsNotesAcrossPhases(t *testing.T) {
-	first := &fakeProvider{name: "aiignore", available: true,
-		contrib: &Contribution{AgentNotes: []string{"phase-a note"}}}
-	second := &fakeProvider{name: "docker", available: true,
-		contrib: &Contribution{AgentNotes: []string{"phase-b note"}}}
-	sb := &sandbox.SandboxSpec{}
-	resA, err := Resolve(context.Background(), Session{}, []Active{{Provider: first}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := resA.Apply(sb); err != nil {
-		t.Fatal(err)
-	}
-	resB, err := Resolve(context.Background(), Session{}, []Active{{Provider: second}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := resB.Apply(sb); err != nil {
-		t.Fatal(err)
-	}
-	want := "- aiignore: phase-a note\n- docker: phase-b note"
+	want := "- notes: first note\n- docker: second note"
 	if got := sb.SetEnv[sandbox.ProviderNotesEnvVar]; got != want {
-		t.Errorf("notes must accumulate across phases: got %q want %q", got, want)
-	}
-}
-
-// containsString reports whether list has an element equal to s.
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// Re-setting a key to the value it already has is not an override — no warning.
-func TestApplyEnvSetSameValueNoWarn(t *testing.T) {
-	env := &fakeProvider{name: "env", available: true,
-		contrib: &Contribution{EnvSet: []spec.EnvEntry{{Name: "TERM", Value: "xterm"}}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: env}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sb := &sandbox.SandboxSpec{SetEnv: map[string]string{"TERM": "xterm"}}
-	if err := res.Apply(sb); err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Warnings) != 0 {
-		t.Errorf("same-value set must not warn: %v", res.Warnings)
-	}
-}
-
-// Override warnings surface in declaration order (deterministic gate output).
-func TestApplyEnvSetWarningsOrdered(t *testing.T) {
-	env := &fakeProvider{name: "env", available: true,
-		contrib: &Contribution{EnvSet: []spec.EnvEntry{
-			{Name: "B_VAR", Value: "x"}, {Name: "A_VAR", Value: "y"},
-		}}}
-	res, err := Resolve(context.Background(), Session{}, []Active{{Provider: env}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sb := &sandbox.SandboxSpec{SetEnv: map[string]string{"B_VAR": "1", "A_VAR": "2"}}
-	if err := res.Apply(sb); err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "B_VAR") || !strings.Contains(res.Warnings[1], "A_VAR") {
-		t.Errorf("warnings must follow declaration order: %v", res.Warnings)
+		t.Errorf("notes must append: got %q want %q", got, want)
 	}
 }

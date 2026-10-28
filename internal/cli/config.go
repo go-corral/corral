@@ -11,6 +11,11 @@ import (
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/policy"
+	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/aiignore"
+	"github.com/go-corral/corral/internal/providers/block"
+	"github.com/go-corral/corral/internal/providers/env"
+	"github.com/go-corral/corral/internal/providers/paths"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -74,6 +79,67 @@ func pinGlobalConfig(spec *sandbox.SandboxSpec, sources []config.Source) {
 			return
 		}
 	}
+}
+
+// applyConfigSections applies the config sections to spec. It returns the owners of the
+// mounts and env names it adds, the banner notices, and the advisory warnings.
+func applyConfigSections(spec *sandbox.SandboxSpec, cfg *config.Config, home, workDir string) (providers.Owners, []providers.Notice, []string) {
+	owners := providers.Owners{Mounts: map[string]string{}, Env: map[string]string{}}
+	var notes, notices []providers.Notice
+	var warnings []string
+
+	dirs, files := cfg.ConfigBlockedDirs(home), cfg.ConfigBlockedFiles(home)
+	spec.BlockedPaths = appendUnique(spec.BlockedPaths, dirs)
+	spec.BlockedFiles = appendUnique(spec.BlockedFiles, files)
+	notes = append(notes, providers.NoticesFor("block", block.AgentNotes(dirs, files))...)
+
+	m := aiignore.Mask(workDir, cfg.Providers.AIIgnore.EffectiveSources())
+	spec.BlockedPaths = appendUnique(spec.BlockedPaths, m.Dirs)
+	spec.BlockedFiles = appendUnique(spec.BlockedFiles, m.Files)
+	notices = append(notices, providers.NoticesFor("aiignore", m.Status)...)
+	notes = append(notes, providers.NoticesFor("aiignore", m.AgentNotes)...)
+
+	// A missing path is skipped at launch.
+	grants := cfg.Providers.Paths
+	for _, src := range grants.RW {
+		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: src, Optional: true})
+		owners.Mounts[src] = "paths"
+	}
+	for _, src := range grants.RO {
+		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: src, ReadOnly: true, Optional: true})
+		owners.Mounts[src] = "paths"
+	}
+	notes = append(notes, providers.NoticesFor("paths", paths.AgentNotes(grants.RW, grants.RO))...)
+
+	set := cfg.Providers.Env.Set
+	for _, e := range set {
+		if old, ok := spec.SetEnv[e.Name]; ok && old != e.Value {
+			warnings = append(warnings, fmt.Sprintf("providers.env.set: %q overrides a value corral already sets for the sandbox", e.Name))
+		}
+		spec.SetEnv[e.Name] = e.Value
+		owners.Env[e.Name] = "env (env.set)"
+	}
+	notes = append(notes, providers.NoticesFor("env", env.AgentNotes(set))...)
+
+	notes = append(notes, providers.NoticesFor("notes", cfg.Providers.Notes.Lines())...)
+
+	providers.AppendAgentNotes(spec, notes)
+	return owners, notices, warnings
+}
+
+// appendUnique appends the entries of add not already present in dst (order kept).
+func appendUnique(dst, add []string) []string {
+	seen := make(map[string]bool, len(dst))
+	for _, s := range dst {
+		seen[s] = true
+	}
+	for _, s := range add {
+		if !seen[s] {
+			seen[s] = true
+			dst = append(dst, s)
+		}
+	}
+	return dst
 }
 
 // prepareAuditDir checks and creates the directory of a custom policy.audit.path on the host.
