@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-corral/corral/internal/policy"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 // TestPiBridgeSourceWellFormed pins the embedded bridge's load-bearing shape so a careless
@@ -27,7 +28,7 @@ func TestPiBridgeSourceWellFormed(t *testing.T) {
 		`"post-tool-use"`,
 		`"user-prompt-submit"`,
 		`"session-start"`,
-		"CORRAL_BIN", // the launcher pins corral's path here for the bridge to exec
+		sandbox.SidecarSocketEnvVar, // the launcher sets the sidecar socket here for the bridge
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("embedded pi bridge missing %q", want)
