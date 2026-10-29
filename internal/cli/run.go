@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -388,7 +389,7 @@ func cmdRun(args []string, version string) int {
 	handler, err := policyHandler(engineInputs{
 		cfg:       cfg,
 		home:      spec.SetEnv["HOME"],
-		env:       spec.SetEnv,
+		env:       maps.Clone(spec.SetEnv),
 		workDir:   spec.WorkDir,
 		auditPath: spec.SetEnv[sandbox.AuditPathEnvVar],
 	})
