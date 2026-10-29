@@ -499,6 +499,23 @@ func TestCmdHookPostToolUseDeadSidecarWithholds(t *testing.T) {
 	}
 }
 
+// An event over the size cap is cut and cannot parse, so the shape comes from the prefix.
+func TestCmdHookPostToolUseOversizedMCPWithholdsAsArray(t *testing.T) {
+	t.Setenv(sandbox.SandboxEnvVar, "1")
+	t.Setenv(sandbox.SidecarSocketEnvVar, filepath.Join(t.TempDir(), "sock"))
+	ev := `{"session_id":"s","transcript_path":"/t.jsonl","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"mcp__x__y","tool_input":{},"tool_response":[{"type":"text","text":"` +
+		strings.Repeat("a", policy.MaxEventBytes) + `"}]}`
+
+	out := captureStdout(t, func() {
+		captureStderr(t, func() {
+			withStdin(t, ev, func() { cmdHook([]string{"post-tool-use"}) })
+		})
+	})
+	if _, ok := updatedToolOutput(t, out).([]any); !ok || !strings.Contains(out, "withheld") {
+		t.Errorf("want a content-block array carrying the withheld marker, got %q", out)
+	}
+}
+
 func TestCmdHookPostToolUseSidecarWithholdsSecret(t *testing.T) {
 	home := t.TempDir()
 	startTestSidecar(t, home, home)

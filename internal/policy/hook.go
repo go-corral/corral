@@ -3,6 +3,7 @@ package policy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -211,12 +212,38 @@ func bashResult(marker string) map[string]any {
 	return map[string]any{"stdout": marker, "stderr": "", "interrupted": false, "isImage": false}
 }
 
+// probeToolName returns the event's tool name. json.Unmarshal fills nothing when the input has a
+// syntax error, and an event cut at the size cap always has one, so it then reads the top-level
+// tool_name from the prefix token by token.
 func probeToolName(data []byte) string {
 	var probe struct {
 		ToolName string `json:"tool_name"`
 	}
-	_ = json.Unmarshal(data, &probe)
-	return probe.ToolName
+	var syntaxErr *json.SyntaxError
+	if err := json.Unmarshal(data, &probe); !errors.As(err, &syntaxErr) {
+		return probe.ToolName
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return ""
+	}
+	for {
+		key, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		if _, ok := key.(string); !ok {
+			return ""
+		}
+		if key == "tool_name" {
+			name, _ := dec.Token()
+			s, _ := name.(string)
+			return s
+		}
+		if dec.Decode(&json.RawMessage{}) != nil {
+			return ""
+		}
+	}
 }
 
 // WritePostToolUseReplace replaces the tool result the model sees with marker, in a shape matching
