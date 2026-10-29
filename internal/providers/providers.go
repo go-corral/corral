@@ -224,7 +224,7 @@ func (r *Resolved) Apply(spec *sandbox.SandboxSpec, owners Owners) error {
 	// Pre-claim corral's own env channels so a provider Env can neither plant nor clobber them.
 	seenEnv[sandbox.ProviderNotesEnvVar] = "corral (reserved for provider notes)"
 	seenEnv[sandbox.BackendNotesEnvVar] = "corral (reserved for backend notes)"
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar} {
 		seenEnv[name] = "corral (reserved control marker)"
 	}
 

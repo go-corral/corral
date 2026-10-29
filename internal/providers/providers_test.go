@@ -144,14 +144,13 @@ func TestApplyRejectsProviderEnvClaimingBackendNotesMarker(t *testing.T) {
 
 // corral's control markers must be equally un-plantable by a provider Env, and — unlike the
 // notes channels — they are set conditionally by the launcher (the global-config pin only when a
-// global config was loaded, CORRAL_BIN only for an agent with a policy extension). An empty spec
-// models exactly the launch where each is absent, which is where an unclaimed name would be free
-// for the taking. Planting one would steer corral inside the sandbox — the config file its
-// commands read, the sidecar socket the hook forwards to, the binary a policy extension
-// re-invokes — so it must fail Apply closed. Matters most for a provider whose Env is authored
-// outside the trust-approved config: a session hook's stdout contribution.
+// global config was loaded). An empty spec models exactly the launch where each is absent, which
+// is where an unclaimed name would be free for the taking. Planting one would steer corral inside
+// the sandbox — the config file its commands read, the sidecar socket the hook forwards to — so it
+// must fail Apply closed. Matters most for a provider whose Env is authored outside the
+// trust-approved config: a session hook's stdout contribution.
 func TestApplyRejectsProviderEnvClaimingControlMarkers(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar} {
 		t.Run(name, func(t *testing.T) {
 			a := &fakeProvider{name: "hooks", available: true,
 				contrib: &Contribution{Env: map[string]string{name: "/work/proj/evil.yml"}}}

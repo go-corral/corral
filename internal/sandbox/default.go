@@ -42,10 +42,6 @@ const SidecarSocketEnvVar = "CORRAL_SIDECAR_SOCKET"
 // backend can deny writes to all sessions' sidecar directories at once.
 const SidecarDirPrefix = "corral-sidecar-"
 
-// BinEnvVar pins the corral binary an agent's in-process policy extension
-// re-invokes. Reserved so nothing can redirect enforcement.
-const BinEnvVar = "CORRAL_BIN"
-
 // PresenceAckEnvVar silences the sandbox-presence warning only. Deliberately
 // not reserved — there is nothing to forge. Kept separate from DisableHooksEnvVar
 // on purpose: if the kill switch were the only way to silence the once-per-session

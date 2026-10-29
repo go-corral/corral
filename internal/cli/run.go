@@ -212,9 +212,6 @@ func cmdRun(args []string, version string) int {
 			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
 		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
-		if self, serr := os.Executable(); serr == nil {
-			spec.SetEnv[sandbox.BinEnvVar] = self
-		}
 		extensionArgs = []string{launch.ExtensionFlag, assetPath}
 	}
 	// The config sections apply before the gate, so their warnings feed it and their masks are in

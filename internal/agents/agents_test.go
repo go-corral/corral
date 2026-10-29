@@ -61,7 +61,7 @@ func TestAllReservedEnv(t *testing.T) {
 			t.Errorf("AllReservedEnv() = %v, want it to contain %q", got, want)
 		}
 	}
-	for _, core := range []string{"CORRAL_SANDBOX", "CORRAL_GLOBAL_CONFIG", "CORRAL_AGENT", "CORRAL_BIN"} {
+	for _, core := range []string{"CORRAL_SANDBOX", "CORRAL_GLOBAL_CONFIG", "CORRAL_AGENT"} {
 		if seen[core] {
 			t.Errorf("AllReservedEnv() = %v, must NOT contain corral-core marker %q (config adds those separately)", got, core)
 		}
