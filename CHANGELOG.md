@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.26.0](https://github.com/go-corral/corral/compare/v0.25.0...v0.26.0) (2026-10-30)
+
+
+### Features
+
+* **agents:** pass agents.&lt;agent&gt;.args to the agent on corral run ([#62](https://github.com/go-corral/corral/issues/62)) ([7ff55d3](https://github.com/go-corral/corral/commit/7ff55d34ece2be9c359d74dcf71f3c5c61fbbc63))
+
+
+### Bug Fixes
+
+* **policy:** keep the MCP withhold shape for an oversized result ([#68](https://github.com/go-corral/corral/issues/68)) ([9a23209](https://github.com/go-corral/corral/commit/9a2320980ed014eeef2240ba51d7b501d1600654))
+* **run:** give the sidecar handler its own copy of the session env ([#69](https://github.com/go-corral/corral/issues/69)) ([6212f57](https://github.com/go-corral/corral/commit/6212f57481316c1f962c10c3d434746b6da83151))
+* **seatbelt:** give read-write overlays only file-write-data ([#72](https://github.com/go-corral/corral/issues/72)) ([4623843](https://github.com/go-corral/corral/commit/46238435019b8159ca22e16ddcc23c84e88694fe))
+* **seatbelt:** re-allow overlay mounts after the blocked-path deny ([#70](https://github.com/go-corral/corral/issues/70)) ([edf5272](https://github.com/go-corral/corral/commit/edf5272c930464e91ab2e5596408a4d7f3780df1))
+
 ## [0.25.0](https://github.com/go-corral/corral/compare/v0.24.0...v0.25.0) (2026-10-15)
 
 
