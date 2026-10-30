@@ -220,14 +220,17 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 		val := normalizeMacPath(m.Src)
 		it := sbItem{kind: sbSubpath, val: val}
 		read = append(read, it)
-		if !m.ReadOnly {
-			write = append(write, it)
-		}
 		if m.Overlay {
+			// Never in `write`: an overlay regains only file-write-data (in the
+			// overlay section below), so its node can be connected to but never
+			// removed or replaced — like a bwrap bind, whose mountpoint cannot
+			// be unlinked even from a writable parent.
 			overlayRead = append(overlayRead, it)
 			if !m.ReadOnly {
 				overlayWrite = append(overlayWrite, it)
 			}
+		} else if !m.ReadOnly {
+			write = append(write, it)
 		}
 		mountSeeds = append(mountSeeds, val)
 	}
@@ -326,10 +329,10 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 	}
 
 	if len(overlayRead) > 0 {
-		sb.WriteString(";; Overlay mounts: vetted files inside a blocked dir (e.g. the ssh provider's\n")
-		sb.WriteString(";; ~/.ssh/config). Placed after the blocked-path deny so they win. Exec stays\n")
-		sb.WriteString(";; denied. A read-write overlay regains only file-write-data: a socket can be\n")
-		sb.WriteString(";; connected to, but the node cannot be removed or replaced.\n")
+		sb.WriteString(";; Overlay mounts: vetted files re-granted on top of the blocked-path deny\n")
+		sb.WriteString(";; (e.g. the ssh provider's ~/.ssh/config), so they win wherever one applies.\n")
+		sb.WriteString(";; Exec stays denied. A read-write overlay grants only file-write-data: a socket\n")
+		sb.WriteString(";; can be connected to, but the node cannot be removed or replaced.\n")
 		sb.WriteString("(allow file-read*\n")
 		for _, it := range overlayRead {
 			fmt.Fprintf(&sb, "  %s\n", it.sbpl())
