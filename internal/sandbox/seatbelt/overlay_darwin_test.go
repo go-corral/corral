@@ -17,7 +17,9 @@ const overlayClientEnv = "CORRAL_TEST_OVERLAY_CLIENT"
 // Under the generated profile, an Overlay mount inside a blocked dir is usable while the rest of
 // the dir stays hidden, even though an ancestor of the dir is writable: the ssh provider's
 // ~/.ssh/config reads, a key file next to it does not, and the forwarded agent socket connects
-// but cannot be removed. A block.files entry stays denied under an overlay.
+// but cannot be removed. A block.files entry stays denied under an overlay. A read-write overlay
+// outside any blocked dir (launchd's /tmp/launch-…/Listeners shape) still connects with its
+// file-write-data-only grant.
 func TestGeneratedProfileOverlayInBlockedDir(t *testing.T) {
 	if p := os.Getenv(overlayClientEnv); p != "" {
 		overlayClient(t, p)
@@ -63,6 +65,15 @@ func TestGeneratedProfileOverlayInBlockedDir(t *testing.T) {
 	}
 	defer func() { _ = l.Close() }()
 
+	// A read-write overlay OUTSIDE any blocked dir, shaped like launchd's
+	// /tmp/launch-…/Listeners agent socket.
+	sock2 := filepath.Join(parent, "launchd.sock")
+	l2, err := net.Listen("unix", sock2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l2.Close() }()
+
 	spec := sandbox.SandboxSpec{
 		Tokens: map[string]string{"HOME": home},
 		// TMPDIR gives a -cover test binary a writable place for its coverage data; /tmp is denied.
@@ -73,6 +84,7 @@ func TestGeneratedProfileOverlayInBlockedDir(t *testing.T) {
 			{Src: filepath.Join(sshDir, "config"), ReadOnly: true, Overlay: true},
 			{Src: sock, Overlay: true},
 			{Src: filepath.Join(parent, "hosts"), ReadOnly: true, Overlay: true},
+			{Src: sock2, Overlay: true},
 		},
 		BlockedPaths: []string{sshDir},
 		BlockedFiles: []string{filepath.Join(parent, "hosts")},
@@ -128,4 +140,10 @@ func overlayClient(t *testing.T, parent string) {
 	if err := os.Remove(sock); err == nil {
 		t.Error("client: removing the read-write overlay socket must fail")
 	}
+
+	conn, err = net.Dial("unix", filepath.Join(parent, "launchd.sock"))
+	if err != nil {
+		t.Fatalf("client: connecting to a read-write overlay outside a blocked dir must succeed: %v", err)
+	}
+	_ = conn.Close()
 }
