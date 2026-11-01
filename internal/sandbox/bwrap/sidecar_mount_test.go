@@ -62,7 +62,7 @@ func TestReadOnlySidecarDirBlocksReplacement(t *testing.T) {
 			defer func() { _ = srv.Close() }()
 
 			spec := sandbox.SandboxSpec{
-				SetEnv: map[string]string{sidecarClientEnv: srv.Path()},
+				SetEnv: map[string]string{sidecarClientEnv: srv.Path(), "TMPDIR": parent},
 				Mounts: []sandbox.Mount{{Src: "/", ReadOnly: true}},
 			}
 			if tc.mounts != nil {

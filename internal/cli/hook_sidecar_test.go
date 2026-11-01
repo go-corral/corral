@@ -150,7 +150,7 @@ func TestPolicyHandler(t *testing.T) {
 		t.Errorf("secret prompt: got %+v", resp)
 	}
 
-	if resp = h(sidecar.Request{Type: "session-start"}, nil, policy.OSFS{}); resp.Error == "" {
+	if resp = h(sidecar.Request{Type: "notification"}, nil, policy.OSFS{}); resp.Error == "" {
 		t.Errorf("unknown request type: got %+v, want an error", resp)
 	}
 
@@ -358,6 +358,48 @@ func TestSidecarAndBareSessionAgree(t *testing.T) {
 		if got != bare[i] {
 			t.Errorf("%+v: sidecar answer %+v differs from bare answer %+v", req, got, bare[i])
 		}
+	}
+}
+
+func TestSidecarSessionStartMatchesHook(t *testing.T) {
+	const backendNote, providerNote = "backend: a backend note", "provider: a provider note"
+	t.Setenv(sandbox.SandboxEnvVar, "1")
+	t.Setenv(sandbox.BackendNotesEnvVar, backendNote)
+	t.Setenv(sandbox.ProviderNotesEnvVar, providerNote)
+	var hook strings.Builder
+	if code := runSessionStartHook(strings.NewReader(""), &hook); code != policy.ExitAllow {
+		t.Fatalf("hook exit code %d", code)
+	}
+
+	// The launcher runs outside the sandbox, so its own environment must not feed the note.
+	t.Setenv(sandbox.SandboxEnvVar, "")
+	t.Setenv(sandbox.BackendNotesEnvVar, "host: wrong")
+	t.Setenv(sandbox.ProviderNotesEnvVar, "host: wrong")
+	in, _ := testEngineInputs(t)
+	in.env[sandbox.BackendNotesEnvVar] = backendNote
+	in.env[sandbox.ProviderNotesEnvVar] = providerNote
+	h, err := policyHandler(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := h(sidecar.Request{Type: "session-start"}, nil, policy.OSFS{})
+	if resp.Code != policy.ExitAllow || resp.Stderr != "" || resp.Error != "" {
+		t.Fatalf("sidecar answer: %+v", resp)
+	}
+	if resp.Stdout != hook.String() {
+		t.Errorf("sidecar note differs from the hook note:\nsidecar: %s\nhook:    %s", resp.Stdout, hook.String())
+	}
+
+	var out struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(resp.Stdout), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.HookSpecificOutput.AdditionalContext, "\n- "+providerNote) {
+		t.Errorf("provider note is not the last bullet:\n%s", out.HookSpecificOutput.AdditionalContext)
 	}
 }
 
