@@ -13,7 +13,7 @@ import (
 // sandbox constants so a rename there can't silently let env.set claim a control var.
 // (A test file can import sandbox: sandbox does not import config, so there is no cycle.)
 func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.BinEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
+	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames is missing the sandbox marker %q — env.set could set it", name)
 		}
@@ -49,7 +49,6 @@ func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
 	}
 	// pi's config/session relocators must stay reserved so env.set cannot point pi at a dir
 	// corral does not bind/write-protect (agents.pi.ConfigDir reads PI_CODING_AGENT_DIR).
-	// CORRAL_BIN is pinned against sandbox.BinEnvVar in the constants loop above.
 	for _, name := range []string{"PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"} {
 		if !reservedEnvNames[name] {
 			t.Errorf("reservedEnvNames must keep %q reserved", name)

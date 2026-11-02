@@ -358,7 +358,7 @@ names to this list.
   - A name can appear in `passthrough` or `set`, but not both. The default passthrough
     list already claims its names.
   - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_PROFILES`, `CORRAL_AUDIT_PATH`,
-    `CORRAL_AGENT`, `CORRAL_BIN`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
+    `CORRAL_AGENT`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
     `CORRAL_SIDECAR_SOCKET`, and `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
     `ENABLE_CLAUDEAI_MCP_SERVERS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`,
     `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, `CLAUDE_CODE_ATTRIBUTION_HEADER`, and
