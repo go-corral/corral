@@ -82,9 +82,10 @@ corral has two execution paths:
 - `corral run` builds the OS sandbox, sets up enabled providers, starts Claude Code or
   pi, and stays alive for the session. Its sidecar evaluates the policy, fixed after the
   trust gate, and writes the audit log.
-- `corral hook` is the fast client invoked for tool calls, prompts, and selected results.
-  It forwards each event to the sidecar. Without `corral run` it evaluates in its own
-  process. Policy errors fail closed.
+- `corral hook` is the fast client that Claude Code invokes for tool calls, prompts, and
+  selected results. It forwards each event to the sidecar. Without `corral run` it
+  evaluates in its own process. Policy errors fail closed.
+- The pi policy extension sends each event to the sidecar directly.
 
 Session hooks under `providers.hooks` are different: they are operator-approved host
 programs run around a session. Do not confuse them with `corral hook`.

@@ -43,7 +43,7 @@ A path grant cannot open an always-blocked path, a `providers.block` entry, or a
 
 ## Every tool call is blocked with `cannot evaluate policy`
 
-The hook in the session cannot reach the sidecar of `corral run`, so it blocks each call. The message starts with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy:` and names the cause. Exit the agent and start a new session with `corral run`.
+The hook (Claude Code) or the pi policy extension (pi) in the session cannot reach the sidecar of `corral run`, so every call is blocked. In pi, every prompt is also held back. The message starts with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy:` and describes the cause. Exit the agent and start a new session with `corral run`.
 
 After a corral upgrade the hook could become incompatible, restarting the session will help then.
 

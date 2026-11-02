@@ -42,9 +42,9 @@ blocked by corral policy [hook:<rule>]: <reason>. Fix: <fix text>
 - `[hook:<rule>]` names the layer and the rule that denied the call: `always-blocked`, `blocked-path`, `ai-ignore`, `bash`, `path-pattern`, or `secret-scan`.
 - `Fix:` names the setting that the agent proposes to the user. A fix that starts with `None, by design.` has no setting.
 
-Claude Code receives the text as `permissionDecisionReason` of the `PreToolUse` decision. The pi policy extension calls the hook with `--decision exit2` and shows the stderr line as the block reason. The stderr line has the same text after the prefix `corral: `.
+Claude Code receives the text as `permissionDecisionReason` of the `PreToolUse` decision. The pi policy extension shows the stderr line as the block reason. The stderr line has the same text after the prefix `corral: `.
 
-When corral cannot check a call, the rule is `fail-closed`, the reason is the error, and the fix is `None. Corral could not check this call, so it blocked it. Tell the user the error.` Both agents receive this text as the stderr line after the prefix `corral: `, with exit status 2.
+When corral cannot check a call, the rule is `fail-closed`, the reason is the error, and the fix is `None. Corral could not check this call, so it blocked it. Tell the user the error.` Claude Code receives this text as the stderr line after the prefix `corral: `, with exit status 2. The pi policy extension shows this text as the block reason.
 
 When a call ran but corral hid its output, the replacement output has this format:
 

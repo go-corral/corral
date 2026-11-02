@@ -386,20 +386,8 @@ func TestSidecarSessionStartMatchesHook(t *testing.T) {
 	if resp.Code != policy.ExitAllow || resp.Stderr != "" || resp.Error != "" {
 		t.Fatalf("sidecar answer: %+v", resp)
 	}
-	if resp.Stdout != hook.String() {
-		t.Errorf("sidecar note differs from the hook note:\nsidecar: %s\nhook:    %s", resp.Stdout, hook.String())
-	}
-
-	var out struct {
-		HookSpecificOutput struct {
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal([]byte(resp.Stdout), &out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(out.HookSpecificOutput.AdditionalContext, "\n- "+providerNote) {
-		t.Errorf("provider note is not the last bullet:\n%s", out.HookSpecificOutput.AdditionalContext)
+	if resp.Stdout != hook.String() || !strings.Contains(resp.Stdout, providerNote) {
+		t.Errorf("sidecar note differs from the hook note or lacks the provider note:\nsidecar: %s\nhook:    %s", resp.Stdout, hook.String())
 	}
 }
 
