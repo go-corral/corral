@@ -33,7 +33,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox/bwrap"
 	"github.com/go-corral/corral/internal/sandbox/seatbelt"
 	"github.com/go-corral/corral/internal/selfupdate"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type Net string
