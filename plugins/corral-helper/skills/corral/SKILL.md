@@ -2,7 +2,7 @@
 name: corral
 description: >-
   Help install, configure, run, update, uninstall, and troubleshoot corral, the coding-agent
-  sandbox for Claude Code and pi. Trigger when the user mentions corral, an agent sandbox,
+  sandbox for Claude Code, pi, and opencode. Trigger when the user mentions corral, an agent sandbox,
   doctor/sync/validate/run, .corral.yml, provider setup, filesystem or environment grants,
   session hooks, agent notes or the session-start note, blocked tool calls, the audit log,
   always-blocked paths, masked credential directories, or a vague report that the sandbox
@@ -79,13 +79,13 @@ byte-counted. See [audit-log.md](references/reference/audit-log.md).
 
 corral has two execution paths:
 
-- `corral run` builds the OS sandbox, sets up enabled providers, starts Claude Code or
-  pi, and stays alive for the session. Its sidecar evaluates the policy, fixed after the
+- `corral run` builds the OS sandbox, sets up enabled providers, starts Claude Code,
+  pi, or opencode, and stays alive for the session. Its sidecar evaluates the policy, fixed after the
   trust gate, and writes the audit log.
 - `corral hook` is the fast client that Claude Code invokes for tool calls, prompts, and
   selected results. It forwards each event to the sidecar. Without `corral run` it
   evaluates in its own process. Policy errors fail closed.
-- The pi policy extension sends each event to the sidecar directly.
+- The pi policy extension and the opencode policy plugin send each event to the sidecar directly.
 
 Session hooks under `providers.hooks` are different: they are operator-approved host
 programs run around a session. Do not confuse them with `corral hook`.
@@ -149,7 +149,7 @@ Inside an active corral sandbox, policy blocks writes to corral's config files. 
   [uninstall.md](references/how-to/uninstall.md).
 - **Commands and flags:** [commands.md](references/reference/commands.md).
 - **Config keys and defaults:** [config.md](references/reference/config.md).
-- **Claude Code versus pi:** [agents.md](references/reference/agents.md).
+- **Claude Code, pi, and opencode:** [agents.md](references/reference/agents.md).
 - **SSH, Docker, or private home:** [providers.md](references/how-to/providers.md).
 - **Kubernetes:** [kubernetes.md](references/how-to/kubernetes.md). Ask which clusters and contexts the session needs and which one is the default. Declare several clusters in `providers.kubernetes.clusters`. Do not recommend `preProvisioned` mode without explaining that users with `edit` in its dedicated namespace share all access assigned to the ServiceAccount group.
 - **GitLab:** [gitlab.md](references/how-to/gitlab.md). Confirm the instance runs GitLab

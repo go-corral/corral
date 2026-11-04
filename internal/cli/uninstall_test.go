@@ -494,3 +494,32 @@ func TestUninstallManifestASCII(t *testing.T) {
 	}
 	mustContain(t, out.String(), "[--] cache          ~/.cache/corral - not present\n", "                    -> corral uninstall --apply\n")
 }
+
+// opencode's presence backstop is listed as registered enforcement, and --apply --yes deletes it
+// without touching other files in the plugins directory.
+func TestUninstallOpencodeBackstop(t *testing.T) {
+	home := t.TempDir()
+	uninstallEnv(t, home)
+	fakeUninstallBinary(t, home)
+	oc, _ := agents.Lookup("opencode")
+	if _, err := oc.Sync(agents.SyncInput{Home: home, Host: map[string]string{}}); err != nil {
+		t.Fatalf("seed opencode sync: %v", err)
+	}
+	plugins := filepath.Join(home, ".config", "opencode", "plugins")
+	backstop, other := filepath.Join(plugins, "corral-presence.js"), filepath.Join(plugins, "mine.js")
+	writeFiles(t, map[string]string{other: "x"})
+
+	out, code := runUninstallCmd(t, "")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	mustContain(t, out, "  ● opencode        registered — config dir ~/.config/opencode\n", "~/.config/opencode/plugins/corral-presence.js")
+	mustExist(t, backstop)
+
+	out, code = runUninstallCmd(t, "", "--apply", "--yes")
+	if code != 0 {
+		t.Errorf("exit = %d, want 0; output:\n%s", code, out)
+	}
+	mustNotExist(t, backstop)
+	mustExist(t, other)
+}

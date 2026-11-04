@@ -43,7 +43,7 @@ A path grant cannot open an always-blocked path, a `providers.block` entry, or a
 
 ## Every tool call is blocked with `cannot evaluate policy`
 
-The hook (Claude Code) or the pi policy extension (pi) in the session cannot reach the sidecar of `corral run`, so every call is blocked. In pi, every prompt is also held back. The message starts with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy:` and describes the cause. Exit the agent and start a new session with `corral run`.
+The hook (Claude Code), the pi policy extension (pi), or the opencode policy plugin (opencode) in the session cannot reach the sidecar of `corral run`, so every call is blocked. In pi and opencode, every prompt is also held back. The message starts with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy:` and describes the cause. Exit the agent and start a new session with `corral run`.
 
 After a corral upgrade the hook could become incompatible, restarting the session will help then.
 
@@ -86,6 +86,20 @@ If another sandbox provides the isolation intentionally, set
 `CORRAL_PRESENCE_ACK=1` in the environment that launches Claude. This silences
 only the presence warning; prompt scanning and tool-call policy remain active.
 See [the presence warning](../explanation/threat-model.md#the-presence-warning).
+
+## `this opencode session is NOT sandboxed`
+
+A bare `opencode` launch replaces the first prompt of each session with this warning, because it did not start through `corral run`. The presence plugin from `corral sync opencode` sends the warning, and the model relays it. The prompt was not sent. Resubmit the prompt to continue unsandboxed, or exit and run:
+
+```sh
+corral run opencode
+```
+
+To stop the warning without corral, delete `corral-presence.js` in the `plugins` directory of opencode's config directory, or run `corral sync opencode --remove`.
+
+## An opencode command fails on `--standalone`
+
+`corral run opencode` adds `--standalone` to the opencode arguments. The commands `serve`, `service`, `mcp add`, `plugin add`, `plugin remove`, `upgrade`, `uninstall`, `pair`, `debug paths`, and `debug heap-dump` reject that flag and exit with opencode's usage error. They manage host state. Run them on the host without corral. See [opencode server and arguments](../reference/agents.md#opencode-server-and-arguments).
 
 ## Hooks do not seem to run
 
@@ -219,6 +233,7 @@ corral logs each policy decision as one JSON line. The default log is in the cor
 | ----------- | ---------------------------------------------------------------------------------------------------------- |
 | Claude Code | `~/.local/state/corral/audit/<hash>/corral-audit.jsonl`, `<hash>` from `$CLAUDE_CONFIG_DIR` or `~/.claude` |
 | pi          | `~/.local/state/corral/audit/<hash>/corral-audit.jsonl`, `<hash>` from `$PI_CODING_AGENT_DIR` or `~/.pi`   |
+| opencode    | `~/.local/state/corral/audit/<hash>/corral-audit.jsonl`, `<hash>` from `$OPENCODE_CONFIG_DIR` or `~/.config/opencode` |
 
 `XDG_STATE_HOME` replaces `~/.local/state` when it is an absolute path. `<hash>` is the first 4 bytes of the SHA-256 of the config directory, in hex. It matches the private home `~/.cache/corral/home-<hash>`. [`policy.audit.path`](../reference/config.md#policyaudit) overrides these defaults.
 

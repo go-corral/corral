@@ -24,7 +24,7 @@ you ─ corral run ─▶ ┌─────────── sandbox ───
                     │ deny-by-default filesystem;    │
                     │ ~/.ssh, ~/.aws, … masked       │
                     │                                │
-                    │ Claude Code / pi               │
+                    │ Claude Code / pi / opencode    │
                     │    │ every tool call & prompt  │
                     │    ▼                           │
                     │ policy hook ── allow / block ──┼─▶ audit log
@@ -94,8 +94,8 @@ corral run --dry-run --      # print the exact sandbox command without launching
 ```
 
 To make corral the default for Claude Code, add `alias claude='corral run --'`.
-For pi, use `corral sync pi` and `corral run pi`; see the
-[agent reference](docs/reference/agents.md).
+For pi, use `corral sync pi` and `corral run pi`. For opencode, use `corral sync opencode`
+and `corral run opencode`. See the [agent reference](docs/reference/agents.md).
 
 ## Commands
 
@@ -153,8 +153,8 @@ Full docs live in [`docs/`](docs) ([index](docs/README.md)):
   dedicated guides.
 - [Session hooks](docs/how-to/session-hooks.md) run host setup and cleanup around a
   session.
-- [Agents](docs/reference/agents.md) explains how to select and operate Claude Code or
-  pi.
+- [Agents](docs/reference/agents.md) explains how to select and operate Claude Code,
+  pi, or opencode.
 - [Security and threat model](docs/explanation/threat-model.md) states corral's
   guarantees and limits.
 - [Troubleshooting & FAQ](docs/how-to/troubleshooting.md) covers blocked commands,

@@ -9,9 +9,9 @@ The `corral` binary has two modes:
 - `corral run` prepares a session. It loads and validates config, asks for required approvals, checks providers, creates temporary credentials, builds the sandbox command, and starts the agent.
 - `corral hook` receives the events sent by Claude Code. Inside a `corral run` session it forwards each event to the sidecar to ask for a policy decision. A failed `PreToolUse` check blocks the tool call. A failed `PostToolUse` scan replaces the result with a withheld marker. `UserPromptSubmit` scanning is advisory and allows the prompt on an internal failure, `SessionStart` can only add a note.
 
-The sidecar is a service in the `corral run` process that the sandbox reaches through a unix socket. The launcher binds the socket directory read-only into the sandbox. The sidecar builds the policy at the session start from the config and selected profiles. It evaluates `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` events against that policy and logs the decisions to the audit log. For pi, it also gives the `SessionStart` note. A config or profile edit by the agent during the session only takes effect on the next launch after approval.
+The sidecar is a service in the `corral run` process that the sandbox reaches through a unix socket. The launcher binds the socket directory read-only into the sandbox. The sidecar builds the policy at the session start from the config and selected profiles. It evaluates `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` events against that policy and logs the decisions to the audit log. For pi and opencode, it also gives the `SessionStart` note. A config or profile edit by the agent during the session only takes effect on the next launch after approval.
 
-The pi policy extension is the sidecar client for pi. It sends each event directly to the sidecar socket. Only `corral run pi` loads the extension, so pi has no path without a sidecar.
+The pi policy extension and the opencode policy plugin are the sidecar clients for pi and opencode. Each sends its events directly to the sidecar socket and starts no `corral hook` process. Only `corral run pi` and `corral run opencode` load them, so these agents have no path without a sidecar.
 
 A session that starts without `corral run` has no sidecar. The hook then evaluates events directly, which is a bit slower and offer less protection.
 
@@ -57,9 +57,9 @@ The agent receives a shorter session note. It names the always-blocked paths, th
 
 The note also names access the agent needs to use correctly, such as `GITLAB_TOKEN`, the active Kubernetes roles, or a relevant command quirk. These notes contain metadata, not token values.
 
-## Apply the same policy to Claude Code and pi
+## Apply the same policy to Claude Code, pi, and opencode
 
-Claude Code and pi expose different ways to inspect their tool calls:
+The three agents expose different ways to inspect their tool calls:
 
 - For **Claude Code**, `corral sync` registers commands for `PreToolUse`,
   `PostToolUse`, `SessionStart`, and `UserPromptSubmit` in `settings.json`.
@@ -71,7 +71,12 @@ Claude Code and pi expose different ways to inspect their tool calls:
 - For **pi**, each `corral run pi` mounts a read-only policy extension and passes it to
   pi. `corral sync pi` installs only the warning shown by a bare pi process; it does not
   install persistent policy enforcement.
+- For **opencode**, each `corral run opencode` mounts a read-only policy plugin and
+  activates it through `OPENCODE_CONFIG_CONTENT`. It also adds `--standalone`, so opencode
+  starts its own server inside the sandbox and not the shared background service, which
+  would run outside it. `corral sync opencode` installs only the warning shown by a bare
+  opencode process; it does not install persistent policy enforcement.
 
-Both integrations use the same path, command, prompt, and secret-scanning rules. For
+All integrations use the same path, command, prompt, and secret-scanning rules. For
 selection, state locations, and agent-specific settings, see the
 [agent reference](../reference/agents.md).

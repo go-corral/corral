@@ -216,7 +216,7 @@ settings ───────────────────────�
     agent view      off
     env             TERM COLORTERM NO_COLOR EDITOR VISUAL PAGER TMPDIR LANG
                     CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
-                    PI_CODING_AGENT_SESSION_DIR
+                    PI_CODING_AGENT_SESSION_DIR OPENCODE_CONFIG_DIR
                     other host variables are dropped
     agent notes     none
   ● home            private $HOME (allowed paths symlinked in; tool caches & state isolated)
@@ -311,6 +311,21 @@ func TestValidatePiReport(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{"connectors", "telemetry", "error reporting", "feedback survey", "agent view", "~/.cache/corral/home"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("unexpected %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestValidateOpencodeReport(t *testing.T) {
+	trustRepo(t, "agent: opencode\nagents:\n  opencode:\n    args: [--print-logs]\n")
+	out := captureStdout(t, func() { cmdValidate(nil, "test") })
+	for _, want := range []string{"agent opencode\n", "    args            --print-logs\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"agent view", "connectors", "telemetry"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("unexpected %q:\n%s", unwanted, out)
 		}

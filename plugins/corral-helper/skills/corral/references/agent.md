@@ -46,7 +46,17 @@ corral validate
 corral run pi -- <pi args>
 ```
 
-The second `doctor` confirms the Claude Code hooks or pi presence-warning extension. `validate` summarizes selected effective policy before launch. Read the **warnings** section first, then check the approval state in the `sources` row and the grants under **path grants**. Only tree rows with an `rw` or `ro` access token are grants; terminal output also renders them bold. Other tree branches only group paths. `--list` shows blocked paths. Repository config, session-hook executable, or kubeconfig approval requires an interactive terminal; do not substitute `--yes` for that review.
+For opencode, use:
+
+```sh
+corral doctor
+corral sync opencode
+corral doctor
+corral validate
+corral run opencode -- <opencode args>
+```
+
+The second `doctor` confirms the Claude Code hooks, the pi presence-warning extension, or the opencode presence-warning plugin. `validate` summarizes selected effective policy before launch. Read the **warnings** section first, then check the approval state in the `sources` row and the grants under **path grants**. Only tree rows with an `rw` or `ro` access token are grants; terminal output also renders them bold. Other tree branches only group paths. `--list` shows blocked paths. Repository config, session-hook executable, or kubeconfig approval requires an interactive terminal; do not substitute `--yes` for that review.
 
 If a step fails, use its output rather than restarting the sequence blindly. Common next
 references are [troubleshooting.md](how-to/troubleshooting.md) for readiness or policy
@@ -61,11 +71,12 @@ add one without duplicating entries:
 ```sh
 alias claude='corral run --'
 alias pi='corral run pi --'
+alias opencode='corral run opencode --'
 ```
 
-Add only the alias for the selected agent. Explain that `command claude` or `command pi`
+Add only the alias for the selected agent. Explain that `command claude`, `command pi`, or `command opencode`
 bypasses an alias and starts a bare process. The synchronized presence warning is
-advisory; a bare pi process has no corral policy enforcement, while a bare Claude process
+advisory; a bare pi or opencode process has no corral policy enforcement, while a bare Claude process
 retains only its registered hooks and has no filesystem sandbox.
 
 If the current session cannot write the host shell file, give the user the exact line and
@@ -101,7 +112,10 @@ Agent arguments go after `--`:
 ```sh
 corral run -- --model opus
 corral run pi -- --help
+corral run opencode -- run hello
 ```
+
+`corral run opencode` adds `--standalone` and rejects `--server`, `--no-standalone`, `--standalone=<value>`, and `--standalone false`. For opencode commands that reject `--standalone`, such as `serve` and `upgrade`, tell the user to run them on the host without corral.
 
 Use `corral run --dry-run -- <args>` to inspect the sandbox command. A dry run does not
 run session hooks or create temporary credentials, so those results appear only during a

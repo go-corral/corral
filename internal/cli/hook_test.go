@@ -3,9 +3,11 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/sandbox"
@@ -314,5 +316,35 @@ func TestHookMalformedConfigFailsClosed(t *testing.T) {
 	})
 	if code != policy.ExitBlock {
 		t.Errorf("malformed config must fail closed: got %d, want %d", code, policy.ExitBlock)
+	}
+}
+
+type footprintAgent struct {
+	agents.Agent
+	fp agents.Footprint
+}
+
+func (a footprintAgent) Footprint() agents.Footprint { return a.fp }
+
+func TestAgentFootprintCopiesEveryField(t *testing.T) {
+	in := agents.Footprint{
+		Dir:            ".config/x",
+		DirReason:      "r",
+		ProjectDir:     ".x",
+		ProtectedFiles: map[string]string{"a": "ra"},
+		ProtectedDirs:  map[string]string{"d": "rd"},
+		ProtectedNames: []string{"n"},
+	}
+	got := agentFootprint(footprintAgent{fp: in})
+	want := policy.AgentFootprint{
+		Dir:            in.Dir,
+		DirReason:      in.DirReason,
+		ProjectDir:     in.ProjectDir,
+		ProtectedFiles: in.ProtectedFiles,
+		ProtectedDirs:  in.ProtectedDirs,
+		ProtectedNames: in.ProtectedNames,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("agentFootprint = %+v, want %+v", got, want)
 	}
 }

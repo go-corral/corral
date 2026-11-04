@@ -62,15 +62,29 @@ type Launch struct {
 	ExtensionAsset []byte
 	ExtensionName  string
 	ExtensionFlag  string
+
+	// ExtensionEnv, when set, replaces the ExtensionFlag pair: the launcher binds the directory
+	// of the materialized asset read-only and merges the returned variables into the sandbox
+	// environment. host is the launching shell's environment. An error fails the launch.
+	ExtensionEnv func(path string, host map[string]string) (map[string]string, error)
+
+	// Args, when set, receives the configured args and the `corral run -- ...` args and returns
+	// the complete list that replaces both. An error fails the launch.
+	Args func(config, user []string) ([]string, error)
 }
 
 // Footprint is an agent's static enforcement footprint: the config-dir marker plus the files
 // and subdirs whose write/delete the fail-closed hook self-protects.
 type Footprint struct {
-	Dir            string
-	DirReason      string
+	// Dir is the config-dir marker, one or more "/"-separated segments.
+	Dir       string
+	DirReason string
+	// ProjectDir is a second marker matched with the same ProtectedFiles and ProtectedDirs as Dir.
+	ProjectDir     string
 	ProtectedFiles map[string]string
 	ProtectedDirs  map[string]string
+	// ProtectedNames are base names denied in any directory.
+	ProtectedNames []string
 }
 
 type StatusInput struct {

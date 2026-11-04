@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/agents/claude"
+	"github.com/go-corral/corral/internal/agents/opencode"
 	"github.com/go-corral/corral/internal/agents/pi"
 
 	"github.com/go-corral/corral/internal/audit"
@@ -91,6 +92,8 @@ func (c *Config) agentConfig() agents.AgentConfig {
 	switch c.EffectiveAgent() {
 	case "pi":
 		return c.Agents.Pi
+	case "opencode":
+		return c.Agents.Opencode
 	default:
 		return c.Agents.Claude
 	}
@@ -123,8 +126,9 @@ func (c *Config) AgentConfigPaths() []agents.ConfigPath {
 // Agents holds per-agent configuration. Each field is the owning agent package's
 // Config type. Adding an agent adds a sibling field here.
 type Agents struct {
-	Claude claude.Config `yaml:"claude"`
-	Pi     pi.Config     `yaml:"pi"`
+	Claude   claude.Config   `yaml:"claude"`
+	Pi       pi.Config       `yaml:"pi"`
+	Opencode opencode.Config `yaml:"opencode"`
 }
 
 // Providers configures corral's config sections and feature providers. Each field
@@ -213,7 +217,7 @@ sandbox:
       allow: []
     grantUserTemp: false
   bwrap: {}
-# Which coding agent corral sandboxes ("claude" or "pi"); see docs/reference/agents.md.
+# Which coding agent corral sandboxes ("claude", "pi", or "opencode"); see docs/reference/agents.md.
 agent: claude
 # Per-agent configuration. claude.ai account connectors (Context7/Atlassian/Zoom,
 # auto-injected by a Claude subscription login) are OFF inside the sandbox by default —
@@ -236,6 +240,8 @@ agents:
     args: []
   pi:
     args: []
+  opencode:
+    args: []
 providers:
   # --- built-in providers: always active, applied before the feature providers ---
   # Paths the sandbox masks and the hook denies, split by kind: directories are masked
@@ -255,11 +261,12 @@ providers:
   env:
     # SSH_AUTH_SOCK is intentionally not here: the ssh provider injects it only when it
     # also forwards the matching socket. GPG_TTY must be added explicitly when needed.
-    # CLAUDE_CONFIG_DIR / PI_CODING_AGENT_DIR / PI_CODING_AGENT_SESSION_DIR are agent
-    # config-dir relocators: forwarded so the agent inside the sandbox uses the same dir corral
-    # resolved, bound rw, and write-protects. The pi pair is also reserved (reservedEnvNames) so
-    # env.set cannot relocate pi's config/sessions out from under that protection.
-    passthrough: [TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR]
+    # CLAUDE_CONFIG_DIR / PI_CODING_AGENT_DIR / PI_CODING_AGENT_SESSION_DIR / OPENCODE_CONFIG_DIR
+    # are agent config-dir relocators: forwarded so the agent inside the sandbox uses the same dir
+    # corral resolved, bound rw, and write-protects. The pi pair and OPENCODE_CONFIG_DIR are also
+    # reserved (reservedEnvNames) so env.set cannot relocate the agent's config/sessions out from
+    # under that protection.
+    passthrough: [TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR, OPENCODE_CONFIG_DIR]
     # set fixes vars to literal values inside the sandbox (a name may be in passthrough OR
     # set, not both). Overriding a value corral already sets warns + prompts at startup.
     # set: [{name: FOO, value: bar}]

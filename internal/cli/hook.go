@@ -605,8 +605,10 @@ func agentFootprint(a agents.Agent) policy.AgentFootprint {
 	return policy.AgentFootprint{
 		Dir:            fp.Dir,
 		DirReason:      fp.DirReason,
+		ProjectDir:     fp.ProjectDir,
 		ProtectedFiles: fp.ProtectedFiles,
 		ProtectedDirs:  fp.ProtectedDirs,
+		ProtectedNames: fp.ProtectedNames,
 	}
 }
 

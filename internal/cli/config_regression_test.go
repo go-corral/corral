@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
@@ -127,8 +128,49 @@ func TestSpecParamsAgentViewOnlyChangesEnv(t *testing.T) {
 	}
 
 	for _, agentView := range []bool{false, true} {
-		if _, ok := build("pi", agentView).AgentEnv["CLAUDE_CODE_DISABLE_AGENT_VIEW"]; ok {
-			t.Errorf("pi with agentView %v: AgentEnv must not contain CLAUDE_CODE_DISABLE_AGENT_VIEW", agentView)
+		for _, agent := range []string{"pi", "opencode"} {
+			if _, ok := build(agent, agentView).AgentEnv["CLAUDE_CODE_DISABLE_AGENT_VIEW"]; ok {
+				t.Errorf("%s with agentView %v: AgentEnv must not contain CLAUDE_CODE_DISABLE_AGENT_VIEW", agent, agentView)
+			}
+		}
+	}
+}
+
+// opencode adds its data and installer grants; no other agent gets them, and no rule names
+// opencode's state or cache directories.
+func TestSpecRulesOpencodeGrants(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rules := func(agent string) map[string]sandbox.Rule {
+		cfg := &config.Config{Agent: agent}
+		spec := sandbox.DefaultSpec(specParams(cfg, home, proj, map[string]string{}, ""))
+		m := map[string]sandbox.Rule{}
+		for _, r := range sandbox.RulesFor(spec) {
+			m[r.Path] = r
+		}
+		return m
+	}
+
+	oc := rules("opencode")
+	if r, ok := oc["$HOME/.local/share/opencode"]; !ok || !r.Writeable || !r.Optional {
+		t.Errorf("opencode data rule = %+v (present %v), want read-write optional", r, ok)
+	}
+	if r, ok := oc["$HOME/.opencode/bin"]; !ok || r.Writeable || !r.Optional {
+		t.Errorf("opencode installer rule = %+v (present %v), want read-only optional", r, ok)
+	}
+	for path := range oc {
+		if strings.Contains(path, ".local/state/opencode") || strings.Contains(path, ".cache/opencode") {
+			t.Errorf("opencode must not grant %q", path)
+		}
+	}
+	for _, agent := range []string{"claude", "pi"} {
+		for path := range rules(agent) {
+			if strings.Contains(path, "opencode") {
+				t.Errorf("%s must not carry the opencode rule %q", agent, path)
+			}
 		}
 	}
 }

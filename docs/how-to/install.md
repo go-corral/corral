@@ -27,14 +27,15 @@ only after you have verified the downloaded binary.
 
 ## Set up Claude Code
 
-Claude Code is the default agent. To set up pi instead, see the
-[agent reference](../reference/agents.md#pi).
+Claude Code is the default agent. To set up pi or opencode instead, see the
+[agent reference](../reference/agents.md#pi). For opencode, run `corral sync opencode`, then
+`corral run opencode`; see [opencode](../reference/agents.md#opencode).
 
 1. Run `corral doctor`. Check that it finds the sandbox backend and `claude` binary.
 2. Run `corral sync` to register the policy hooks in `~/.claude/settings.json`.
 3. Run `corral doctor` again. Check that **needs attention** has no `claude` entry. The
    `agents` row reports the installed agents as ready, or it shows a warning for another
-   agent, such as pi before `corral sync pi`.
+   agent, such as pi before `corral sync pi` or opencode before `corral sync opencode`.
 4. Start a session with `corral run -- <claude args>`.
 
 To see what the sandbox will enforce before launching, run `corral validate`.
