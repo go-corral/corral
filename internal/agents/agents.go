@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/go-corral/corral/internal/agents/claude"
+	"github.com/go-corral/corral/internal/agents/opencode"
 	"github.com/go-corral/corral/internal/agents/pi"
 	"github.com/go-corral/corral/internal/agents/spec"
 )
@@ -29,7 +30,7 @@ func BinDir(bin string) string { return spec.BinDir(bin) }
 
 const Default = "claude"
 
-var registry = buildRegistry(claude.New(), pi.New())
+var registry = buildRegistry(claude.New(), pi.New(), opencode.New())
 
 func buildRegistry(list ...Agent) map[string]Agent {
 	m := make(map[string]Agent, len(list))

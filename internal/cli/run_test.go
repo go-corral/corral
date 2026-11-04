@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
@@ -921,6 +922,140 @@ func TestRunPiActivatesBridge(t *testing.T) {
 	}
 	if !strings.Contains(out, "-e "+bridge) {
 		t.Errorf("`run pi` argv missing `-e %s` activation:\n%s", bridge, out)
+	}
+	if !strings.Contains(out, "--ro-bind "+bridge+" "+bridge) {
+		t.Errorf("`run pi` must bind the bridge file read-only:\n%s", out)
+	}
+}
+
+// withFakeLaunch makes the claude agent run with the given Launch.
+func withFakeLaunch(t *testing.T, l agents.Launch) {
+	t.Helper()
+	orig := agentLaunch
+	t.Cleanup(func() { agentLaunch = orig })
+	agentLaunch = func(*config.Config) agents.Launch { return l }
+}
+
+// fakeRunProject returns an isolated home and project; a non-empty project is written as the
+// project's .corral.yml.
+func fakeRunProject(t *testing.T, project string) (home, proj string) {
+	t.Helper()
+	home = t.TempDir()
+	proj = filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if project != "" {
+		if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(project), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	isolateConfigEnv(t, home, proj)
+	return home, proj
+}
+
+const claudeCfgArgs = "agents: {claude: {args: [--cfg]}}"
+
+func TestRunDryRunExtensionEnv(t *testing.T) {
+	home, proj := fakeRunProject(t, claudeCfgArgs)
+	var gotPath string
+	var gotHost map[string]string
+	withFakeLaunch(t, agents.Launch{
+		ExtensionAsset: []byte("x"),
+		ExtensionName:  "fake-policy/index.js",
+		ExtensionFlag:  "-e",
+		ExtensionEnv: func(path string, host map[string]string) (map[string]string, error) {
+			gotPath, gotHost = path, host
+			return map[string]string{"FAKE_EXT": "dir:" + filepath.Dir(path)}, nil
+		},
+	})
+	t.Setenv("FAKE_HOST_MARK", "1")
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "--", "--user"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d", code)
+	}
+	dir := filepath.Join(home, ".cache", "corral", "fake-policy")
+	if want := filepath.Join(dir, "index.js"); gotPath != want {
+		t.Errorf("ExtensionEnv path = %q, want %q", gotPath, want)
+	}
+	if _, err := os.Stat(gotPath); err != nil {
+		t.Errorf("asset not materialized: %v", err)
+	}
+	if gotHost["FAKE_HOST_MARK"] != "1" {
+		t.Errorf("ExtensionEnv host env missing the launching shell's variables: %v", gotHost)
+	}
+	if got := envVal(out, "FAKE_EXT"); got != "dir:"+dir {
+		t.Errorf("FAKE_EXT = %q, want %q:\n%s", got, "dir:"+dir, out)
+	}
+	if !strings.Contains(out, "--ro-bind "+dir+" "+dir) {
+		t.Errorf("asset directory must be mounted read-only at its own path:\n%s", out)
+	}
+	if strings.Contains(out, "--ro-bind "+gotPath+" ") {
+		t.Errorf("the asset file must not be mounted on its own:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), "--cfg --user") || strings.Contains(out, " -e ") {
+		t.Errorf("agent command must carry no extension argument:\n%s", out)
+	}
+}
+
+func TestRunDryRunArgsFunction(t *testing.T) {
+	home, proj := fakeRunProject(t, claudeCfgArgs)
+	var gotConfig, gotUser []string
+	withFakeLaunch(t, agents.Launch{
+		Args: func(config, user []string) ([]string, error) {
+			gotConfig, gotUser = config, user
+			return []string{"only", "this"}, nil
+		},
+	})
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "--", "--user"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d", code)
+	}
+	if !slices.Equal(gotConfig, []string{"--cfg"}) || !slices.Equal(gotUser, []string{"--user"}) {
+		t.Errorf("Args got config=%v user=%v, want [--cfg] and [--user]", gotConfig, gotUser)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), " only this") || strings.Contains(out, "--cfg") || strings.Contains(out, "--user") {
+		t.Errorf("returned list must replace both lists:\n%s", out)
+	}
+}
+
+func TestRunLaunchHookErrorFailsBeforeOutput(t *testing.T) {
+	boom := fmt.Errorf("boom")
+	for _, tt := range []struct {
+		name   string
+		launch agents.Launch
+	}{
+		{"ExtensionEnv", agents.Launch{
+			ExtensionAsset: []byte("x"),
+			ExtensionName:  "fake-policy/index.js",
+			ExtensionEnv:   func(string, map[string]string) (map[string]string, error) { return nil, boom },
+		}},
+		{"Args", agents.Launch{Args: func(_, _ []string) ([]string, error) { return nil, boom }}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home, proj := fakeRunProject(t, "")
+			withFakeLaunch(t, tt.launch)
+			var code int
+			var out string
+			stderr := captureStderr(t, func() {
+				out = captureStdout(t, func() {
+					code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+				})
+			})
+			if code == 0 || out != "" {
+				t.Errorf("%s error must fail the launch before output: code=%d out=%q", tt.name, code, out)
+			}
+			if !strings.Contains(stderr, "boom") {
+				t.Errorf("%s error must reach stderr, got %q", tt.name, stderr)
+			}
+		})
 	}
 }
 

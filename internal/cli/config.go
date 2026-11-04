@@ -231,6 +231,7 @@ func agentRules(paths []agents.ConfigPath) []sandbox.Rule {
 			Recursive:   p.Recursive,
 			Regex:       p.Regex,
 			Optional:    p.Optional,
+			Create:      p.Create,
 		}
 	}
 	return rules

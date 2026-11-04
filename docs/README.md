@@ -6,27 +6,27 @@ provider, look up an interface, diagnose a failure, or understand a security dec
 
 ## How-to
 
-| Doc                                                | Task                                                                              |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [Install corral](how-to/install.md)                | Download, verify, put on `PATH`, wire up the agent.                               |
-| [Upgrade corral](how-to/upgrade.md)                | `corral update`, the manual fallback, the launch-time check.                      |
-| [Uninstall corral](how-to/uninstall.md)            | Run `corral uninstall`, then remove the binary and config by hand.                |
-| [Provider setup](how-to/providers.md)              | Choose a provider; set up SSH, Docker, or the private home.                       |
-| [Kubernetes credentials](how-to/kubernetes.md)     | Configure managed or pre-provisioned RBAC and verify the session identity.        |
-| [GitLab credentials](how-to/gitlab.md)             | Choose grants, configure the host credential, and verify the session token.       |
-| [Set up session hooks](how-to/session-hooks.md)    | Configure host scripts, verify them, and recover from failures.                   |
-| [Troubleshooting & FAQ](how-to/troubleshooting.md) | Blocked commands, provider failures, reading the audit log.                       |
+| Doc                                                | Task                                                                        |
+| -------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Install corral](how-to/install.md)                | Download, verify, put on `PATH`, wire up the agent.                         |
+| [Upgrade corral](how-to/upgrade.md)                | `corral update`, the manual fallback, the launch-time check.                |
+| [Uninstall corral](how-to/uninstall.md)            | Run `corral uninstall`, then remove the binary and config by hand.          |
+| [Provider setup](how-to/providers.md)              | Choose a provider; set up SSH, Docker, or the private home.                 |
+| [Kubernetes credentials](how-to/kubernetes.md)     | Configure managed or pre-provisioned RBAC and verify the session identity.  |
+| [GitLab credentials](how-to/gitlab.md)             | Choose grants, configure the host credential, and verify the session token. |
+| [Set up session hooks](how-to/session-hooks.md)    | Configure host scripts, verify them, and recover from failures.             |
+| [Troubleshooting & FAQ](how-to/troubleshooting.md) | Blocked commands, provider failures, reading the audit log.                 |
 
 ## Reference
 
-| Doc                                                   | Contents                                                        |
-| ----------------------------------------------------- | --------------------------------------------------------------- |
+| Doc                                                   | Contents                                                       |
+| ----------------------------------------------------- | -------------------------------------------------------------- |
 | [Configuration](reference/config.md)                  | Every config key: type, default, valid values, merge rules.    |
-| [Commands](reference/commands.md)                     | Every command and flag.                                         |
-| [Agents](reference/agents.md)                         | Claude Code vs pi: selection, enforcement, state, and settings. |
-| [Session-hooks contract](reference/hooks-contract.md) | Execution, environment, stdio, the contribution schema.         |
-| [Audit-log format](reference/audit-log.md)            | The record fields and what is logged verbatim.                  |
-| [Sandbox baseline](reference/sandbox-permissions.md)  | The compiled deny-by-default filesystem allowlist (generated).  |
+| [Commands](reference/commands.md)                     | Every command and flag.                                        |
+| [Agents](reference/agents.md)                         | Configuration and supported features for agents.               |
+| [Session-hooks contract](reference/hooks-contract.md) | Execution, environment, stdio, the contribution schema.        |
+| [Audit-log format](reference/audit-log.md)            | The record fields and what is logged verbatim.                 |
+| [Sandbox baseline](reference/sandbox-permissions.md)  | The compiled deny-by-default filesystem allowlist (generated). |
 
 ## Explanation
 

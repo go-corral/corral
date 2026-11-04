@@ -1,7 +1,6 @@
 # corral-helper
 
-A Claude Code plugin that helps users install, configure, run, and troubleshoot
-[corral](../../README.md), including corral sessions that run Claude Code or pi.
+A Claude Code plugin that helps users install, configure, run, and troubleshoot [corral](../../README.md) and corral sessions.
 
 The plugin provides one skill, `corral`. It triggers for setup, config edits, provider
 access, blocked operations, audit logs, always-blocked paths, and related sandbox
