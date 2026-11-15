@@ -46,6 +46,9 @@ func resolveAgentBinary(a agents.Agent) string {
 	return a.Binaries()[0]
 }
 
+// agentLaunch is a test seam over cfg.AgentLaunch.
+var agentLaunch = func(cfg *config.Config) agents.Launch { return cfg.AgentLaunch() }
+
 // materializeExtension writes an agent's embedded policy-extension asset to the host cache
 // and returns its path. Idempotent: rewrites only when absent or drifted.
 func materializeExtension(home, name string, data []byte) (string, error) {
@@ -53,10 +56,10 @@ func materializeExtension(home, name string, data []byte) (string, error) {
 		return "", errors.New("no home to place the policy extension under")
 	}
 	dir := filepath.Join(home, ".cache", "corral")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, name)
 	if cur, err := os.ReadFile(path); err != nil || !bytes.Equal(cur, data) {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return "", err
@@ -203,16 +206,33 @@ func cmdRun(args []string, version string) int {
 	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
 	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
-	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
-	launch := cfg.AgentLaunch()
+	// Activate the agent's in-process policy extension, if it ships one.
+	launch := agentLaunch(cfg)
 	var extensionArgs []string
 	if len(launch.ExtensionAsset) > 0 {
 		assetPath, aerr := materializeExtension(*home, launch.ExtensionName, launch.ExtensionAsset)
 		if aerr != nil {
 			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
-		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
-		extensionArgs = []string{launch.ExtensionFlag, assetPath}
+		if launch.ExtensionEnv != nil {
+			dir := filepath.Dir(assetPath)
+			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: dir, Dst: dir, ReadOnly: true})
+			extEnv, eerr := launch.ExtensionEnv(assetPath, host)
+			if eerr != nil {
+				return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), eerr)
+			}
+			maps.Copy(spec.SetEnv, extEnv)
+		} else {
+			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
+			extensionArgs = []string{launch.ExtensionFlag, assetPath}
+		}
+	}
+	agentArgs := slices.Concat(cfg.AgentArgs(), fs.Args())
+	if launch.Args != nil {
+		var aerr error
+		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), fs.Args()); aerr != nil {
+			return fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
+		}
 	}
 	// The config sections apply before the gate, so their warnings feed it and their masks are in
 	// the spec before any feature provider mounts.
@@ -247,8 +267,7 @@ func cmdRun(args []string, version string) int {
 	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
 	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
-	command = append(command, cfg.AgentArgs()...)
-	command = append(command, fs.Args()...)
+	command = append(command, agentArgs...)
 
 	// Side-effect-free preview of the feature providers: each one's static, secret-free contribution.
 	// Credential-minters and session hooks are named (previewOnly) rather than expanded.

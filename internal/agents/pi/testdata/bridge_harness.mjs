@@ -1,5 +1,5 @@
 // Bridge harness: loads the corral pi bridge with a MOCK pi and talks to the sidecar that the Go
-// test serves at CORRAL_SIDECAR_SOCKET. argv[2] = absolute path to pi-bridge.ts, argv[3] = mode:
+// test serves at CORRAL_SIDECAR_SOCKET. argv[2] = path to pi-bridge.ts, argv[3] = mode:
 //
 //   events            asserts the event mapping and pi's fail-closed rules against the scripted
 //                     sidecar of TestPiBridgeNodeHarness.

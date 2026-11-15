@@ -39,6 +39,8 @@ agents:
     args: []
   pi:
     args: []
+  opencode:
+    args: []
 providers:
   block:
     directories: []
@@ -61,6 +63,7 @@ providers:
       - CLAUDE_CONFIG_DIR
       - PI_CODING_AGENT_DIR
       - PI_CODING_AGENT_SESSION_DIR
+      - OPENCODE_CONFIG_DIR
     set: []
   notes:
     agent: []
@@ -135,13 +138,8 @@ only the section for the selected backend.
 
 - **Type:** string
 - **Default:** `claude`
-- **Valid:** `claude`, `pi`. Other values are rejected when config loads.
-- **Behavior:** selects the agent that corral starts. A `corral run <agent>` positional,
-  such as `corral run pi`, overrides this setting for one launch. Per-agent settings
-  live under [`agents`](#agentsclaudeclaudeaiconnectors).
-
-The [agent reference](agents.md) describes each agent's hooks or extension, config
-directory, state, presence warning, and update settings.
+- **Valid:** `claude`, `pi`, `opencode`.
+- **Behavior:** selects the agent that corral starts. A `corral run <agent>` overrides this setting for one launch.
 
 ### `agents.claude.claudeaiConnectors`
 
@@ -208,15 +206,16 @@ checks this variable before loading account or organization connectors.
 pi has no settings besides [`args`](#agentsagentargs). See
 [the agents reference](agents.md#pi) for pi's fixed sandbox behavior.
 
+### `agents.opencode`
+
+opencode has no settings besides [`args`](#agentsagentargs).
+
 ### `agents.<agent>.args`
 
 - **Type:** list of strings
 - **Default:** `[]`
-- **Applies to:** `agents.claude.args` and `agents.pi.args`.
-- **Behavior:** arguments that `corral run` passes to the agent it starts, before any
-  arguments given after `--`. pi receives them after its policy extension flag. Each list
-  entry is one argument. Config layers and profiles append their entries in order and keep
-  duplicates, so a flag can repeat across layers.
+- **Applies to:** `agents.claude.args`, `agents.pi.args`, and `agents.opencode.args`.
+- **Behavior:** arguments that `corral run` passes to the agent.
 
 ```yaml
 agents:
@@ -224,11 +223,9 @@ agents:
     args: [--model, sonnet, --add-dir, ../shared]
   pi:
     args: [--model, sonnet]
+  opencode:
+    args: [--print-logs]
 ```
-
-With this config, `corral run -- --resume` starts
-`claude --model sonnet --add-dir ../shared --resume`, and `corral run pi` starts
-`pi -e <policy extension> --model sonnet`.
 
 ### `providers`
 
@@ -328,9 +325,7 @@ writable. A read-only entry inside a read-write grant has no effect. `corral val
 
 #### `providers.env`
 
-- **`providers.env.passthrough`:** environment variable names to copy from the host
-  when they are set. Default:
-  `[TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR]`.
+- **`providers.env.passthrough`:** environment variable to pass into the sandbox environment when set. Default: `[TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR, OPENCODE_CONFIG_DIR]`.
 
 The sandbox clears the environment and copies only listed variables. Each entry must be
 a valid variable name and must not name one of corral's own `CORRAL_*` control markers.
@@ -357,16 +352,26 @@ names to this list.
   - Each `name` must be a valid environment variable name.
   - A name can appear in `passthrough` or `set`, but not both. The default passthrough
     list already claims its names.
-  - corral reserves `CORRAL_SANDBOX`, `CORRAL_GLOBAL_CONFIG`, `CORRAL_PROFILES`, `CORRAL_AUDIT_PATH`,
-    `CORRAL_AGENT`, `CORRAL_PROVIDER_NOTES`, `CORRAL_BACKEND_NOTES`,
-    `CORRAL_SIDECAR_SOCKET`, and `CORRAL_DISABLE_HOOKS`. It also reserves Claude Code's
-    `ENABLE_CLAUDEAI_MCP_SERVERS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`,
-    `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`, `CLAUDE_CODE_ATTRIBUTION_HEADER`, and
-    `CLAUDE_CODE_DISABLE_AGENT_VIEW`, plus
-    pi's `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`. Use the
-    `agents.claude` fields for Claude Code settings and set pi's directory variables in
-    the host environment. Config cannot replace variables that control corral's policy,
-    audit log, selected binary, or session notes.
+  - corral reserves the following environment variables. They are managed by corral and cannot be modified by `env.set` or similar.
+    - `CORRAL_SANDBOX`
+    - `CORRAL_GLOBAL_CONFIG`
+    - `CORRAL_PROFILES`
+    - `CORRAL_AUDIT_PATH`
+    - `CORRAL_AGENT`
+    - `CORRAL_PROVIDER_NOTES`
+    - `CORRAL_BACKEND_NOTES`
+    - `CORRAL_SIDECAR_SOCKET`
+    - `CORRAL_DISABLE_HOOKS`
+    - `ENABLE_CLAUDEAI_MCP_SERVERS`
+    - `DISABLE_TELEMETRY`
+    - `DISABLE_ERROR_REPORTING`
+    - `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`
+    - `CLAUDE_CODE_ATTRIBUTION_HEADER`
+    - `CLAUDE_CODE_DISABLE_AGENT_VIEW`
+    - `PI_CODING_AGENT_DIR`
+    - `PI_CODING_AGENT_SESSION_DIR`
+    - `OPENCODE_CONFIG_CONTENT`
+    - `OPENCODE_CONFIG_DIR`
   - A name cannot be set to two different values. Repeating the same `{name, value}` in
     two layers collapses to one entry; a different value is a config error because lists
     merge rather than replace.
@@ -459,9 +464,9 @@ so `keep` never silences that warning.
 - **`path`** (string, default `""`): host directory to use as the sandbox's `$HOME`.
   corral expands `~`, and the resulting path must be absolute. An empty value uses
   `~/.cache/corral/home-<hash>`, where the stable hash identifies the selected agent's
-  config directory: `~/.claude`, `~/.pi`, or the directory `CLAUDE_CONFIG_DIR` or
-  `PI_CODING_AGENT_DIR` points to. Each agent and each relocated config directory
-  therefore has its own private home. `corral validate` prints the resolved directory.
+  config directory: `~/.claude`, `~/.pi`, `~/.config/opencode`, or the directory
+  `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `OPENCODE_CONFIG_DIR` points to. Each
+  agent and each relocated config directory therefore has its own private home. `corral validate` prints the resolved directory.
 - **`keep`** (list of strings, default none): private-home entries that intentionally
   shadow an allowed host path, relative to the private home (`.local/share/uv`; a leading
   `~/` means the same). corral skips the shadow warning for a listed entry and anything

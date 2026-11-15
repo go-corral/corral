@@ -25,17 +25,14 @@ The macOS binaries are unsigned. If Gatekeeper blocks the first run, remove the
 quarantine attribute with `xattr -d com.apple.quarantine ~/.local/bin/corral`. Do this
 only after you have verified the downloaded binary.
 
-## Set up Claude Code
+## Set up
 
-Claude Code is the default agent. To set up pi instead, see the
-[agent reference](../reference/agents.md#pi).
+If no agent is specified, the default Claude Code will be used.
 
-1. Run `corral doctor`. Check that it finds the sandbox backend and `claude` binary.
-2. Run `corral sync` to register the policy hooks in `~/.claude/settings.json`.
-3. Run `corral doctor` again. Check that **needs attention** has no `claude` entry. The
-   `agents` row reports the installed agents as ready, or it shows a warning for another
-   agent, such as pi before `corral sync pi`.
-4. Start a session with `corral run -- <claude args>`.
+1. Run `corral doctor claude`. Check that it finds the sandbox backend and `claude` binary.
+2. Run `corral sync claude` to register the policy hooks in `~/.claude/settings.json`.
+3. Run `corral doctor`. Check that nothing needs attention.
+4. Start a session with `corral run claude -- <claude args>`.
 
 To see what the sandbox will enforce before launching, run `corral validate`.
 

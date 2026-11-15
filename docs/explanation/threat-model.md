@@ -51,7 +51,7 @@ those files.
 
 The `corral hook` policy path returns only allow or block for a tool call. Malformed input, an unknown event, a rule error, or another evaluation failure result in blocks. Inside a `corral run` session, the hook forwards each event to the sidecar. If the sidecar is missing, unreachable, silent or failing, `PreToolUse` blocks with `blocked by corral policy [hook:fail-closed]: cannot evaluate policy`. `PostToolUse` withholds the result. `UserPromptSubmit` scans the prompt and warns once asking for a resubmit when it recognizes a credential.
 
-The pi policy extension sends its events to the sidecar directly. A failed tool call or user command check blocks with `cannot evaluate policy` and the cause. A failed tool result check withholds the output. A failed prompt scan holds the prompt back and shows `cannot evaluate policy` with the cause. A failed session start request leaves the sandbox note out.
+The opencode and pi policy extensions send their events to the sidecar directly. A failed tool call or user command check blocks with `cannot evaluate policy` and the cause. A failed tool result check withholds the output. A failed prompt scan holds the prompt back and shows `cannot evaluate policy` with the cause. A failed session start request leaves the sandbox note out.
 
 A post-tool response requires different mechanics because blocking after execution cannot remove data already returned by the tool. If response parsing or scanning fails, corral replaces the response with a withheld marker. It does not pass the original response through.
 
@@ -131,11 +131,9 @@ A `corral run` or `corral sync` cannot proceed with new or changed repository `.
   detectors. A detected response is withheld in full. Claude Code's user-scope
   `~/.claude.json` remains writable because it also stores session state; project
   `.mcp.json` is protected.
-- **Claude Code's `!` bash mode.** This mode runs a command client-side and inserts its
-  output without a policy hook, so corral cannot scan that output. Filesystem isolation
-  still applies, including the always-blocked masks, but any secret deliberately exposed
-  inside the sandbox could enter the conversation. Do not use `!` to read credential
-  material. `@file` mentions use the hooked `Read` tool and remain covered.
+- **The `!` shell mode of Claude Code and opencode.** This mode runs a command entered by the user and inserts its output without a policy check, so corral cannot scan that output. Any secret deliberately exposed inside the sandbox could enter the conversation. Do not use `!` to read credential material. In Claude Code, `@file` mentions use the hooked `Read` tool and remain covered.
+- **Background shell output in opencode.** When a `shell` call runs in the background, opencode later adds its output to the conversation without a tool result, so the plugin does not scan it. The command itself is checked before it runs.
+- **An opencode policy plugin that fails to load.** opencode logs a warning and runs the session without the plugin. The OS sandbox still applies.
 - **Network egress.** The sandbox has normal network access. `net: none` is not
   implemented and is rejected during config loading. Treat every secret explicitly
   passed into the sandbox as reachable over the network.
@@ -164,10 +162,7 @@ calls and scan prompts and selected tool responses, but there is no filesystem s
 or credential masking. If the registered corral binary is missing outside the sandbox,
 the guarded registration skips it silently, which also means no policy enforcement.
 
-`corral sync pi` installs a similar one-time warning for a bare pi process. That extension
-does not enforce policy: pi's policy extension is loaded only by `corral run pi`.
-Removing or acknowledging a presence warning therefore does not create sandbox
-protection.
+`corral sync pi` and `corral sync opencode` install a similar warning for a bare pi or opencode process. In opencode, the plugin replaces the first prompt of each session, and the user resubmits it to continue. A subagent session gets no warning. These plugins and extensions do not enforce policy: the policy extension or plugin is loaded only by `corral run pi` or `corral run opencode`. Removing or acknowledging a presence warning therefore does not create sandbox protection.
 
 These warnings use the launcher's `CORRAL_SANDBOX` marker only to distinguish a
 corral-launched session from a bare one. They are intended to catch an accidental bare
@@ -191,9 +186,7 @@ sandbox, a process that can alter the operator's environment can set it; this is
 treated as a sandbox escape.
 
 A disabled Claude hook process writes one `hooks-disabled` audit record, and
-`corral doctor` reports the variable when it is present in the shell. For pi,
-`corral sync pi --remove` removes only the bare-session warning. It does not change the
-per-session policy extension activated by `corral run pi`.
+`corral doctor` reports the variable when it is present in the shell. The pi and opencode presence warnings ignore both variables. `corral sync pi --remove` and `corral sync opencode --remove` remove only the bare-session warning. They do not change the per-session policy extension or plugin activated by `corral run`.
 
 ## Reporting a security problem
 

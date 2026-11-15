@@ -123,6 +123,13 @@ func DefaultSpec(p DefaultParams) SandboxSpec {
 	if p.AgentConfigDir != "" {
 		_ = os.MkdirAll(p.AgentConfigDir, 0o700)
 	}
+	// Before the private home is linked, which skips host paths that do not exist.
+	tokens := p.baselineTokens()
+	for _, r := range p.AgentRules {
+		if d, ok := ExpandPath(r.Path, tokens); ok && r.Create {
+			_ = os.MkdirAll(d, 0o700)
+		}
+	}
 
 	var mounts []Mount
 	if p.ProjectDir != "" {
@@ -159,7 +166,7 @@ func DefaultSpec(p DefaultParams) SandboxSpec {
 		SetEnv:         env,
 		TempEnvAliases: p.TempEnvAliases,
 		AgentRules:     p.AgentRules,
-		Tokens:         p.baselineTokens(),
+		Tokens:         tokens,
 		Net:            net,
 		DieWithParent:  true,
 	}

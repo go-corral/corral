@@ -82,3 +82,57 @@ func TestSelfConfigMatchPiFootprint(t *testing.T) {
 		t.Errorf("relocated pi session state must stay writable (got %q)", reason)
 	}
 }
+
+func opencodeFootprint() AgentFootprint {
+	return AgentFootprint{
+		Dir:        ".config/opencode",
+		DirReason:  "opencode's config directory",
+		ProjectDir: ".opencode",
+		ProtectedFiles: map[string]string{
+			"opencode.json":  "opencode's opencode.json",
+			"opencode.jsonc": "opencode's opencode.jsonc",
+			"cli.json":       "opencode's cli.json",
+			"service.json":   "opencode's service.json",
+		},
+		ProtectedDirs:  map[string]string{"plugin": "opencode's plugin directory", "plugins": "opencode's plugin directory"},
+		ProtectedNames: []string{"opencode.json", "opencode.jsonc"},
+	}
+}
+
+// TestSelfConfigMatchOpencodeFootprint pins the two-segment marker, the project marker, and the
+// protected base names, and checks that lookalike paths stay writable.
+func TestSelfConfigMatchOpencodeFootprint(t *testing.T) {
+	sp := selfProtect{allFootprints: []AgentFootprint{opencodeFootprint()}}
+	deny := []string{
+		"/home/other/.config/opencode",
+		"/home/other/.config/opencode/plugins/x.js",
+		"/home/other/.config/opencode/plugin",
+		"/home/other/.config/opencode/service.json",
+		"/work/.opencode",
+		"/work/.opencode/plugins/x.js",
+		"/work/.opencode/opencode.json",
+		"/work/opencode.json",
+		"/work/sub/opencode.jsonc",
+	}
+	for _, p := range deny {
+		if _, ok := selfConfigMatch(p, sp); !ok {
+			t.Errorf("selfConfigMatch(%q) should match", p)
+		}
+	}
+	if reason, _ := selfConfigMatch("/work/opencode.json", sp); reason != "opencode's opencode.json" {
+		t.Errorf("protected base name reason = %q, want opencode's opencode.json", reason)
+	}
+	allow := []string{
+		"/work/opencode/plugins/x.js",
+		"/work/packages/opencode",
+		"/work/.opencode/agents/x.md",
+		"/home/other/.config/opencode/agents/x.md",
+		"/home/other/.config",
+		"/work/opencode.md",
+	}
+	for _, p := range allow {
+		if reason, ok := selfConfigMatch(p, sp); ok {
+			t.Errorf("selfConfigMatch(%q) must NOT match (got %q)", p, reason)
+		}
+	}
+}
