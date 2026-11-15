@@ -923,7 +923,7 @@ func TestRunPiActivatesBridge(t *testing.T) {
 	if !strings.Contains(out, "-e "+bridge) {
 		t.Errorf("`run pi` argv missing `-e %s` activation:\n%s", bridge, out)
 	}
-	if !strings.Contains(out, "--ro-bind "+bridge+" "+bridge) {
+	if runtime.GOOS == "linux" && !strings.Contains(out, "--ro-bind "+bridge+" "+bridge) {
 		t.Errorf("`run pi` must bind the bridge file read-only:\n%s", out)
 	}
 }
@@ -991,7 +991,7 @@ func TestRunDryRunExtensionEnv(t *testing.T) {
 	if got := envVal(out, "FAKE_EXT"); got != "dir:"+dir {
 		t.Errorf("FAKE_EXT = %q, want %q:\n%s", got, "dir:"+dir, out)
 	}
-	if !strings.Contains(out, "--ro-bind "+dir+" "+dir) {
+	if runtime.GOOS == "linux" && !strings.Contains(out, "--ro-bind "+dir+" "+dir) {
 		t.Errorf("asset directory must be mounted read-only at its own path:\n%s", out)
 	}
 	if strings.Contains(out, "--ro-bind "+gotPath+" ") {

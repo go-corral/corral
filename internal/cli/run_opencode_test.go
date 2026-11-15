@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -90,7 +91,7 @@ func TestRunOpencodeDryRunConfigDir(t *testing.T) {
 	if got := envVal(r.out, "OPENCODE_CONFIG_DIR"); got != cfgDir {
 		t.Errorf("OPENCODE_CONFIG_DIR = %q, want %q", got, cfgDir)
 	}
-	if !strings.Contains(r.out, "--bind "+cfgDir+" "+cfgDir) {
+	if runtime.GOOS == "linux" && !strings.Contains(r.out, "--bind "+cfgDir+" "+cfgDir) {
 		t.Errorf("config dir must be mounted read-write:\n%s", r.out)
 	}
 }
