@@ -579,16 +579,6 @@ func TestPrepareGrantUserTempNotDarwin(t *testing.T) {
 	}
 }
 
-// allowBlock returns the body of the first (allow <op> …) block with the given header.
-func allowBlock(profile, header string) string {
-	i := strings.Index(profile, header)
-	if i < 0 {
-		return ""
-	}
-	rest := profile[i:]
-	return rest[:strings.Index(rest, "\n)\n")]
-}
-
 // The granted per-user temp directory is a read-write subpath like any mount, so the
 // sidecar deny and the blocked-path deny, which come after the allow blocks, still win
 // inside it. The sidecar deny covers every session's sidecar directory in it, not only
@@ -604,7 +594,7 @@ func TestSeatbeltProfileGrantUserTemp(t *testing.T) {
 	}
 	grant := `(subpath "/private/var/folders/zz/abc123/T")`
 	for _, header := range []string{"(allow file-write*\n", "(allow file-read*\n"} {
-		if !strings.Contains(allowBlock(profile, header), grant) {
+		if !strings.Contains(allowBody(t, profile, header), grant) {
 			t.Errorf("%s block must hold %s; profile:\n%s", strings.TrimSpace(header), grant, profile)
 		}
 	}
@@ -616,6 +606,29 @@ func TestSeatbeltProfileGrantUserTemp(t *testing.T) {
 	} {
 		if i := strings.Index(profile, rule); i < lastAllow {
 			t.Errorf("%s must come after the allow blocks (found at %d, last allow at %d)", rule, i, lastAllow)
+		}
+	}
+}
+
+// Baseline paths outside $HOME seed metadata ancestors too, so realpath works through
+// /Library and /private/etc, while /Library itself stays unreadable and unlisted.
+func TestSeatbeltProfileBaselineAncestors(t *testing.T) {
+	profile, err := macBackend().profile(withTok(sandbox.SandboxSpec{SetEnv: map[string]string{}}, macTestTokens()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := allowBody(t, profile, "(allow file-read-metadata\n")
+	for _, anc := range []string{"/Library", "/private/etc", "/private/var/db"} {
+		if !strings.Contains(meta, `(literal "`+anc+`")`) {
+			t.Errorf("metadata ancestors must include %q", anc)
+		}
+	}
+	for _, header := range []string{"(allow file-read*\n", "(allow process-exec*\n"} {
+		body := allowBody(t, profile, header)
+		for _, rule := range []string{`(subpath "/Library")`, `(literal "/Library")`} {
+			if strings.Contains(body, rule) {
+				t.Errorf("%s block must not contain %s", strings.TrimSpace(header), rule)
+			}
 		}
 	}
 }
