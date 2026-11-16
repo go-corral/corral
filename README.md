@@ -24,7 +24,7 @@ you ─ corral run ─▶ ┌─────────── sandbox ───
                     │ deny-by-default filesystem;    │
                     │ ~/.ssh, ~/.aws, … masked       │
                     │                                │
-                    │ Claude Code / pi               │
+                    │ Claude Code / pi / opencode    │
                     │    │ every tool call & prompt  │
                     │    ▼                           │
                     │ policy hook ── allow / block ──┼─▶ audit log
@@ -88,14 +88,14 @@ Then ask: _"set up corral on this machine"_, _"let the sandboxed claude write to
 ## Quick start
 
 ```sh
-corral sync                  # register the hook in Claude's settings.json
-corral run -- <claude args>  # launch claude inside the sandbox
-corral run --dry-run --      # print the exact sandbox command without launching
+corral sync claude                 # register the hook in Claude's settings.json
+corral run claude -- <claude args> # launch claude inside the sandbox
+corral run claude --dry-run --     # print the exact sandbox command without launching
 ```
 
-To make corral the default for Claude Code, add `alias claude='corral run --'`.
-For pi, use `corral sync pi` and `corral run pi`; see the
-[agent reference](docs/reference/agents.md).
+Use `corral sync pi` or `opencode` for the other supported agents. See the [agent reference](docs/reference/agents.md).
+
+Tip: `alias claude='corral run claude --'` makes your agent run in corral by default.
 
 ## Commands
 
@@ -142,25 +142,15 @@ with confirmation at each step. See [Uninstall corral](docs/how-to/uninstall.md)
 
 ## Documentation
 
-Full docs live in [`docs/`](docs) ([index](docs/README.md)):
-
-- [Install guide](docs/how-to/install.md) covers download, verification, and initial
-  setup. [Upgrading](docs/how-to/upgrade.md) uses one command.
-- [Configuration reference](docs/reference/config.md) lists every key, type, default,
-  and precedence rule.
-- [Provider setup](docs/how-to/providers.md) covers SSH, Docker, and private-home setup.
-  [Kubernetes](docs/how-to/kubernetes.md) and [GitLab](docs/how-to/gitlab.md) have
-  dedicated guides.
-- [Session hooks](docs/how-to/session-hooks.md) run host setup and cleanup around a
-  session.
-- [Agents](docs/reference/agents.md) explains how to select and operate Claude Code or
-  pi.
-- [Security and threat model](docs/explanation/threat-model.md) states corral's
-  guarantees and limits.
-- [Troubleshooting & FAQ](docs/how-to/troubleshooting.md) covers blocked commands,
-  provider failures, and the audit log.
-- [CONTRIBUTING.md](CONTRIBUTING.md) covers development setup, golden-file review, and
-  cross-platform verification.
+- [Install guide](docs/how-to/install.md) covers the initial setup. For upgrade steps see [Upgrading](docs/how-to/upgrade.md).
+- [Configuration reference](docs/reference/config.md) explains all config options and locations.
+- [Provider setup](docs/how-to/providers.md) covers SSH, Docker and private-home setup.
+  [Kubernetes](docs/how-to/kubernetes.md) and [GitLab](docs/how-to/gitlab.md) have dedicated guides.
+- [Session hooks](docs/how-to/session-hooks.md) run host setup and cleanup around a session.
+- [Agents](docs/reference/agents.md) explains how to select and configure supported agents.
+- [Security and threat model](docs/explanation/threat-model.md) states corral's guarantees and limits.
+- [Troubleshooting & FAQ](docs/how-to/troubleshooting.md) covers blocked commands, provider failures and the audit log.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers development setup, golden-file review and cross-platform verification.
 
 ## License
 

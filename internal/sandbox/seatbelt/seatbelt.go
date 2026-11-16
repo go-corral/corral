@@ -211,6 +211,7 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 	read, write, ruleSeeds := compileMacOSBaseline(sandbox.RulesFor(spec), spec.Tokens, b.resolve)
 
 	var mountSeeds []string
+	var overlayRead, overlayWrite []sbItem
 	for _, m := range spec.Mounts {
 		if m.Src == "" || !path.IsAbs(m.Src) {
 			return "", fmt.Errorf("sandbox: mount source must be an absolute path, got %q", m.Src)
@@ -218,7 +219,16 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 		val := normalizeMacPath(m.Src)
 		it := sbItem{kind: sbSubpath, val: val}
 		read = append(read, it)
-		if !m.ReadOnly {
+		if m.Overlay {
+			// Never in `write`: an overlay regains only file-write-data (in the
+			// overlay section below), so its node can be connected to but never
+			// removed or replaced — like a bwrap bind, whose mountpoint cannot
+			// be unlinked even from a writable parent.
+			overlayRead = append(overlayRead, it)
+			if !m.ReadOnly {
+				overlayWrite = append(overlayWrite, it)
+			}
+		} else if !m.ReadOnly {
 			write = append(write, it)
 		}
 		mountSeeds = append(mountSeeds, val)
@@ -315,6 +325,34 @@ func (b Backend) profile(spec sandbox.SandboxSpec) (string, error) {
 			}
 			sb.WriteString(")\n\n")
 		}
+	}
+
+	if len(overlayRead) > 0 {
+		sb.WriteString(";; Overlay mounts: vetted files re-granted on top of the blocked-path deny\n")
+		sb.WriteString(";; (e.g. the ssh provider's ~/.ssh/config), so they win wherever one applies.\n")
+		sb.WriteString(";; Exec stays denied. A read-write overlay grants only file-write-data: a socket\n")
+		sb.WriteString(";; can be connected to, but the node cannot be removed or replaced.\n")
+		sb.WriteString("(allow file-read*\n")
+		for _, it := range overlayRead {
+			fmt.Fprintf(&sb, "  %s\n", it.sbpl())
+		}
+		sb.WriteString(")\n")
+		if len(overlayWrite) > 0 {
+			sb.WriteString("(allow file-write-data\n")
+			for _, it := range overlayWrite {
+				fmt.Fprintf(&sb, "  %s\n", it.sbpl())
+			}
+			sb.WriteString(")\n")
+		}
+		if len(spec.BlockedFiles) > 0 {
+			sb.WriteString(";; block.files stay denied even under an overlay.\n")
+			sb.WriteString("(deny file-read* file-write* process-exec*\n")
+			for _, p := range spec.BlockedFiles {
+				fmt.Fprintf(&sb, "  (literal \"%s\")\n", sbplEscape(normalizeMacPath(p)))
+			}
+			sb.WriteString(")\n")
+		}
+		sb.WriteString("\n")
 	}
 
 	if spec.Net == sandbox.NetNone {

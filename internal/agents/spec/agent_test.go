@@ -38,3 +38,13 @@ func TestBinDir(t *testing.T) {
 		t.Errorf("BinDir(absolute) = %q, want %q", got, want)
 	}
 }
+
+func TestArgsFields(t *testing.T) {
+	if f := (Args{}).ArgsFields(); f != nil {
+		t.Errorf("no args: fields = %v, want nil", f)
+	}
+	f := Args{Args: []string{"--model", "sonnet"}}.ArgsFields()
+	if len(f) != 1 || f[0].Label != "Args" || f[0].Value != "--model sonnet" {
+		t.Errorf("fields = %+v, want one Args: --model sonnet row", f)
+	}
+}

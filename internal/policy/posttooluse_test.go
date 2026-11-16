@@ -329,6 +329,44 @@ func replacementLine(s string) string {
 	return ""
 }
 
+// An oversized event is cut at MaxEventBytes+1, so it is never valid JSON. The tool name must
+// still come from the prefix, or an mcp__* result gets the Bash shape and is not withheld.
+func TestRunPostToolUseOversizedMCPKeepsShape(t *testing.T) {
+	ev := `{"session_id":"s","transcript_path":"/t.jsonl","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"mcp__x__y","tool_input":{"q":"a"},"tool_response":[{"type":"text","text":"` +
+		strings.Repeat("a", MaxEventBytes) + `"}]}`
+	var out, errw bytes.Buffer
+	code := RunPostToolUseHook(0, 0, nil, strings.NewReader(ev), NewPostToolUseGate(&out), &errw)
+	if code != ExitAllow {
+		t.Fatalf("the replacement rides in the JSON with exit 0; got code %d", code)
+	}
+	if _, ok := decodeUpdatedToolOutput(t, out.String()).([]any); !ok {
+		t.Errorf("an oversized mcp__* event must get a content-block array; got %q", out.String())
+	}
+}
+
+func TestProbeToolNameTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+	}{
+		{"valid", `{"tool_name":"mcp__x__y","tool_input":{}}`, "mcp__x__y"},
+		{"before the cut", `{"session_id":"s","hook_event_name":"PostToolUse","tool_name":"mcp__x__y","tool_input":{"a":[1,{"b":2}]},"tool_response":"aaa`, "mcp__x__y"},
+		{"after the cut", `{"session_id":"s","tool_input":{"a":1},"tool_response":"aaa`, ""},
+		{"cut inside the name", `{"tool_name":"mcp__x`, ""},
+		{"nested only", `{"tool_input":{"tool_name":"mcp__x__y"},"tool_response":"aaa`, ""},
+		{"nested then top-level", `{"tool_input":{"tool_name":"mcp__nested"},"tool_name":"mcp__x__y","tool_response":"aaa`, "mcp__x__y"},
+		{"non-string", `{"tool_name":7,"tool_response":"aaa`, ""},
+		{"not an object", `["tool_name","mcp__x__y"`, ""},
+		{"after the top-level object", `{"a":1} "tool_name" "mcp__x__y"`, ""},
+		{"empty", ``, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := probeToolName([]byte(tc.in)); got != tc.want {
+				t.Errorf("probeToolName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // Bash response with clean stdout: allowed through.
 func TestRunPostToolUseAllowsBashCleanResponse(t *testing.T) {
 	ev := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"stdout":"hello world","stderr":"","exit_code":0}}`

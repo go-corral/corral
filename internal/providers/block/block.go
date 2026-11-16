@@ -1,38 +1,17 @@
-// Package block implements the built-in block provider: the launcher half of the
-// config deny lists. The always-blocked paths are not part of this provider —
-// DefaultSpec bakes them into the spec before any provider runs.
+// Package block is the providers.block config section: the config deny lists.
+// The always-blocked paths are not part of it — DefaultSpec bakes them into the
+// spec before the launcher applies the config sections.
 package block
 
-import (
-	"context"
-	"strings"
+import "strings"
 
-	"github.com/go-corral/corral/internal/providers/spec"
-)
-
-type block struct {
-	dirs  []string
-	files []string
-}
-
-// New builds the block provider from the config-added deny lists (already
-// ~-expanded absolute paths).
-func New(dirs, files []string) spec.Provider {
-	return &block{dirs: dirs, files: files}
-}
-
-func (b *block) Name() string { return "block" }
-
-func (b *block) Available(ctx context.Context) bool { return true }
-
-// Mint is pure. It authors no Status row: the banner's blocked row already names
-// these paths.
-func (b *block) Mint(ctx context.Context, _ spec.Session, dryRun bool) (*spec.Contribution, error) {
+// AgentNotes returns the agent note for the config-added deny lists, or nil when
+// both are empty.
+func AgentNotes(dirs, files []string) []string {
+	if len(dirs)+len(files) == 0 {
+		return nil
+	}
 	// Every entry, with no cap: the agent checks a failed path against this list.
-	masked := append(append([]string{}, b.dirs...), b.files...)
-	return &spec.Contribution{
-		BlockedDirs:  b.dirs,
-		BlockedFiles: b.files,
-		AgentNotes:   []string{"`providers.block` masks these paths, and the user can remove an entry: `" + strings.Join(masked, "`, `") + "`"},
-	}, nil
+	masked := append(append([]string{}, dirs...), files...)
+	return []string{"`providers.block` masks these paths, and the user can remove an entry: `" + strings.Join(masked, "`, `") + "`"}
 }

@@ -126,8 +126,10 @@ func hasAnySuffix(s string, suffixes ...string) bool {
 type AgentFootprint struct {
 	Dir            string
 	DirReason      string
+	ProjectDir     string
 	ProtectedFiles map[string]string
 	ProtectedDirs  map[string]string
+	ProtectedNames []string
 }
 
 // selfProtect carries the inputs selfConfigMatch needs: the active agent's canonical effective
@@ -210,28 +212,41 @@ func selfConfigMatch(path string, sp selfProtect) (string, bool) {
 	return "", false
 }
 
-// matchAgentFootprint walks path's segments and, at any segment equal to a footprint's Dir marker,
-// matches the remainder after it against that agent's protected files (exact next segment) and
-// protected subtrees (segment prefix in either direction, so a multi-segment key like
-// "agent/extensions" gates both its contents and its intermediate parents), plus the bare-dir
-// case.
+// matchAgentFootprint walks path's segments and, wherever the segments of a footprint's Dir or
+// ProjectDir marker occur in sequence, matches the remainder after them against that agent's
+// protected files (exact next segment) and protected subtrees (segment prefix in either
+// direction, so a multi-segment key like "agent/extensions" gates both its contents and its
+// intermediate parents), plus the bare-dir case. A ProtectedNames entry matches the base name in
+// any directory, with its ProtectedFiles reason when it has one.
 func matchAgentFootprint(segs []string, footprints []AgentFootprint) (string, bool) {
-	for i, s := range segs {
-		for _, fp := range footprints {
-			if fp.Dir == "" || s != fp.Dir {
-				continue
-			}
-			if i == len(segs)-1 {
-				return fp.DirReason, true
-			}
-			rem := segs[i+1:]
-			if reason, ok := fp.ProtectedFiles[rem[0]]; ok {
+	for _, fp := range footprints {
+		if base := segs[len(segs)-1]; slices.Contains(fp.ProtectedNames, base) {
+			if reason, ok := fp.ProtectedFiles[base]; ok {
 				return reason, true
 			}
-			for sub, reason := range fp.ProtectedDirs {
-				dsegs := strings.Split(sub, "/")
-				if segsHavePrefix(rem, dsegs) || segsHavePrefix(dsegs, rem) {
+			return fp.DirReason, true
+		}
+		for _, marker := range []string{fp.Dir, fp.ProjectDir} {
+			if marker == "" {
+				continue
+			}
+			msegs := strings.Split(marker, "/")
+			for i := range segs {
+				if !segsHavePrefix(segs[i:], msegs) {
+					continue
+				}
+				rem := segs[i+len(msegs):]
+				if len(rem) == 0 {
+					return fp.DirReason, true
+				}
+				if reason, ok := fp.ProtectedFiles[rem[0]]; ok {
 					return reason, true
+				}
+				for sub, reason := range fp.ProtectedDirs {
+					dsegs := strings.Split(sub, "/")
+					if segsHavePrefix(rem, dsegs) || segsHavePrefix(dsegs, rem) {
+						return reason, true
+					}
 				}
 			}
 		}

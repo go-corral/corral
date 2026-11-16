@@ -1,58 +1,51 @@
 # Agent reference
 
-corral supports Claude Code and pi. Both use the same sandbox, policy rules,
-providers, and config layers. They differ in how they send events to corral and where
-they store state.
+corral supports Claude Code, pi, and opencode. All three use the same sandbox, policy rules, providers, and config layers.
 
 ## Select an agent
 
-| Method | Behavior |
-| --- | --- |
-| `agent: claude` or `agent: pi` | Selects the default agent. The default is `claude`. |
-| `corral run pi` | Overrides `agent` for one launch. |
-| `corral sync pi` | Synchronizes pi's persistent presence warning instead of Claude Code's hooks. |
-| `corral doctor` | Reports readiness for every supported agent; it takes no agent argument. |
+| Method                                             | Behavior                                                                                   |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `agent: claude`, `agent: pi`, or `agent: opencode` | Selects the default agent. The default is `claude`.                                        |
+| `corral run pi` or `corral run opencode`           | Overrides `agent` for one launch.                                                          |
+| `corral sync pi` or `corral sync opencode`         | Synchronizes the persistent presence warning of that agent instead of Claude Code's hooks. |
+| `corral doctor`                                    | Reports readiness for every supported agent; it takes no agent argument.                   |
 
-An unsupported `agent` value is rejected when config loads. Arguments for the agent
-go after `--`, for example `corral run pi -- --help`.
+Arguments for the agent go after `--`, for example `corral run pi -- --help`.
 
 ## Compare enforcement and state
 
-| | Claude Code | pi |
-| --- | --- | --- |
-| In-session policy | Command hooks registered in `settings.json` | Read-only policy extension loaded by every `corral run pi` |
-| `corral sync` | Merges corral's hook registrations into `settings.json` | Installs the global presence-warning extension |
-| Default config directory | `~/.claude` | `~/.pi` |
-| Config relocation | `CLAUDE_CONFIG_DIR` | `PI_CODING_AGENT_DIR` |
-| Bare-agent warning | `UserPromptSubmit` hook registered by sync | `corral-presence.ts` installed by sync |
-| Startup update behavior | Claude Code updater cannot modify a read-only native installation | `PI_OFFLINE=1` disables pi's startup update checks |
+|                          | Claude Code                                             | pi                                         | opencode                                              |
+| ------------------------ | ------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------- |
+| In-session policy        | Hooks registered in `settings.json`                     | Read-only policy extension loaded by `run` | Read-only policy plugin loaded by `run`               |
+| `corral sync`            | Merges corral's hook registrations into `settings.json` | Installs the presence-warning extension    | Installs the presence-warning plugin                  |
+| Default config directory | `~/.claude`                                             | `~/.pi/agent`                              | `~/.config/opencode`                                  |
+| Config relocation        | `CLAUDE_CONFIG_DIR`                                     | `PI_CODING_AGENT_DIR`                      | `OPENCODE_CONFIG_DIR`                                 |
+| Bare-agent warning       | `UserPromptSubmit` hook                                 | `corral-presence.ts` installed by sync     | `corral-presence.js` installed by sync                |
+| Startup update behavior  | Depends on install method                               | `PI_OFFLINE=1` disables update checks      | `OPENCODE_DISABLE_AUTOUPDATE=1` disables update check |
 
-`corral run` warns when the selected agent's corral files are missing or stale. Run
-`corral sync` for Claude Code or `corral sync pi` for pi, then confirm the result with
-`corral doctor`.
+`corral run` warns when the selected agent's corral files are missing or stale. Run `corral sync` for the affected agent.
 
 ## Deny format
 
-Every deny from a policy rule has one format:
+If a tool call is denied, the block message follows a fixxed format:
 
 ```text
 blocked by corral policy [hook:<rule>]: <reason>. Fix: <fix text>
 ```
 
-- `[hook:<rule>]` names the layer and the rule that denied the call: `always-blocked`, `blocked-path`, `ai-ignore`, `bash`, `path-pattern`, or `secret-scan`.
-- `Fix:` names the setting that the agent proposes to the user. A fix that starts with `None, by design.` has no setting.
+- `[hook:<rule>]` describes the layer and the rule that fired: `always-blocked`, `blocked-path`, `ai-ignore`, `bash`, `path-pattern`, or `secret-scan`.
+- `Fix:` describes the setting that the agent proposes to the user.
 
-Claude Code receives the text as `permissionDecisionReason` of the `PreToolUse` decision. The pi policy extension calls the hook with `--decision exit2` and shows the stderr line as the block reason. The stderr line has the same text after the prefix `corral: `.
+Claude Code receives the text as `permissionDecisionReason` of the `PreToolUse` decision. The pi and opencode extensions show the stderr line as the block reason. The stderr line has the same text after the prefix `corral: `.
 
-When corral cannot check a call, the rule is `fail-closed`, the reason is the error, and the fix is `None. Corral could not check this call, so it blocked it. Tell the user the error.` Both agents receive this text as the stderr line after the prefix `corral: `, with exit status 2.
+When corral cannot check a call, the message is `None. Corral could not check this call, so it blocked it. Tell the user the error.`
 
 When a call ran but corral hid its output, the replacement output has this format:
 
 ```text
 output withheld by corral policy [hook:<rule>]: <reason>. The call ran. Fix: <fix text>
 ```
-
-The rule is `response-secret` for a credential in the output, or `fail-closed` when corral could not scan the output. Both agents receive this text in place of the tool output.
 
 For the fix of each rule, see [The hook blocked my command](../how-to/troubleshooting.md#the-hook-blocked-my-command) and [A tool output is withheld](../how-to/troubleshooting.md#a-tool-output-is-withheld).
 
@@ -85,17 +78,18 @@ elsewhere are unaffected.
 
 ### Claude Code settings
 
-| Config key | Default | Effect inside the sandbox |
-| --- | --- | --- |
-| `agents.claude.claudeaiConnectors` | `false` | Prevents loading claude.ai account connectors. |
-| `agents.claude.telemetry` | `false` | Disables operational telemetry. |
-| `agents.claude.errorReporting` | `false` | Disables Sentry error reporting. |
-| `agents.claude.feedbackSurvey` | `false` | Disables session-quality surveys. |
-| `agents.claude.attributionHeader` | `true` | Keeps Claude Code's system-prompt attribution block. Set `false` for a local model or gateway that should omit it. |
-| `agents.claude.agentView` | `false` | Disables [agent view](https://code.claude.com/docs/en/agent-view). Its background sessions cannot outlive the sandbox. |
+| Config key                         | Default | Effect inside the sandbox                                                                                                                    |
+| ---------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents.claude.claudeaiConnectors` | `false` | Prevents loading claude.ai account connectors.                                                                                               |
+| `agents.claude.telemetry`          | `false` | Disables operational telemetry.                                                                                                              |
+| `agents.claude.errorReporting`     | `false` | Disables Sentry error reporting.                                                                                                             |
+| `agents.claude.feedbackSurvey`     | `false` | Disables session-quality surveys.                                                                                                            |
+| `agents.claude.attributionHeader`  | `true`  | Keeps Claude Code's system-prompt attribution block. Set `false` for a local model or gateway that should omit it.                           |
+| `agents.claude.agentView`          | `false` | Disables [agent view](https://code.claude.com/docs/en/agent-view). Its background sessions cannot outlive the sandbox.                       |
+| `agents.claude.args`               | `[]`    | Arguments passed to `claude` on every `corral run`, before the arguments after `--`. See [`agents.<agent>.args`](config.md#agentsagentargs). |
 
 `corral validate` reports the connector, telemetry, error-reporting, survey, and
-agent view settings. See
+agent view settings, and the configured arguments. See
 [`agents.claude`](config.md#agentsclaudeclaudeaiconnectors) for the environment
 variables corral sets.
 
@@ -104,19 +98,40 @@ startup banner. Unless `settings.json` contains `"tui": "default"`, corral warns
 before launch. Run `/tui default` in Claude Code to keep the banner in scrollback,
 or use `--yes` when you have reviewed the warning and do not need the pause.
 
-## pi
+## pi and opencode
 
-pi has no built-in sandbox. For each `corral run pi`, corral mounts a read-only
-policy extension named `corral-policy.ts` and passes it to pi with the `-e` flag. The
-extension checks tool calls, tool results, and prompts. It exists only for that
-corral-launched session.
+pi and opencode have no built-in sandbox. For each `corral run pi` or `corral run opencode`, corral mounts a read-only policy extension (pi) or plugin (opencode) that exists only for that corral-launched session. It checks tool calls, tool results, and prompts, and sends each event to the sidecar.
+
+### Presence warning
+
+`corral sync pi` installs `corral-presence.ts` in pi's global extensions directory. `corral sync opencode` installs `corral-presence.js` in `<config directory>/plugins/`, by default `~/.config/opencode/plugins/corral-presence.js`. Neither file enforces policy, because the per-launch policy extension or plugin is absent from a bare process. Inside corral the opencode plugin does nothing.
+
+- **pi:** warns once when pi starts without corral.
+- **opencode:** replaces the first prompt of each session with a warning that names `corral run opencode`. The model relays the warning and the user resubmits the prompt. A subagent session gets no warning.
+
+`corral sync <agent> --remove` removes only this file. To stop the warning without corral, delete the file.
+
+### Arguments and environment
+
+`agents.pi.args` and `agents.opencode.args` add arguments passed to the agent on every run. See [`agents.<agent>.args`](config.md#agentsagentargs).
+
+corral sets `PI_OFFLINE=1` for pi and `OPENCODE_DISABLE_AUTOUPDATE=1` for opencode. pi's startup version and package checks can invoke git over SSH while `~/.ssh` remains masked. To enable the checks or updates deliberately, override the variable with `providers.env.set`:
+
+```yaml
+providers:
+  env:
+    set:
+      - name: PI_OFFLINE
+        value: ""
+```
+
+corral reserves `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `OPENCODE_CONFIG_CONTENT`, and `OPENCODE_CONFIG_DIR`: `providers.env.set` cannot change them.
+
+### pi
+
+pi loads the policy extension `corral-policy.ts` through the `-e` flag.
 
 corral requires pi 0.86.0 or later. The policy extension adds the sandbox note to pi's system prompt as a section. pi stores this section once per session.
-
-`corral sync pi` installs `corral-presence.ts` in pi's global extensions directory.
-This extension does not enforce policy. It warns once when pi starts without
-corral, because the per-launch policy extension is absent from a bare `pi` process.
-`corral sync pi --remove` removes only this presence warning.
 
 By default, corral binds the `~/.pi` directory read-write. pi keeps most account,
 session, extension, and tool state under `~/.pi/agent`, while some tooling writes
@@ -128,17 +143,36 @@ If `PI_CODING_AGENT_DIR` is set, corral binds that directory instead. It forward
 `providers.env.set` to replace them. The sandbox therefore uses the locations selected
 by the host process.
 
-corral sets `PI_OFFLINE=1` because pi's startup version and package checks can invoke
-git over SSH while `~/.ssh` remains masked. To enable those checks deliberately,
-override it with:
+### opencode
 
-```yaml
-providers:
-  env:
-    set:
-      - name: PI_OFFLINE
-        value: ""
+corral supports opencode 2.x. A policy plugin is placed at `~/.cache/corral/opencode-policy/index.js` and activated it `OPENCODE_CONFIG_CONTENT`. If `OPENCODE_CONFIG_CONTENT` is aleady set, corral merges its plugin into that value. The value must be strict JSON without comments.
+
+The plugin maps opencode's tools to the names that the policy rules use. For example, `shell` is checked as `Bash` and `read` as `Read`. A `patch` call is checked as one write per file in the patch.
+
+#### opencode directories
+
+| Path                                           | Grant                   | Content                                   |
+| ---------------------------------------------- | ----------------------- | ----------------------------------------- |
+| `$OPENCODE_CONFIG_DIR` or `~/.config/opencode` | read-write              | Config, plugins, and instructions         |
+| `~/.local/share/opencode`                      | read-write              | Sessions database, credentials and logs   |
+| `~/.opencode/bin`                              | read-only, when present | Binary and shim of the official installer |
+
+corral does not bind `~/.local/state/opencode` and `~/.cache/opencode`. These directories could share state outside the sandbox, the private-home contains sandboxed versions.
+
+The following files are protected, writes and edits in tool calls will be prohibited:
+
+- In the config directory: `opencode.json`, `opencode.jsonc`, `cli.json`, `service.json`, and the `plugin` and `plugins` directories.
+- In any project: the `.opencode` directory itself, the `plugin` and `plugins` directories and the `cli.json` and `service.json` files in it, and every file named `opencode.json` or `opencode.jsonc`. opencode loads plugins from these locations.
+
+#### opencode server and arguments
+
+Without `--standalone`, opencode sends its work to a shared background service. That service would run outside the sandbox. So `corral run opencode` adds `--standalone`, except when the command is `acp`. It rejects `--server` in `agents.opencode.args` and after `--`, because that flag sends the work to a server outside the sandbox. It also rejects `--no-standalone`, `--standalone=<value>`, and `--standalone` followed by `false`, `no`, `off`, or `0` before the first `--`, because they let opencode use the shared service.
+
+```text
+corral run opencode -- run hello    ->  opencode run hello --standalone
+corral run opencode -- acp          ->  opencode acp
 ```
 
-pi currently has no keys under `agents.pi`; an empty `agents.pi: {}` block is
-accepted but unnecessary.
+The commands `serve`, `service`, `mcp add`, `plugin add`, `plugin remove`, `upgrade`, `uninstall`, `pair`, `debug paths`, and `debug heap-dump` reject `--standalone` and fail with opencode's usage error. They manage host state, run them without corral.
+
+opencode takes only root flags before a subcommand, so the list accepts only root flags such as `--print-logs` and `-c`. Set the model with `model` in `opencode.json`. `--model` is a flag of `run`.

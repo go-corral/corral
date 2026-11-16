@@ -5,6 +5,7 @@ import (
 )
 
 type Config struct {
+	spec.Args          `yaml:",inline"`
 	ClaudeaiConnectors bool `yaml:"claudeaiConnectors"`
 	Telemetry          bool `yaml:"telemetry"`
 	ErrorReporting     bool `yaml:"errorReporting"`
@@ -61,5 +62,5 @@ func (c Config) ValidationFields() []spec.BannerField {
 	if !c.AttributionHeader {
 		fields = append(fields, toggle("Attribution header", false))
 	}
-	return fields
+	return append(fields, c.ArgsFields()...)
 }

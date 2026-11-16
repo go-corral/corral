@@ -463,6 +463,10 @@ func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, e
 		case eventUserPromptSubmit:
 			ev, _ := policy.ParseEvent(payload)
 			code, _ = promptSecretWarn(ev, entropy, aud, &stdout)
+		case eventSessionStart:
+			code = policy.WriteSessionStartContext(&stdout, sandboxSystemNote(
+				runtime.GOOS, hookVersion, in.env[sandbox.BackendNotesEnvVar], in.env[sandbox.ProviderNotesEnvVar],
+			))
 		default:
 			return sidecar.Response{Error: fmt.Sprintf("unknown request type %q", req.Type)}
 		}
@@ -601,8 +605,10 @@ func agentFootprint(a agents.Agent) policy.AgentFootprint {
 	return policy.AgentFootprint{
 		Dir:            fp.Dir,
 		DirReason:      fp.DirReason,
+		ProjectDir:     fp.ProjectDir,
 		ProtectedFiles: fp.ProtectedFiles,
 		ProtectedDirs:  fp.ProtectedDirs,
+		ProtectedNames: fp.ProtectedNames,
 	}
 }
 

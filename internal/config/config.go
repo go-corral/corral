@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/agents/claude"
+	"github.com/go-corral/corral/internal/agents/opencode"
 	"github.com/go-corral/corral/internal/agents/pi"
 
 	"github.com/go-corral/corral/internal/audit"
@@ -33,7 +34,7 @@ import (
 	"github.com/go-corral/corral/internal/sandbox/bwrap"
 	"github.com/go-corral/corral/internal/sandbox/seatbelt"
 	"github.com/go-corral/corral/internal/selfupdate"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type Net string
@@ -91,6 +92,8 @@ func (c *Config) agentConfig() agents.AgentConfig {
 	switch c.EffectiveAgent() {
 	case "pi":
 		return c.Agents.Pi
+	case "opencode":
+		return c.Agents.Opencode
 	default:
 		return c.Agents.Claude
 	}
@@ -108,6 +111,10 @@ func (c *Config) AgentEnv() map[string]string {
 	return c.agentConfig().SandboxEnv()
 }
 
+func (c *Config) AgentArgs() []string {
+	return c.agentConfig().LaunchArgs()
+}
+
 func (c *Config) AgentValidationFields() []agents.BannerField {
 	return c.agentConfig().ValidationFields()
 }
@@ -119,14 +126,16 @@ func (c *Config) AgentConfigPaths() []agents.ConfigPath {
 // Agents holds per-agent configuration. Each field is the owning agent package's
 // Config type. Adding an agent adds a sibling field here.
 type Agents struct {
-	Claude claude.Config `yaml:"claude"`
-	Pi     pi.Config     `yaml:"pi"`
+	Claude   claude.Config   `yaml:"claude"`
+	Pi       pi.Config       `yaml:"pi"`
+	Opencode opencode.Config `yaml:"opencode"`
 }
 
-// Providers configures corral's sanitized-capability providers. Each field is
-// the owning provider package's Config type — a typed struct, not
-// map[string]any, so strict decode rejects a typo'd key. Field order is
-// declaration order (apply order, collision attribution, LIFO cleanup).
+// Providers configures corral's config sections and feature providers. Each field
+// is the owning package's Config type — a typed struct, not map[string]any, so
+// strict decode rejects a typo'd key. Field order is apply order: the config
+// sections (block through notes), then the feature providers in registry order
+// (collision attribution, LIFO cleanup).
 type Providers struct {
 	Block      block.Config      `yaml:"block"`
 	AIIgnore   aiignore.Config   `yaml:"aiignore"`
@@ -155,7 +164,7 @@ type SecretScan struct {
 
 // coreReservedEnvNames are the env vars corral's own machinery controls. env.set
 // may not name them, so a config typo can never unset the sandbox marker, retarget
-// the pinned global-config path, profiles, audit-log path, sidecar socket or agent id, or redirect the corral binary.
+// the pinned global-config path, profiles, audit-log path, sidecar socket or agent id.
 // CORRAL_DISABLE_HOOKS is reserved so a repo-shipped .corral.yml can't plant an
 // enforcement-off value. CORRAL_PRESENCE_ACK is deliberately not reserved: it
 // only silences a warning, so there is nothing to forge.
@@ -166,7 +175,6 @@ var coreReservedEnvNames = []string{
 	"CORRAL_AUDIT_PATH",
 	"CORRAL_SIDECAR_SOCKET",
 	"CORRAL_AGENT",
-	"CORRAL_BIN",
 	"CORRAL_PROVIDER_NOTES",
 	"CORRAL_BACKEND_NOTES",
 	"CORRAL_DISABLE_HOOKS",
@@ -209,7 +217,7 @@ sandbox:
       allow: []
     grantUserTemp: false
   bwrap: {}
-# Which coding agent corral sandboxes ("claude" or "pi"); see docs/reference/agents.md.
+# Which coding agent corral sandboxes ("claude", "pi", or "opencode"); see docs/reference/agents.md.
 agent: claude
 # Per-agent configuration. claude.ai account connectors (Context7/Atlassian/Zoom,
 # auto-injected by a Claude subscription login) are OFF inside the sandbox by default —
@@ -229,6 +237,11 @@ agents:
     feedbackSurvey: false
     attributionHeader: true
     agentView: false
+    args: []
+  pi:
+    args: []
+  opencode:
+    args: []
 providers:
   # --- built-in providers: always active, applied before the feature providers ---
   # Paths the sandbox masks and the hook denies, split by kind: directories are masked
@@ -248,11 +261,12 @@ providers:
   env:
     # SSH_AUTH_SOCK is intentionally not here: the ssh provider injects it only when it
     # also forwards the matching socket. GPG_TTY must be added explicitly when needed.
-    # CLAUDE_CONFIG_DIR / PI_CODING_AGENT_DIR / PI_CODING_AGENT_SESSION_DIR are agent
-    # config-dir relocators: forwarded so the agent inside the sandbox uses the same dir corral
-    # resolved, bound rw, and write-protects. The pi pair is also reserved (reservedEnvNames) so
-    # env.set cannot relocate pi's config/sessions out from under that protection.
-    passthrough: [TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR]
+    # CLAUDE_CONFIG_DIR / PI_CODING_AGENT_DIR / PI_CODING_AGENT_SESSION_DIR / OPENCODE_CONFIG_DIR
+    # are agent config-dir relocators: forwarded so the agent inside the sandbox uses the same dir
+    # corral resolved, bound rw, and write-protects. The pi pair and OPENCODE_CONFIG_DIR are also
+    # reserved (reservedEnvNames) so env.set cannot relocate the agent's config/sessions out from
+    # under that protection.
+    passthrough: [TERM, COLORTERM, NO_COLOR, EDITOR, VISUAL, PAGER, TMPDIR, LANG, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR, OPENCODE_CONFIG_DIR]
     # set fixes vars to literal values inside the sandbox (a name may be in passthrough OR
     # set, not both). Overriding a value corral already sets warns + prompts at startup.
     # set: [{name: FOO, value: bar}]
@@ -679,18 +693,27 @@ func parseYAMLMap(data []byte) (map[string]any, error) {
 // deliberate: a higher layer can extend a list but never drop what a lower
 // layer set, so the built-in defaults always apply.
 func mergeMap(base, over map[string]any) map[string]any {
+	return mergeMapAt(nil, base, over)
+}
+
+func mergeMapAt(path []string, base, over map[string]any) map[string]any {
 	out := cloneMap(base)
 	for k, ov := range over {
+		kp := append(slices.Clone(path), k)
 		if bv, ok := out[k]; ok {
 			if bm, ok1 := bv.(map[string]any); ok1 {
 				if om, ok2 := ov.(map[string]any); ok2 {
-					out[k] = mergeMap(bm, om)
+					out[k] = mergeMapAt(kp, bm, om)
 					continue
 				}
 			}
 			if bl, ok1 := bv.([]any); ok1 {
 				if ol, ok2 := ov.([]any); ok2 {
-					out[k] = unionAny(bl, ol)
+					if isArgvPath(kp) {
+						out[k] = append(slices.Clone(bl), ol...)
+					} else {
+						out[k] = unionAny(bl, ol)
+					}
 					continue
 				}
 			}
@@ -698,6 +721,16 @@ func mergeMap(base, over map[string]any) map[string]any {
 		out[k] = ov
 	}
 	return out
+}
+
+// isArgvPath reports whether path names an agents.<agent>.args list, at the top level or
+// inside a profile. An argv repeats tokens (`--add-dir a --add-dir b`), so its layers
+// concatenate instead of merging append-unique.
+func isArgvPath(path []string) bool {
+	if len(path) == 5 && path[0] == "profiles" {
+		path = path[2:]
+	}
+	return len(path) == 3 && path[0] == "agents" && path[2] == "args"
 }
 
 // unionAny concatenates a then b, dropping duplicates by type+value, preserving

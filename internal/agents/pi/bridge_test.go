@@ -1,10 +1,10 @@
 package pi
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/go-corral/corral/internal/policy"
+	"github.com/go-corral/corral/internal/agents/internal/agenttest"
+	"github.com/go-corral/corral/internal/sandbox"
 )
 
 // TestPiBridgeSourceWellFormed pins the embedded bridge's load-bearing shape so a careless
@@ -16,7 +16,7 @@ func TestPiBridgeSourceWellFormed(t *testing.T) {
 	if len(src) == 0 {
 		t.Fatal("bridgeSource is empty — the //go:embed of pi-bridge.ts did not take")
 	}
-	for _, want := range []string{
+	agenttest.AssertContains(t, "embedded pi bridge", src,
 		"export default",
 		`pi.on("tool_call"`,
 		`pi.on("tool_result"`,
@@ -27,25 +27,12 @@ func TestPiBridgeSourceWellFormed(t *testing.T) {
 		`"post-tool-use"`,
 		`"user-prompt-submit"`,
 		`"session-start"`,
-		"CORRAL_BIN", // the launcher pins corral's path here for the bridge to exec
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("embedded pi bridge missing %q", want)
-		}
-	}
+		sandbox.SidecarSocketEnvVar, // the launcher sets the sidecar socket here for the bridge
+	)
 }
 
-// The bridge holds a copy of corral's fail-closed texts, because it cannot ask corral for them
-// when corral does not run.
 func TestPiBridgeFailureTexts(t *testing.T) {
-	src := string(bridgeSource)
-	for _, text := range []string{policy.FailClosed("\x00"), policy.Unscanned("\x00")} {
-		for _, part := range strings.Split(text, "\x00") {
-			if !strings.Contains(src, part) {
-				t.Errorf("embedded pi bridge missing %q", part)
-			}
-		}
-	}
+	agenttest.AssertFailureTexts(t, "embedded pi bridge", string(bridgeSource))
 }
 
 // TestPiPresenceSourceWellFormed pins the presence backstop's load-bearing shape: it gates on
@@ -56,8 +43,7 @@ func TestPiPresenceSourceWellFormed(t *testing.T) {
 	if len(exts) == 0 {
 		t.Fatal("pi has no global extensions — presence backstop missing")
 	}
-	src := string(exts[0].Content)
-	for _, want := range []string{
+	agenttest.AssertContains(t, "embedded pi presence backstop", string(exts[0].Content),
 		"export default",
 		`pi.on("input"`,
 		"CORRAL_SANDBOX",   // silent inside corral
@@ -65,9 +51,5 @@ func TestPiPresenceSourceWellFormed(t *testing.T) {
 		"corral run pi",    // how to sandbox
 		"delete this file", // removal hint
 		"NOT sandboxed",
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("embedded pi presence backstop missing %q", want)
-		}
-	}
+	)
 }

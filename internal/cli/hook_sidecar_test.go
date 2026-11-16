@@ -150,7 +150,7 @@ func TestPolicyHandler(t *testing.T) {
 		t.Errorf("secret prompt: got %+v", resp)
 	}
 
-	if resp = h(sidecar.Request{Type: "session-start"}, nil, policy.OSFS{}); resp.Error == "" {
+	if resp = h(sidecar.Request{Type: "notification"}, nil, policy.OSFS{}); resp.Error == "" {
 		t.Errorf("unknown request type: got %+v, want an error", resp)
 	}
 
@@ -361,6 +361,36 @@ func TestSidecarAndBareSessionAgree(t *testing.T) {
 	}
 }
 
+func TestSidecarSessionStartMatchesHook(t *testing.T) {
+	const backendNote, providerNote = "backend: a backend note", "provider: a provider note"
+	t.Setenv(sandbox.SandboxEnvVar, "1")
+	t.Setenv(sandbox.BackendNotesEnvVar, backendNote)
+	t.Setenv(sandbox.ProviderNotesEnvVar, providerNote)
+	var hook strings.Builder
+	if code := runSessionStartHook(strings.NewReader(""), &hook); code != policy.ExitAllow {
+		t.Fatalf("hook exit code %d", code)
+	}
+
+	// The launcher runs outside the sandbox, so its own environment must not feed the note.
+	t.Setenv(sandbox.SandboxEnvVar, "")
+	t.Setenv(sandbox.BackendNotesEnvVar, "host: wrong")
+	t.Setenv(sandbox.ProviderNotesEnvVar, "host: wrong")
+	in, _ := testEngineInputs(t)
+	in.env[sandbox.BackendNotesEnvVar] = backendNote
+	in.env[sandbox.ProviderNotesEnvVar] = providerNote
+	h, err := policyHandler(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := h(sidecar.Request{Type: "session-start"}, nil, policy.OSFS{})
+	if resp.Code != policy.ExitAllow || resp.Stderr != "" || resp.Error != "" {
+		t.Fatalf("sidecar answer: %+v", resp)
+	}
+	if resp.Stdout != hook.String() || !strings.Contains(resp.Stdout, providerNote) {
+		t.Errorf("sidecar note differs from the hook note or lacks the provider note:\nsidecar: %s\nhook:    %s", resp.Stdout, hook.String())
+	}
+}
+
 func TestCmdHookPreToolUseRejectsRemovedFlags(t *testing.T) {
 	for _, args := range [][]string{{"--block-path", "/x"}, {"--profile", "strict"}, {"-p", "strict"}} {
 		var code int
@@ -495,6 +525,23 @@ func TestCmdHookPostToolUseDeadSidecarWithholds(t *testing.T) {
 	}
 	blocks, ok := updatedToolOutput(t, out).([]any)
 	if !ok || len(blocks) != 1 || !strings.Contains(out, "withheld") {
+		t.Errorf("want a content-block array carrying the withheld marker, got %q", out)
+	}
+}
+
+// An event over the size cap is cut and cannot parse, so the shape comes from the prefix.
+func TestCmdHookPostToolUseOversizedMCPWithholdsAsArray(t *testing.T) {
+	t.Setenv(sandbox.SandboxEnvVar, "1")
+	t.Setenv(sandbox.SidecarSocketEnvVar, filepath.Join(t.TempDir(), "sock"))
+	ev := `{"session_id":"s","transcript_path":"/t.jsonl","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"mcp__x__y","tool_input":{},"tool_response":[{"type":"text","text":"` +
+		strings.Repeat("a", policy.MaxEventBytes) + `"}]}`
+
+	out := captureStdout(t, func() {
+		captureStderr(t, func() {
+			withStdin(t, ev, func() { cmdHook([]string{"post-tool-use"}) })
+		})
+	})
+	if _, ok := updatedToolOutput(t, out).([]any); !ok || !strings.Contains(out, "withheld") {
 		t.Errorf("want a content-block array carrying the withheld marker, got %q", out)
 	}
 }

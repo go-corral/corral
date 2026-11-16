@@ -18,7 +18,7 @@ fixes a problem. When the locale is not UTF-8, the output uses ASCII: `[x]`, `[!
 corral run [agent] [flags] [-- agent-args]
 ```
 
-Launches `claude` (the default) or `pi` inside the sandbox. The agent positional, when given, must be the first token; everything after `--` is passed to the agent unchanged. Before a real run, new or changed repository config, any enabled session-hook executable, and a kubeconfig in a sandbox-writable location require interactive [content approval](../explanation/trust-gate.md) before launch.
+Launches `claude` (the default), `pi`, or `opencode` inside the sandbox. Everything after `--` is passed to the agent unchanged, after the arguments from [`agents.<agent>.args`](config.md#agentsagentargs). Before run, new or changed repository config, enabled session-hook executables and a kubeconfig in a sandbox-writable location require interactive [content approval](../explanation/trust-gate.md) before launch.
 
 | Flag               | Effect                                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
@@ -37,10 +37,7 @@ Launches `claude` (the default) or `pi` inside the sandbox. The agent positional
 corral sync [agent] [flags]
 ```
 
-Updates the selected agent's corral files. For `claude`, it merges policy-hook
-registrations into `settings.json` and preserves other settings. For `pi`, it installs
-the bare-session presence warning. Each `corral run pi` loads pi's policy extension
-separately.
+Updates the selected agent's corral config. For `claude`, it merges policy-hook registrations into `settings.json`. For `pi` and `opencode`, it installs the unsandboxed-session warning extensions.
 
 Sync compares the current files before writing, so running it when everything is current
 changes nothing. `--remove` removes only what corral installed; a later plain
@@ -72,7 +69,7 @@ validation fails, sync writes nothing.
 | Flag                | Effect                                                                                          |
 | ------------------- | ----------------------------------------------------------------------------------------------- |
 | `--dry-run`         | Print what would change without writing.                                                        |
-| `--remove`          | Remove corral's hook entries (claude) or presence-warning extension (pi).                       |
+| `--remove`          | Remove corral's hook entries or presence-warning extensions                                     |
 | `--settings <path>` | `settings.json` to update (claude; default: `$CLAUDE_CONFIG_DIR` or `~/.claude/settings.json`). |
 | `--binary <path>`   | corral binary path to register (claude; default: this executable).                              |
 
@@ -128,6 +125,7 @@ needs attention ─────────────────────�
   `stale for PreToolUse; missing for SessionStart`. Run `corral sync claude`.
 - **pi presence warning:** the `presence backstop` check reports a missing or outdated
   extension. Run `corral sync pi`.
+- **opencode:** the `policy plugin` check reports the embedded plugin. The `presence backstop` check reports a missing or outdated plugin file. Run `corral sync opencode`.
 - **Providers:** an unavailable provider fails when the config requires it and warns
   when it is optional. With an invalid config, `doctor` does not check providers.
 - **Update check:** `update.checkOnStart: false` warns with the date of the last check.

@@ -2,9 +2,10 @@ package pi
 
 import "github.com/go-corral/corral/internal/agents/spec"
 
-// Config is pi's config-owned settings surface. pi has no knobs yet; the type exists so pi
-// owns its config surface like every agent and provider.
-type Config struct{}
+// Config is pi's config-owned settings surface.
+type Config struct {
+	spec.Args `yaml:",inline"`
+}
 
 var _ spec.AgentConfig = Config{}
 
@@ -15,4 +16,4 @@ func (Config) SandboxEnv() map[string]string {
 	return map[string]string{"PI_OFFLINE": "1"}
 }
 
-func (Config) ValidationFields() []spec.BannerField { return nil }
+func (c Config) ValidationFields() []spec.BannerField { return c.ArgsFields() }

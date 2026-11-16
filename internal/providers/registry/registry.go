@@ -1,9 +1,9 @@
-// Package registry is the single, ordered enumeration of corral's providers.
-// One table means a provider cannot be half-registered (parsing but silently
-// never activating — for a deny-style built-in, a silent fail-open). The order
-// is the canonical provider declaration order: contributions apply in this
-// order, collisions are attributed to it, and cleanup unwinds its reverse.
-// A drift-guard test pins it to the config.Providers struct-field order.
+// Package registry is the single, ordered enumeration of corral's feature
+// providers. One table means a provider cannot be half-registered (parsing but
+// silently never activating). The order is the canonical provider declaration
+// order: contributions apply in this order, collisions are attributed to it, and
+// cleanup unwinds its reverse. A drift-guard test pins it to the config.Providers
+// struct-field order, after the config sections.
 package registry
 
 import (
@@ -12,16 +12,11 @@ import (
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/providers"
-	"github.com/go-corral/corral/internal/providers/aiignore"
-	"github.com/go-corral/corral/internal/providers/block"
 	"github.com/go-corral/corral/internal/providers/docker"
-	"github.com/go-corral/corral/internal/providers/env"
 	"github.com/go-corral/corral/internal/providers/gitlab"
 	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/providers/hooks"
 	"github.com/go-corral/corral/internal/providers/kubernetes"
-	"github.com/go-corral/corral/internal/providers/notes"
-	"github.com/go-corral/corral/internal/providers/paths"
 	"github.com/go-corral/corral/internal/providers/ssh"
 )
 
@@ -44,13 +39,7 @@ type Deps struct {
 // Registration describes one provider to every derived view. A nil optional func
 // means "no".
 type Registration struct {
-	Name string
-	// Builtin selects the launch phase: phase A built-ins resolve pre-gate; phase B
-	// features resolve post-gate. A built-in's Mint must be pure (dryRun-identical, no
-	// side effects) because phase A runs before the confirmation gate; a feature's Mint
-	// is allowed side effects only because phase B runs after it, so a declined launch
-	// mints nothing.
-	Builtin       bool
+	Name          string
 	Enabled       func(cfg *config.Config) bool
 	Optional      func(cfg *config.Config) bool
 	Grants        func(cfg *config.Config) string
@@ -61,47 +50,6 @@ type Registration struct {
 }
 
 var registry = []Registration{
-	{
-		Name: "block", Builtin: true,
-		Enabled: func(c *config.Config) bool {
-			return len(c.Providers.Block.Directories)+len(c.Providers.Block.Files) > 0
-		},
-		Warnings: func(c *config.Config) []health.Check { return c.Providers.Block.Warnings() },
-		Build: func(c *config.Config, d Deps) providers.Provider {
-			return block.New(c.ConfigBlockedDirs(d.Home), c.ConfigBlockedFiles(d.Home))
-		},
-	},
-	{
-		Name: "aiignore", Builtin: true,
-		Enabled: func(*config.Config) bool { return true },
-		Build: func(c *config.Config, d Deps) providers.Provider {
-			return aiignore.New(c.Providers.AIIgnore.EffectiveSources())
-		},
-	},
-	{
-		Name: "paths", Builtin: true,
-		Enabled: func(c *config.Config) bool {
-			return len(c.Providers.Paths.RW)+len(c.Providers.Paths.RO) > 0
-		},
-		Warnings: func(c *config.Config) []health.Check { return c.Providers.Paths.Warnings() },
-		Build: func(c *config.Config, d Deps) providers.Provider {
-			return paths.New(c.Providers.Paths.RW, c.Providers.Paths.RO)
-		},
-	},
-	{
-		Name: "env", Builtin: true,
-		Enabled: func(*config.Config) bool { return true },
-		Build: func(c *config.Config, d Deps) providers.Provider {
-			return env.New(c.Providers.Env)
-		},
-	},
-	{
-		Name: "notes", Builtin: true,
-		Enabled: func(c *config.Config) bool { return len(c.Providers.Notes.Agent) > 0 },
-		Build: func(c *config.Config, d Deps) providers.Provider {
-			return notes.New(c.Providers.Notes.Lines())
-		},
-	},
 	{
 		Name:          "hooks",
 		Enabled:       func(c *config.Config) bool { return c.Providers.Hooks.Enabled() },
@@ -178,23 +126,12 @@ func Names() []string {
 	return out
 }
 
-// Builtins returns the active built-in providers (phase A) in canonical order.
-func Builtins(cfg *config.Config, d Deps) []providers.Active {
-	var out []providers.Active
-	for _, e := range registry {
-		if e.Builtin && e.Enabled(cfg) {
-			out = append(out, providers.Active{Provider: e.Build(cfg, d)})
-		}
-	}
-	return out
-}
-
-// Features returns the enabled feature providers (phase B) in canonical order,
-// with each one's optionality.
+// Features returns the enabled feature providers in canonical order, with each
+// one's optionality.
 func Features(cfg *config.Config, d Deps) []providers.Active {
 	var out []providers.Active
 	for _, e := range registry {
-		if e.Builtin || !e.Enabled(cfg) {
+		if !e.Enabled(cfg) {
 			continue
 		}
 		a := providers.Active{Provider: e.Build(cfg, d)}
@@ -248,7 +185,7 @@ func Views(cfg *config.Config) []View {
 	return out
 }
 
-// ConfigWarnings returns every provider's config-derived advisory lints in
+// ConfigWarnings returns every feature provider's config-derived advisory lints in
 // canonical order.
 func ConfigWarnings(cfg *config.Config) []health.Check {
 	var out []health.Check

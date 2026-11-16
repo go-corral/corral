@@ -1,10 +1,8 @@
 package aiignore
 
 import (
-	"context"
 	"encoding/json"
 	"github.com/go-corral/corral/internal/policy"
-	"github.com/go-corral/corral/internal/providers/spec"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -200,21 +198,18 @@ func TestParseIgnoreLines(t *testing.T) {
 	}
 }
 
-// --- the built-in provider (Mint contract) ---
+// --- Mask (launcher half) ---
 
-func TestProviderMintContributesMasksAndNote(t *testing.T) {
+func TestMaskContributesMasksAndNote(t *testing.T) {
 	repo := t.TempDir()
 	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "secrets/\n")
 	if err := os.MkdirAll(filepath.Join(repo, "secrets"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	c, err := New([]string{".aiignore", ".aiexclude"}).Mint(context.Background(), spec.Session{WorkDir: repo}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c == nil || len(c.BlockedDirs) != 1 || filepath.Base(c.BlockedDirs[0]) != "secrets" {
-		t.Fatalf("expected the matched dir in BlockedDirs, got %+v", c)
+	c := Mask(repo, []string{".aiignore", ".aiexclude"})
+	if len(c.Dirs) != 1 || filepath.Base(c.Dirs[0]) != "secrets" || len(c.Files) != 0 {
+		t.Fatalf("expected the matched dir in Dirs, got %+v", c)
 	}
 	if len(c.Status) == 0 || !strings.Contains(c.Status[0], "1 pattern(s)") {
 		t.Errorf("Status = %v", c.Status)
@@ -230,45 +225,25 @@ func TestProviderMintContributesMasksAndNote(t *testing.T) {
 	}
 }
 
-// No discovered sources → nil contribution (the provider stays silent, no note).
-func TestProviderMintNilWithoutSources(t *testing.T) {
+// No discovered sources → nothing to mask and no note.
+func TestMaskEmptyWithoutSources(t *testing.T) {
 	repo := t.TempDir()
 	// .git marks the repo boundary so the walk cannot escape into the host tree.
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New([]string{".aiignore"}).Mint(context.Background(), spec.Session{WorkDir: repo}, false)
-	if err != nil || c != nil {
-		t.Fatalf("no sources must contribute nothing: c=%+v err=%v", c, err)
+	if c := Mask(repo, []string{".aiignore"}); !reflect.DeepEqual(c, Masks{}) {
+		t.Fatalf("no sources must contribute nothing: %+v", c)
 	}
 }
 
-// Mint is pure: dryRun and real return identical contributions (the built-in
-// contract that allows pre-gate resolution).
-func TestProviderMintDryRunIdentical(t *testing.T) {
+// A "!" negation is surfaced as a banner row (warn-and-allow, over-mask risk).
+func TestMaskNegationStatus(t *testing.T) {
 	repo := t.TempDir()
 	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "!keep\nvault/\n")
-	p := New([]string{".aiignore"})
-	real, err := p.Mint(context.Background(), spec.Session{WorkDir: repo}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dry, err := p.Mint(context.Background(), spec.Session{WorkDir: repo}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(real, dry) {
-		t.Errorf("dry-run must equal real: %+v vs %+v", real, dry)
-	}
-	// The "!" negation is surfaced as a status line (warn-and-allow, over-mask risk).
-	found := false
-	for _, l := range real.Status {
-		if strings.Contains(l, `"!" re-include`) {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("negation status line missing: %v", real.Status)
+	m := Mask(repo, []string{".aiignore"})
+	if len(m.Status) != 2 || !strings.Contains(m.Status[1], `"!" re-include`) {
+		t.Errorf("negation status line missing: %v", m.Status)
 	}
 }
 
@@ -286,9 +261,9 @@ func TestEffectiveSourcesFallback(t *testing.T) {
 
 func mintNote(t *testing.T, repo string, sources []string) string {
 	t.Helper()
-	c, err := New(sources).Mint(context.Background(), spec.Session{WorkDir: repo}, false)
-	if err != nil || c == nil || len(c.AgentNotes) != 1 {
-		t.Fatalf("Mint = %+v, %v", c, err)
+	c := Mask(repo, sources)
+	if len(c.AgentNotes) != 1 {
+		t.Fatalf("Mask = %+v", c)
 	}
 	return c.AgentNotes[0]
 }

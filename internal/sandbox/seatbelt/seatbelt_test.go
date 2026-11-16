@@ -475,6 +475,60 @@ func TestSeatbeltBlockedLeafMetadataAllowed(t *testing.T) {
 	}
 }
 
+// TestSeatbeltOverlayOverridesBlockedPath: an Overlay mount inside a blocked dir (the
+// ssh provider's ~/.ssh/config) must be re-allowed after the blocked-path deny, else
+// last-match-wins hides it. A read-write overlay — blocked or not, e.g. launchd's
+// /tmp/launch-…/Listeners — must never join the plain file-write* allow: it gets
+// file-write-data only, so its node cannot be removed or replaced, like a bwrap bind.
+func TestSeatbeltOverlayOverridesBlockedPath(t *testing.T) {
+	spec := fixedMacSpec()
+	spec.Mounts = append(spec.Mounts,
+		sandbox.Mount{Src: "/Users/u/.ssh/config", Dst: "/Users/u/.ssh/config", ReadOnly: true, Overlay: true},
+		sandbox.Mount{Src: "/Users/u/.gnupg/S.gpg-agent.ssh", Dst: "/Users/u/.gnupg/S.gpg-agent.ssh", Overlay: true},
+		sandbox.Mount{Src: "/Users/u/proj/.env", Dst: "/Users/u/proj/.env", ReadOnly: true, Overlay: true},
+		sandbox.Mount{Src: "/Users/u/proj/agent.sock", Dst: "/Users/u/proj/agent.sock", Overlay: true},
+	)
+	profile, err := macBackend().profile(withTok(spec, macTestTokens()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	denyIdx := strings.Index(profile, "(deny file-read* file-write* process-exec*\n  (subpath \"/Users/u/.ssh\")")
+	readIdx := strings.Index(profile, "(allow file-read*\n"+
+		"  (subpath \"/Users/u/.ssh/config\")\n"+
+		"  (subpath \"/Users/u/.gnupg/S.gpg-agent.ssh\")\n"+
+		"  (subpath \"/Users/u/proj/.env\")\n"+
+		"  (subpath \"/Users/u/proj/agent.sock\")\n)")
+	writeIdx := strings.Index(profile, "(allow file-write-data\n"+
+		"  (subpath \"/Users/u/.gnupg/S.gpg-agent.ssh\")\n"+
+		"  (subpath \"/Users/u/proj/agent.sock\")\n)")
+	fileDenyIdx := strings.LastIndex(profile, "(deny file-read* file-write* process-exec*\n"+
+		"  (literal \"/Users/u/.netrc\")\n  (literal \"/Users/u/proj/.env\")\n)")
+	writeAllowIdx := strings.Index(profile, "(allow file-write*\n")
+	readDenyIdx := strings.Index(profile, "(deny file-read*)\n")
+	if denyIdx < 0 || readIdx < 0 || writeIdx < 0 || fileDenyIdx < 0 || writeAllowIdx < 0 || readDenyIdx < 0 {
+		t.Fatalf("missing write allow, blocked-path deny, overlay re-allow, or block.files re-deny; profile:\n%s", profile)
+	}
+	writeAllow := profile[writeAllowIdx:readDenyIdx]
+	for _, p := range []string{"/Users/u/.gnupg/S.gpg-agent.ssh", "/Users/u/proj/agent.sock"} {
+		if strings.Contains(writeAllow, fmt.Sprintf(`(subpath %q)`, p)) {
+			t.Errorf("a read-write overlay must not get a plain file-write* allow, only file-write-data: %s", p)
+		}
+	}
+	if readIdx < denyIdx || writeIdx < denyIdx {
+		t.Error("overlay re-allow must come AFTER the blocked-path deny (last-match-wins)")
+	}
+	if fileDenyIdx < readIdx {
+		t.Error("block.files re-deny must come AFTER the overlay re-allow, so a blocked file stays denied")
+	}
+	after := profile[denyIdx:]
+	if strings.Contains(after, "(allow process-exec*") {
+		t.Error("overlay must not regain exec after the deny")
+	}
+	if strings.Contains(after, "(allow file-write*") {
+		t.Error("a read-write overlay must regain only file-write-data, not unlink/create on the node")
+	}
+}
+
 func TestSeatbeltVarDeniedByAbsence(t *testing.T) {
 	// The broad /private/var content grant is removed, so /var/folders (other
 	// processes' temp+cache) and the rest of /var content are denied by absence — no

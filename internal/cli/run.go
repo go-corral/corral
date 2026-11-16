@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -45,6 +46,9 @@ func resolveAgentBinary(a agents.Agent) string {
 	return a.Binaries()[0]
 }
 
+// agentLaunch is a test seam over cfg.AgentLaunch.
+var agentLaunch = func(cfg *config.Config) agents.Launch { return cfg.AgentLaunch() }
+
 // materializeExtension writes an agent's embedded policy-extension asset to the host cache
 // and returns its path. Idempotent: rewrites only when absent or drifted.
 func materializeExtension(home, name string, data []byte) (string, error) {
@@ -52,10 +56,10 @@ func materializeExtension(home, name string, data []byte) (string, error) {
 		return "", errors.New("no home to place the policy extension under")
 	}
 	dir := filepath.Join(home, ".cache", "corral")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, name)
 	if cur, err := os.ReadFile(path); err != nil || !bytes.Equal(cur, data) {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return "", err
@@ -202,31 +206,37 @@ func cmdRun(args []string, version string) int {
 	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
 	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
-	// Activate the agent's in-process policy extension, if it ships one (pi's bridge).
-	launch := cfg.AgentLaunch()
+	// Activate the agent's in-process policy extension, if it ships one.
+	launch := agentLaunch(cfg)
 	var extensionArgs []string
 	if len(launch.ExtensionAsset) > 0 {
 		assetPath, aerr := materializeExtension(*home, launch.ExtensionName, launch.ExtensionAsset)
 		if aerr != nil {
 			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
-		spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
-		if self, serr := os.Executable(); serr == nil {
-			spec.SetEnv[sandbox.BinEnvVar] = self
+		if launch.ExtensionEnv != nil {
+			dir := filepath.Dir(assetPath)
+			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: dir, Dst: dir, ReadOnly: true})
+			extEnv, eerr := launch.ExtensionEnv(assetPath, host)
+			if eerr != nil {
+				return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), eerr)
+			}
+			maps.Copy(spec.SetEnv, extEnv)
+		} else {
+			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
+			extensionArgs = []string{launch.ExtensionFlag, assetPath}
 		}
-		extensionArgs = []string{launch.ExtensionFlag, assetPath}
 	}
-	// Phase A — built-in providers (block, aiignore, paths, env, notes). Pure Mint, resolved before the
-	// gate so advisory warnings feed it and deny channels are in the spec before phase B.
-	ctx := context.Background()
-	sess := newSession(*home, projectSrc)
-	resBuiltin, err := providers.Resolve(ctx, sess, builtinProviders(cfg, *home))
-	if err != nil {
-		return fatalf(os.Stderr, "providers: %v", err)
+	agentArgs := slices.Concat(cfg.AgentArgs(), fs.Args())
+	if launch.Args != nil {
+		var aerr error
+		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), fs.Args()); aerr != nil {
+			return fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
+		}
 	}
-	if err := resBuiltin.Apply(&spec); err != nil {
-		return fatalf(os.Stderr, "providers: %v", err)
-	}
+	// The config sections apply before the gate, so their warnings feed it and their masks are in
+	// the spec before any feature provider mounts.
+	owners, sectionRows, sectionWarnings := applyConfigSections(&spec, cfg, *home, projectSrc)
 
 	// Construct the backend and compute launch advisories before any mint. Written to stderr
 	// so --dry-run's argv stays pipeable.
@@ -234,7 +244,7 @@ func cmdRun(args []string, version string) int {
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
 	checks := sessionWarnings(cfg, backendKind, backend.ReadOnlyTargets(spec))
-	warnings := slices.Clone(resBuiltin.Warnings)
+	warnings := sectionWarnings
 	// Startup readiness advisory: each agent reports its own set.
 	if hostHome, herr := os.UserHomeDir(); herr == nil {
 		if a, ok := agents.Lookup(cfg.EffectiveAgent()); ok {
@@ -248,6 +258,8 @@ func cmdRun(args []string, version string) int {
 			Reason: "no effect here: this session is enforced; an agent started without corral run is not",
 			Fix:    "unset " + sandbox.DisableHooksEnvVar})
 	}
+	ctx := context.Background()
+	sess := newSession(*home, projectSrc)
 	// A preStart session hook's captured stderr renders in the banner's format.
 	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
 	// Registered before the teardown, so it runs after the session-end hooks.
@@ -255,9 +267,9 @@ func cmdRun(args []string, version string) int {
 	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
 	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
-	command = append(command, fs.Args()...)
+	command = append(command, agentArgs...)
 
-	// Side-effect-free preview of phase B: each provider's static, secret-free contribution.
+	// Side-effect-free preview of the feature providers: each one's static, secret-free contribution.
 	// Credential-minters and session hooks are named (previewOnly) rather than expanded.
 	preview, previewOnly, perr := providers.ResolvePreview(ctx, sess, active)
 	if perr != nil && *dryRun {
@@ -287,7 +299,7 @@ func cmdRun(args []string, version string) int {
 	}
 
 	if *dryRun {
-		if err := preview.Apply(&spec, resBuiltin); err != nil {
+		if err := preview.Apply(&spec, owners); err != nil {
 			return fatalf(os.Stderr, "providers: %v", err)
 		}
 		// The linking pass is skipped on a dry run: it only creates host symlinks and does not
@@ -295,7 +307,7 @@ func cmdRun(args []string, version string) int {
 		warnings = append(warnings, preview.Warnings...)
 		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
 		// so it gets a launch-only row.
-		notices := append(append([]providers.Notice{}, resBuiltin.Notices...), preview.Notices...)
+		notices := append(slices.Clone(sectionRows), preview.Notices...)
 		writeStartupBanner(os.Stderr, c, cfg, banner, checks, warnings, notices, previewOnly)
 		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
 		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc), kubes)
@@ -324,8 +336,8 @@ func cmdRun(args []string, version string) int {
 	// Startup banner + confirmation gate, before minting. The gate fires only when warnings
 	// exist and stdin is interactive: --yes skips it.
 	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
-	// Print the banner around the gate and phase-B output, so the providers section renders as
-	// one contiguous block.
+	// Print the banner around the gate and the feature providers' output, so the providers section
+	// renders as one contiguous block.
 	writeBannerHeader(os.Stderr, c, cfg, banner, checks, warnings)
 	if len(checks)+len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
 		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
@@ -356,8 +368,8 @@ func cmdRun(args []string, version string) int {
 	if mintCtx.Err() != nil {
 		return fatalf(os.Stderr, "launch aborted — interrupted during provider mint")
 	}
-	// resBuiltin rides along as prior so a collision is attributed to that provider, not "baseline".
-	if err := res.Apply(&spec, resBuiltin); err != nil {
+	// owners attributes a collision with a config section to that section, not "baseline".
+	if err := res.Apply(&spec, owners); err != nil {
 		return fatalf(os.Stderr, "providers: %v", err)
 	}
 	// With the home provider active, populate the private home with symlinks. After Apply so
@@ -371,8 +383,8 @@ func cmdRun(args []string, version string) int {
 		lateShadows = slices.DeleteFunc(late, func(s string) bool { return slices.Contains(shadows, s) })
 	}
 
-	// The providers section prints after the gate and phase-B mint.
-	notices := append(append([]providers.Notice{}, resBuiltin.Notices...), res.Notices...)
+	// The providers section prints after the gate and the feature providers' mint.
+	notices := append(slices.Clone(sectionRows), res.Notices...)
 	writeBannerBody(os.Stderr, c, *home, notices, nil)
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
@@ -393,7 +405,7 @@ func cmdRun(args []string, version string) int {
 	handler, err := policyHandler(engineInputs{
 		cfg:       cfg,
 		home:      spec.SetEnv["HOME"],
-		env:       spec.SetEnv,
+		env:       maps.Clone(spec.SetEnv),
 		workDir:   spec.WorkDir,
 		auditPath: spec.SetEnv[sandbox.AuditPathEnvVar],
 	})

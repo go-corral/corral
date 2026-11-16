@@ -3,11 +3,14 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/env"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -207,5 +210,74 @@ func TestPrepareAuditDirRefuses(t *testing.T) {
 	cfg.Policy.Audit.Path = filepath.Join(home, "home-link", "audit.jsonl")
 	if err := prepareAuditDir(cfg, home, false); err == nil || !strings.Contains(err.Error(), "contains the always-blocked path") {
 		t.Errorf("a symlink to the home directory: want a refusal naming the always-blocked path, got %v", err)
+	}
+}
+
+// The sections apply in the order block, aiignore, paths, env, notes. Masks merge
+// append-unique, path grants become same-path optional mounts that may repeat a baseline
+// target, and an env.set entry that changes an existing value warns in declaration order.
+func TestApplyConfigSections(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "secrets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".aiignore"), []byte("secrets/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Providers.Block.Directories = []string{"/dup", "/new"}
+	cfg.Providers.Block.Files = []string{"/f.txt"}
+	cfg.Providers.Paths.RW = []string{"/usr"}
+	cfg.Providers.Paths.RO = []string{"/etc/ssl"}
+	cfg.Providers.Env.Set = []env.Var{{Name: "B", Value: "x"}, {Name: "A", Value: "y"}, {Name: "SAME", Value: "s"}}
+	cfg.Providers.Notes.Agent = []string{"A note."}
+	base := sandbox.Mount{Src: "/usr", ReadOnly: true}
+	spec := &sandbox.SandboxSpec{
+		Mounts:       []sandbox.Mount{base},
+		BlockedPaths: []string{"/dup"},
+		SetEnv:       map[string]string{"B": "1", "A": "2", "SAME": "s", sandbox.ProviderNotesEnvVar: "- earlier: note"},
+	}
+
+	owners, notices, warnings := applyConfigSections(spec, cfg, "/home/u", repo)
+
+	if want := []string{"/dup", "/new", filepath.Join(realRepo, "secrets")}; !slices.Equal(spec.BlockedPaths, want) {
+		t.Errorf("BlockedPaths = %v, want %v", spec.BlockedPaths, want)
+	}
+	if want := []string{"/f.txt"}; !slices.Equal(spec.BlockedFiles, want) {
+		t.Errorf("BlockedFiles = %v, want %v", spec.BlockedFiles, want)
+	}
+	if want := []sandbox.Mount{base, {Src: "/usr", Optional: true}, {Src: "/etc/ssl", ReadOnly: true, Optional: true}}; !slices.Equal(spec.Mounts, want) {
+		t.Errorf("Mounts = %+v, want %+v", spec.Mounts, want)
+	}
+	if spec.SetEnv["B"] != "x" || spec.SetEnv["A"] != "y" {
+		t.Errorf("env.set not applied: %v", spec.SetEnv)
+	}
+	var bullets []string
+	for _, l := range strings.Split(spec.SetEnv[sandbox.ProviderNotesEnvVar], "\n") {
+		bullets = append(bullets, strings.SplitN(l, ":", 2)[0])
+	}
+	if want := []string{"- earlier", "- block", "- aiignore", "- paths", "- paths", "- env", "- notes"}; !slices.Equal(bullets, want) {
+		t.Errorf("bullet order = %q, want %q", bullets, want)
+	}
+	wantOwners := providers.Owners{
+		Mounts: map[string]string{"/usr": "paths", "/etc/ssl": "paths"},
+		Env:    map[string]string{"B": "env (env.set)", "A": "env (env.set)", "SAME": "env (env.set)"},
+	}
+	if !reflect.DeepEqual(owners, wantOwners) {
+		t.Errorf("owners = %+v, want %+v", owners, wantOwners)
+	}
+	if len(notices) != 1 || notices[0].Provider != "aiignore" {
+		t.Errorf("only aiignore authors a banner row, got %+v", notices)
+	}
+	wantWarnings := []string{
+		`providers.env.set: "B" overrides a value corral already sets for the sandbox`,
+		`providers.env.set: "A" overrides a value corral already sets for the sandbox`,
+	}
+	if !slices.Equal(warnings, wantWarnings) {
+		t.Errorf("warnings = %q, want %q", warnings, wantWarnings)
 	}
 }

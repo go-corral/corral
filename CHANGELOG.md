@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.26.0](https://github.com/go-corral/corral/compare/v0.25.0...v0.26.0) (2026-11-15)
+
+
+### Features
+
+* **agents:** pass agents.&lt;agent&gt;.args to the agent on corral run ([#62](https://github.com/go-corral/corral/issues/62)) ([7ff55d3](https://github.com/go-corral/corral/commit/7ff55d34ece2be9c359d74dcf71f3c5c61fbbc63))
+* **opencode:** add opencode agent support ([#79](https://github.com/go-corral/corral/issues/79)) ([fc89af8](https://github.com/go-corral/corral/commit/fc89af80a9b4c895c70b7324991d2bcb30469175))
+* **pi:** use the sidecar socket directly ([#74](https://github.com/go-corral/corral/issues/74)) ([4423107](https://github.com/go-corral/corral/commit/4423107d21a9f0cb1e545593585fc59ea6af7a45))
+* **sidecar:** serve the session-start note ([#73](https://github.com/go-corral/corral/issues/73)) ([4a1c9aa](https://github.com/go-corral/corral/commit/4a1c9aa29a416f356044c00dea6c6a72be827ef8))
+
+
+### Bug Fixes
+
+* **policy:** keep the MCP withhold shape for an oversized result ([#68](https://github.com/go-corral/corral/issues/68)) ([9a23209](https://github.com/go-corral/corral/commit/9a2320980ed014eeef2240ba51d7b501d1600654))
+* **run:** give the sidecar handler its own copy of the session env ([#69](https://github.com/go-corral/corral/issues/69)) ([6212f57](https://github.com/go-corral/corral/commit/6212f57481316c1f962c10c3d434746b6da83151))
+* **seatbelt:** give read-write overlays only file-write-data ([#72](https://github.com/go-corral/corral/issues/72)) ([4623843](https://github.com/go-corral/corral/commit/46238435019b8159ca22e16ddcc23c84e88694fe))
+* **seatbelt:** re-allow overlay mounts after the blocked-path deny ([#70](https://github.com/go-corral/corral/issues/70)) ([edf5272](https://github.com/go-corral/corral/commit/edf5272c930464e91ab2e5596408a4d7f3780df1))
+
+## [0.25.0](https://github.com/go-corral/corral/compare/v0.24.0...v0.25.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **pi:** add the sandbox-note to the system prompt ([#55](https://github.com/go-corral/corral/issues/55))
+
+### Features
+
+* **audit:** move the logs out of the sandbox ([#49](https://github.com/go-corral/corral/issues/49)) ([e70693c](https://github.com/go-corral/corral/commit/e70693c41d7109e0382f2804bc26edb51a7cb002))
+* **gitlab:** configure the token lifetime in days ([#53](https://github.com/go-corral/corral/issues/53)) ([3448b73](https://github.com/go-corral/corral/commit/3448b73a322f6ae011b14f34b4cee3badaeaffc4))
+* **hook:** explain a tool call was blocked and what to do about it ([#56](https://github.com/go-corral/corral/issues/56)) ([bff7a66](https://github.com/go-corral/corral/commit/bff7a66a271e961ef4bd973df3af4ad5cc97609e))
+* **pi:** add the sandbox-note to the system prompt ([#55](https://github.com/go-corral/corral/issues/55)) ([1bcb575](https://github.com/go-corral/corral/commit/1bcb575882c8d80c4e652bbfa968165d0c2e418b))
+* **seatbelt:** optionally grant user temp dir for xcode builds ([#60](https://github.com/go-corral/corral/issues/60)) ([cf72c6b](https://github.com/go-corral/corral/commit/cf72c6b4590a20243bddc24b016397aaaed7a575))
+
+
+### Bug Fixes
+
+* **config:** report config errors for the file that causes them ([#52](https://github.com/go-corral/corral/issues/52)) ([4d25b79](https://github.com/go-corral/corral/commit/4d25b798af37226f32c00ce18d91307a56acc4d4))
+* **deps:** bump golang.org/x/net to v0.60.0 ([#58](https://github.com/go-corral/corral/issues/58)) ([c7bb51c](https://github.com/go-corral/corral/commit/c7bb51c5bc5cba72ce10a29f4f19ecd1bebb553a))
+* **hook:** define the hook socket contract ([#50](https://github.com/go-corral/corral/issues/50)) ([c06fc19](https://github.com/go-corral/corral/commit/c06fc1943aa0b9b4d73c03046a21216a7bb97de4))
+* **sandbox:** do not put session env in argv ([#59](https://github.com/go-corral/corral/issues/59)) ([568383f](https://github.com/go-corral/corral/commit/568383f266259786ac3e1b2cb53782d07a25c994))
+* **sidecar:** skip the payload write for an empty payload ([#54](https://github.com/go-corral/corral/issues/54)) ([6781ff3](https://github.com/go-corral/corral/commit/6781ff3e47065242418c331c29620358fc14fdfc))
+
 ## [0.24.0](https://github.com/go-corral/corral/compare/v0.23.0...v0.24.0) (2026-10-05)
 
 This release comes with a few larger changes:

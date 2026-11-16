@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/pathutil"
@@ -458,9 +459,9 @@ func TestRunMintsOnlyAfterConfirmation(t *testing.T) {
 	}
 }
 
-// The banner reorder: phase-B mint runs between the gate and the banner body, so a preStart
+// The banner reorder: the feature-provider mint runs between the gate and the banner body, so a preStart
 // session hook's surfaced stderr lands above the config summary, and the providers tree prints
-// as one contiguous block (body's built-in rows immediately followed by the feature rows)
+// as one contiguous block (body's config-section rows immediately followed by the feature rows)
 // instead of splitting across the mint. Driven with the seatbelt backend, which is unavailable off
 // macOS, so the launch aborts cleanly after the body+notices have printed but before any exec.
 func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
@@ -491,7 +492,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 	origResolve := resolveProviders
 	t.Cleanup(func() { resolveProviders = origResolve })
 	resolveProviders = func(context.Context, providers.Session, []providers.Active) (*providers.Resolved, error) {
-		// Stand in for a preStart session hook's surfaced stderr, emitted during phase-B mint.
+		// Stand in for a preStart session hook's surfaced stderr, emitted during the feature-provider mint.
 		fmt.Fprintln(os.Stderr, hookEra)
 		return &providers.Resolved{Notices: []providers.Notice{{Provider: "hooks", Text: featureNote}}}, nil
 	}
@@ -504,7 +505,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 		t.Fatalf("the seatbelt backend is unavailable off macOS; the launch must abort non-zero, got %d\n%s", code, stderr)
 	}
 	iWarn := strings.Index(stderr, "root-equivalent") // header warning, above the gate
-	iHook := strings.Index(stderr, hookEra)           // phase-B mint output
+	iHook := strings.Index(stderr, hookEra)           // feature-provider mint output
 	iBody := strings.Index(stderr, "\nproviders ")    // banner body (providers section)
 	iNote := strings.Index(stderr, featureNote)       // feature-provider notice (tree tail)
 	if iWarn < 0 || iHook < 0 || iBody < 0 || iNote < 0 {
@@ -512,7 +513,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 	}
 	// The live hook output sits between the gate (below the header warning) and the tree.
 	if iWarn >= iHook || iHook >= iBody {
-		t.Errorf("phase-B hook output must fall between the gate and the banner body:\n%s", stderr)
+		t.Errorf("feature-provider hook output must fall between the gate and the banner body:\n%s", stderr)
 	}
 	// The providers tree is contiguous: body then feature notices, nothing between them.
 	if iBody >= iNote {
@@ -524,7 +525,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 }
 
 // TestRunSignalDuringMintAbortsClosed pins the mint-to-launch signal contract: an interrupt
-// during phase B must abort the launch through the fail-closed teardown, not kill corral
+// during the feature-provider mint must abort the launch through the fail-closed teardown, not kill corral
 // with the default disposition (which would skip every teardown — no defer survives signal
 // death). The seam delivers SIGTERM to the test process itself and blocks until the launch
 // ctx reflects it, so each regression stays loud: an uninstalled handler kills the whole
@@ -639,7 +640,7 @@ func TestRunSessionHooksEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		// home disabled keeps linkHome out of the path; the launch aborts in phase B either way.
+		// home disabled keeps linkHome out of the path; the launch aborts in the feature-provider mint either way.
 		cfg := "providers:\n  home:\n    enabled: false\n" + hooksYAML
 		if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
 			t.Fatal(err)
@@ -922,6 +923,140 @@ func TestRunPiActivatesBridge(t *testing.T) {
 	if !strings.Contains(out, "-e "+bridge) {
 		t.Errorf("`run pi` argv missing `-e %s` activation:\n%s", bridge, out)
 	}
+	if runtime.GOOS == "linux" && !strings.Contains(out, "--ro-bind "+bridge+" "+bridge) {
+		t.Errorf("`run pi` must bind the bridge file read-only:\n%s", out)
+	}
+}
+
+// withFakeLaunch makes the claude agent run with the given Launch.
+func withFakeLaunch(t *testing.T, l agents.Launch) {
+	t.Helper()
+	orig := agentLaunch
+	t.Cleanup(func() { agentLaunch = orig })
+	agentLaunch = func(*config.Config) agents.Launch { return l }
+}
+
+// fakeRunProject returns an isolated home and project; a non-empty project is written as the
+// project's .corral.yml.
+func fakeRunProject(t *testing.T, project string) (home, proj string) {
+	t.Helper()
+	home = t.TempDir()
+	proj = filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if project != "" {
+		if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(project), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	isolateConfigEnv(t, home, proj)
+	return home, proj
+}
+
+const claudeCfgArgs = "agents: {claude: {args: [--cfg]}}"
+
+func TestRunDryRunExtensionEnv(t *testing.T) {
+	home, proj := fakeRunProject(t, claudeCfgArgs)
+	var gotPath string
+	var gotHost map[string]string
+	withFakeLaunch(t, agents.Launch{
+		ExtensionAsset: []byte("x"),
+		ExtensionName:  "fake-policy/index.js",
+		ExtensionFlag:  "-e",
+		ExtensionEnv: func(path string, host map[string]string) (map[string]string, error) {
+			gotPath, gotHost = path, host
+			return map[string]string{"FAKE_EXT": "dir:" + filepath.Dir(path)}, nil
+		},
+	})
+	t.Setenv("FAKE_HOST_MARK", "1")
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "--", "--user"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d", code)
+	}
+	dir := filepath.Join(home, ".cache", "corral", "fake-policy")
+	if want := filepath.Join(dir, "index.js"); gotPath != want {
+		t.Errorf("ExtensionEnv path = %q, want %q", gotPath, want)
+	}
+	if _, err := os.Stat(gotPath); err != nil {
+		t.Errorf("asset not materialized: %v", err)
+	}
+	if gotHost["FAKE_HOST_MARK"] != "1" {
+		t.Errorf("ExtensionEnv host env missing the launching shell's variables: %v", gotHost)
+	}
+	if got := envVal(out, "FAKE_EXT"); got != "dir:"+dir {
+		t.Errorf("FAKE_EXT = %q, want %q:\n%s", got, "dir:"+dir, out)
+	}
+	if runtime.GOOS == "linux" && !strings.Contains(out, "--ro-bind "+dir+" "+dir) {
+		t.Errorf("asset directory must be mounted read-only at its own path:\n%s", out)
+	}
+	if strings.Contains(out, "--ro-bind "+gotPath+" ") {
+		t.Errorf("the asset file must not be mounted on its own:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), "--cfg --user") || strings.Contains(out, " -e ") {
+		t.Errorf("agent command must carry no extension argument:\n%s", out)
+	}
+}
+
+func TestRunDryRunArgsFunction(t *testing.T) {
+	home, proj := fakeRunProject(t, claudeCfgArgs)
+	var gotConfig, gotUser []string
+	withFakeLaunch(t, agents.Launch{
+		Args: func(config, user []string) ([]string, error) {
+			gotConfig, gotUser = config, user
+			return []string{"only", "this"}, nil
+		},
+	})
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "--", "--user"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("dry-run exit=%d", code)
+	}
+	if !slices.Equal(gotConfig, []string{"--cfg"}) || !slices.Equal(gotUser, []string{"--user"}) {
+		t.Errorf("Args got config=%v user=%v, want [--cfg] and [--user]", gotConfig, gotUser)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), " only this") || strings.Contains(out, "--cfg") || strings.Contains(out, "--user") {
+		t.Errorf("returned list must replace both lists:\n%s", out)
+	}
+}
+
+func TestRunLaunchHookErrorFailsBeforeOutput(t *testing.T) {
+	boom := fmt.Errorf("boom")
+	for _, tt := range []struct {
+		name   string
+		launch agents.Launch
+	}{
+		{"ExtensionEnv", agents.Launch{
+			ExtensionAsset: []byte("x"),
+			ExtensionName:  "fake-policy/index.js",
+			ExtensionEnv:   func(string, map[string]string) (map[string]string, error) { return nil, boom },
+		}},
+		{"Args", agents.Launch{Args: func(_, _ []string) ([]string, error) { return nil, boom }}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home, proj := fakeRunProject(t, "")
+			withFakeLaunch(t, tt.launch)
+			var code int
+			var out string
+			stderr := captureStderr(t, func() {
+				out = captureStdout(t, func() {
+					code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+				})
+			})
+			if code == 0 || out != "" {
+				t.Errorf("%s error must fail the launch before output: code=%d out=%q", tt.name, code, out)
+			}
+			if !strings.Contains(stderr, "boom") {
+				t.Errorf("%s error must reach stderr, got %q", tt.name, stderr)
+			}
+		})
+	}
 }
 
 // The launch advisories render as checks with their fix commands: claude's hook registration
@@ -1101,8 +1236,8 @@ func TestRunDryRunReflectsConfig(t *testing.T) {
 }
 
 // TestRunDryRunReflectsPathsGrants: a providers.paths grant must reach the generated
-// argv via the built-in paths provider — the registry Enabled/Build wiring end-to-end
-// (the block and env siblings have their own guards; paths had none at this layer).
+// argv through applyConfigSections, end-to-end (the block and env siblings have their own
+// guards).
 func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1140,7 +1275,7 @@ func TestRunDryRunReflectsPathsGrants(t *testing.T) {
 
 // TestRunDryRunReflectsNotesProvider: a configured providers.notes.agent line reaches
 // CORRAL_PROVIDER_NOTES attributed to "notes" in the previewed sandbox environment, and
-// authors no Status row in the startup banner (static config, like every built-in).
+// authors no Status row in the startup banner (static config, like every config section).
 func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1169,10 +1304,40 @@ func TestRunDryRunReflectsNotesProvider(t *testing.T) {
 	if !strings.Contains(stdout, sandbox.ProviderNotesEnvVar) || !strings.Contains(stdout, "- notes: Keep it terse.") {
 		t.Errorf("dry-run argv must carry the configured line attributed to notes:\n%s", stdout)
 	}
-	// Static config authors no banner row: the built-in contract every provider in this
-	// registry table follows.
+	// Static config authors no banner row: only aiignore, which reports what it matched, has one.
 	if strings.Contains(stderr, "notes") {
 		t.Errorf("notes must author no banner status row:\n%s", stderr)
+	}
+}
+
+// TestRunCollisionNamesPathsOwner: a feature mount on a paths grant fails the launch and
+// names paths, not baseline, as the owner, on a dry run and on a real launch.
+func TestRunCollisionNamesPathsOwner(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	shared := filepath.Join(home, "shared")
+	for _, d := range []string{proj, shared} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := "providers:\n  paths:\n    ro: [" + shared + "]\n  home:\n    enabled: true\n    path: " + shared + "\n"
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+	stubUpdateCheck(t)
+
+	for _, mode := range [][]string{{"--dry-run"}, {"--yes", "--backend", "seatbelt", "--command", "/usr/bin/false"}} {
+		var code int
+		stderr := captureStderr(t, func() {
+			_ = captureStdout(t, func() {
+				code = cmdRun(append(mode, "--home", home, "--project", proj), "dev")
+			})
+		})
+		if code == 0 || !strings.Contains(stderr, "already provided by paths") {
+			t.Errorf("%v: the launch must fail and name paths as the owner, exit=%d:\n%s", mode, code, stderr)
+		}
 	}
 }
 
@@ -1572,8 +1737,9 @@ func TestRunBindsCustomClaudeConfigDir(t *testing.T) {
 }
 
 // TestRunForwardsEnvSet is the end-to-end guard that an env.set entry reaches the cleared
-// sandbox environment. Exercises the full launcher path (config load + validate →
-// applyEnvSet → spec → dry-run line) on whichever backend compiles the spec.
+// sandbox environment, and that an override of a value corral sets warns in the banner.
+// Exercises the full launcher path (config load + validate → applyConfigSections → spec →
+// dry-run line) on whichever backend compiles the spec.
 func TestRunForwardsEnvSet(t *testing.T) {
 	home := t.TempDir()
 	proj := filepath.Join(home, "proj")
@@ -1581,14 +1747,17 @@ func TestRunForwardsEnvSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
-		[]byte("providers:\n  env:\n    set:\n      - {name: CORRAL_TEST_FOO, value: bar}\n"), 0o644); err != nil {
+		[]byte("providers:\n  env:\n    set:\n      - {name: CORRAL_TEST_FOO, value: bar}\n      - {name: SHELL, value: /bin/bash}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	isolateConfigEnv(t, home, proj)
 
 	var code int
-	out := captureStdout(t, func() {
-		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj}, "dev")
+		})
 	})
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
@@ -1596,6 +1765,9 @@ func TestRunForwardsEnvSet(t *testing.T) {
 	// The dry run prints `env -i 'CORRAL_TEST_FOO=bar' … <helper> …` on both backends.
 	if want := "'CORRAL_TEST_FOO=bar'"; !strings.Contains(out, want) {
 		t.Errorf("env.set var not forwarded (%q):\n%s", want, out)
+	}
+	if want := `providers.env.set: "SHELL" overrides a value corral already sets for the sandbox`; !strings.Contains(stderr, want) {
+		t.Errorf("the override warning must show in the banner (%q):\n%s", want, stderr)
 	}
 }
 
@@ -1631,5 +1803,55 @@ func TestEnvVal(t *testing.T) {
 	// A key must not match a longer neighbour: with only CLAUDE_CODE_TMPDIR present, "TMPDIR" is absent.
 	if got := envVal("cmd -i 'CLAUDE_CODE_TMPDIR=/x' end", "TMPDIR"); got != "" {
 		t.Errorf(`envVal must not match CLAUDE_CODE_TMPDIR for key "TMPDIR", got %q`, got)
+	}
+}
+
+func TestRunDryRunPassesAgentArgs(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("agents: {claude: {args: [--model, sonnet]}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"--dry-run", "--home", home, "--project", proj, "--", "--resume"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("run --dry-run exit=%d", code)
+	}
+	if !strings.Contains(out, "--model sonnet --resume") {
+		t.Errorf("config args must precede the -- args in the agent argv:\n%s", out)
+	}
+}
+
+func TestRunDryRunPassesPiArgsAfterBridge(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte("agents: {pi: {args: [--model, sonnet]}, claude: {args: [--verbose]}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigEnv(t, home, proj)
+
+	var code int
+	out := captureStdout(t, func() {
+		code = cmdRun([]string{"pi", "--dry-run", "--home", home, "--project", proj, "--", "--continue"}, "dev")
+	})
+	if code != 0 {
+		t.Fatalf("run pi --dry-run exit=%d", code)
+	}
+	bridge := filepath.Join(home, ".cache", "corral", "corral-policy.ts")
+	if !strings.Contains(out, "-e "+bridge+" --model sonnet --continue") {
+		t.Errorf("pi argv must be bridge, config args, then -- args:\n%s", out)
+	}
+	if strings.Contains(out, "--verbose") {
+		t.Errorf("claude args leaked into the pi argv:\n%s", out)
 	}
 }

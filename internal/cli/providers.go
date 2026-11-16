@@ -33,12 +33,6 @@ func activeProviders(cfg *config.Config, home string, host map[string]string, wo
 	return registry.Features(cfg, d)
 }
 
-// builtinProviders returns active built-ins in registry order.
-func builtinProviders(cfg *config.Config, home string) []providers.Active {
-	// Built-ins need only cfg + home; no host env or workdir.
-	return registry.Builtins(cfg, registry.Deps{Home: home})
-}
-
 // knownProviders returns every host-probeable provider for doctor's availability probe.
 func knownProviders(home string, host map[string]string) []providers.Provider {
 	return registry.Known(registry.Deps{Home: home, Host: host})

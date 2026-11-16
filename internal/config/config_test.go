@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,56 @@ func TestScalarOverrideAndListMerge(t *testing.T) {
 	// duplicates dropped). paths.ro defaults to [], so this is clean.
 	if strings.Join(cfg.Providers.Paths.RO, ",") != "/a,/b,/c" {
 		t.Errorf("paths.ro = %v, want [/a /b /c] (append-unique merge)", cfg.Providers.Paths.RO)
+	}
+}
+
+func TestAgentArgsConcatenateAcrossLayers(t *testing.T) {
+	home := "/home/u"
+	global := "agents:\n  claude:\n    args: [--model, opus]\n"
+	project := "agents:\n  claude:\n    args: [--add-dir, /a, --add-dir, /b]\n"
+	local := "profiles:\n  fast:\n    agents:\n      claude:\n        args: [--model, haiku]\n"
+	for _, tc := range []struct {
+		profiles []string
+		want     []string
+	}{
+		{nil, []string{"--model", "opus", "--add-dir", "/a", "--add-dir", "/b"}},
+		{[]string{"fast"}, []string{"--model", "opus", "--add-dir", "/a", "--add-dir", "/b", "--model", "haiku"}},
+	} {
+		cfg, _, err := loadFrom(t, home, global, project, local, tc.profiles...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cfg.AgentArgs(), tc.want) {
+			t.Errorf("profiles %v: agents.claude.args = %v, want %v (concatenated, not deduplicated)", tc.profiles, cfg.AgentArgs(), tc.want)
+		}
+	}
+}
+
+func TestPiArgsConcatenateAcrossLayers(t *testing.T) {
+	home := "/home/u"
+	global := "agent: pi\nagents:\n  pi:\n    args: [--model, opus]\n"
+	local := "agents:\n  pi:\n    args: [--model, sonnet]\n"
+	cfg, _, err := loadFrom(t, home, global, "", local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--model", "opus", "--model", "sonnet"}
+	if !slices.Equal(cfg.AgentArgs(), want) {
+		t.Errorf("agents.pi.args = %v, want %v", cfg.AgentArgs(), want)
+	}
+}
+
+func TestProfileAgentArgsConcatenateAcrossLayers(t *testing.T) {
+	home := "/home/u"
+	global := "profiles:\n  p:\n    agents:\n      claude:\n        args: [--add-dir, /a]\n"
+	local := "profiles:\n  p:\n    agents:\n      claude:\n        args: [--add-dir, /b]\n"
+	cfg, _, err := loadFrom(t, home, global, "", local, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--add-dir", "/a", "--add-dir", "/b"}
+	if !slices.Equal(cfg.AgentArgs(), want) {
+		t.Errorf("agents.claude.args = %v, want %v", cfg.AgentArgs(), want)
 	}
 }
 

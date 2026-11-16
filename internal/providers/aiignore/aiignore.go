@@ -1,10 +1,9 @@
-// Package aiignore implements the built-in repo AI-exclusion provider. The
-// exported functions are the shared half reused by the hook: pure reads, safe on
-// the fail-closed hook path.
+// Package aiignore is the providers.aiignore config section: the repo's AI-exclusion
+// files. Mask is the launcher half; Discover and ProtectedPaths are the half the hook
+// reuses: pure reads, safe on the fail-closed hook path.
 package aiignore
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -156,25 +155,21 @@ func ProtectedPaths(files []string, fsys policy.FS) map[string]string {
 	return out
 }
 
-// --- the built-in provider (launcher half) ---
-
-type provider struct {
-	sources []string
+// Masks is what the repo's ignore sources add to a launch: the concrete matches to
+// mask, the banner rows, and the agent notes.
+type Masks struct {
+	Dirs       []string
+	Files      []string
+	Status     []string
+	AgentNotes []string
 }
 
-// New builds the aiignore provider for the configured source filenames.
-func New(sources []string) spec.Provider { return &provider{sources: sources} }
-
-func (p *provider) Name() string { return "aiignore" }
-
-func (p *provider) Available(ctx context.Context) bool { return true }
-
-// Mint discovers the repo's ignore sources from the session workdir and masks the
-// concrete matches. It is pure.
-func (p *provider) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*spec.Contribution, error) {
-	d := Discover(sess.WorkDir, p.sources)
+// Mask discovers the ignore sources from workDir and expands their patterns to the
+// concrete matches. It returns zero Masks when no source has a pattern.
+func Mask(workDir string, sources []string) Masks {
+	d := Discover(workDir, sources)
 	if len(d.Patterns) == 0 {
-		return nil, nil
+		return Masks{}
 	}
 	dirs, files := ConcreteMasks(d.Root, d.Patterns)
 	masked := append(append([]string{}, dirs...), files...)
@@ -191,13 +186,7 @@ func (p *provider) Mint(ctx context.Context, sess spec.Session, dryRun bool) (*s
 		status = append(status, fmt.Sprintf("%d \"!\" re-include pattern(s) ignored (corral has no negation); it may mask more than the source intends", negs))
 		note += " Corral ignores `!` lines, so a `!` line does not open a path."
 	}
-
-	return &spec.Contribution{
-		BlockedDirs:  dirs,
-		BlockedFiles: files,
-		Status:       status,
-		AgentNotes:   []string{note},
-	}, nil
+	return Masks{Dirs: dirs, Files: files, Status: status, AgentNotes: []string{note}}
 }
 
 // baseNames maps discovered source paths to their filenames for terse display.

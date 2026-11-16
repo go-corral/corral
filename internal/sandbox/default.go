@@ -42,10 +42,6 @@ const SidecarSocketEnvVar = "CORRAL_SIDECAR_SOCKET"
 // backend can deny writes to all sessions' sidecar directories at once.
 const SidecarDirPrefix = "corral-sidecar-"
 
-// BinEnvVar pins the corral binary an agent's in-process policy extension
-// re-invokes. Reserved so nothing can redirect enforcement.
-const BinEnvVar = "CORRAL_BIN"
-
 // PresenceAckEnvVar silences the sandbox-presence warning only. Deliberately
 // not reserved — there is nothing to forge. Kept separate from DisableHooksEnvVar
 // on purpose: if the kill switch were the only way to silence the once-per-session
@@ -112,11 +108,8 @@ type DefaultParams struct {
 	// AgentRules are the agent's filesystem grants outside its config dir.
 	AgentRules []Rule
 
-	// BlockedPaths: always-blocked paths unioned with config block.directories,
-	// already ~-expanded.
+	// BlockedPaths are the always-blocked mask paths, already ~-expanded.
 	BlockedPaths []string
-	// BlockedFiles: config block.files, ~-expanded.
-	BlockedFiles []string
 
 	// EnvPassthrough is a strict allowlist: named vars are forwarded from
 	// HostEnv, anything else dropped.
@@ -129,6 +122,13 @@ type DefaultParams struct {
 func DefaultSpec(p DefaultParams) SandboxSpec {
 	if p.AgentConfigDir != "" {
 		_ = os.MkdirAll(p.AgentConfigDir, 0o700)
+	}
+	// Before the private home is linked, which skips host paths that do not exist.
+	tokens := p.baselineTokens()
+	for _, r := range p.AgentRules {
+		if d, ok := ExpandPath(r.Path, tokens); ok && r.Create {
+			_ = os.MkdirAll(d, 0o700)
+		}
 	}
 
 	var mounts []Mount
@@ -163,11 +163,10 @@ func DefaultSpec(p DefaultParams) SandboxSpec {
 		Mounts:         mounts,
 		Tmpfs:          []string{"/tmp"},
 		BlockedPaths:   p.BlockedPaths,
-		BlockedFiles:   p.BlockedFiles,
 		SetEnv:         env,
 		TempEnvAliases: p.TempEnvAliases,
 		AgentRules:     p.AgentRules,
-		Tokens:         p.baselineTokens(),
+		Tokens:         tokens,
 		Net:            net,
 		DieWithParent:  true,
 	}

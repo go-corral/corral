@@ -89,10 +89,6 @@ func TestWithinRootSpecialCase(t *testing.T) {
 // no immutability contract to lock; asserting the shared backing array would only
 // cement a footgun.
 
-// config paths.rw/ro grants do not flow through DefaultSpec: the built-in paths
-// provider contributes them via the engine's grant channels, and their Optional +
-// collision-exempt semantics are covered in internal/providers.
-
 // TestDefaultSpecNoProjectDir verifies that when ProjectDir is empty,
 // DefaultSpec does not include a project mount.
 func TestDefaultSpecNoProjectDir(t *testing.T) {

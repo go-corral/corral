@@ -2,7 +2,7 @@
 name: corral
 description: >-
   Help install, configure, run, update, uninstall, and troubleshoot corral, the coding-agent
-  sandbox for Claude Code and pi. Trigger when the user mentions corral, an agent sandbox,
+  sandbox for Claude Code, pi, and opencode. Trigger when the user mentions corral, an agent sandbox,
   doctor/sync/validate/run, .corral.yml, provider setup, filesystem or environment grants,
   session hooks, agent notes or the session-start note, blocked tool calls, the audit log,
   always-blocked paths, masked credential directories, or a vague report that the sandbox
@@ -43,12 +43,12 @@ task.
 
 Use these interfaces before proposing a fix:
 
-| Interface                              | Use it for                                                                                                                                                                                                                             |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corral doctor`                        | Host readiness per area: backend, config and approval, agent integration, enabled providers, `CORRAL_DISABLE_HOOKS`, and update state. Lists each failed or warning check with its fix command.                                        |
-| `corral validate`                      | Config report: sources with approval state, warnings, settings including the private home, agent settings, environment names, and providers, and a tree of path grants. It does not show per-field provenance or host availability.    |
-| `corral run --dry-run -- <agent args>` | The sandbox command that would launch, without running session hooks or creating temporary credentials.                                                                                                                                |
-| The audit record's `rule` and `reason` | The policy decision behind a blocked tool call.                                                                                                                                                                                        |
+| Interface                                 | Use it for                                                                                                                                                                                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `corral doctor`                           | Host readiness per area: backend, config and approval, agent integration, enabled providers, `CORRAL_DISABLE_HOOKS`, and update state. Lists each failed or warning check with its fix command.                                     |
+| `corral validate`                         | Config report: sources with approval state, warnings, settings including the private home, agent settings, environment names, and providers, and a tree of path grants. It does not show per-field provenance or host availability. |
+| `corral run --dry-run -- <agent args>`    | The sandbox command that would launch, without running session hooks or creating temporary credentials.                                                                                                                             |
+| The audit record's `rule` and `reason`    | The policy decision behind a blocked tool call.                                                                                                                                                                                     |
 | A `[hook:<rule>]` deny or withheld output | The hook layer and the rule that denied the call or hid its output. The `Fix:` part names the setting to propose to the user, or states that the block is by design.                                                                |
 
 In the validation path tree, only rows with an `rw` or `ro` access token are grants; terminal
@@ -79,12 +79,9 @@ byte-counted. See [audit-log.md](references/reference/audit-log.md).
 
 corral has two execution paths:
 
-- `corral run` builds the OS sandbox, sets up enabled providers, starts Claude Code or
-  pi, and stays alive for the session. Its sidecar evaluates the policy, fixed after the
-  trust gate, and writes the audit log.
-- `corral hook` is the fast client invoked for tool calls, prompts, and selected results.
-  It forwards each event to the sidecar. Without `corral run` it evaluates in its own
-  process. Policy errors fail closed.
+- `corral run` builds the OS sandbox, sets up enabled providers, starts a supported agent and stays alive for the session. Its sidecar evaluates the policy and writes the audit log.
+- `corral hook` is the fast client that Claude Code invokes for tool calls, prompts and selected results. It forwards each event to the sidecar.
+- The pi policy extension and the opencode policy plugin send events to the sidecar directly.
 
 Session hooks under `providers.hooks` are different: they are operator-approved host
 programs run around a session. Do not confuse them with `corral hook`.
@@ -148,7 +145,7 @@ Inside an active corral sandbox, policy blocks writes to corral's config files. 
   [uninstall.md](references/how-to/uninstall.md).
 - **Commands and flags:** [commands.md](references/reference/commands.md).
 - **Config keys and defaults:** [config.md](references/reference/config.md).
-- **Claude Code versus pi:** [agents.md](references/reference/agents.md).
+- **Claude Code, pi, and opencode:** [agents.md](references/reference/agents.md).
 - **SSH, Docker, or private home:** [providers.md](references/how-to/providers.md).
 - **Kubernetes:** [kubernetes.md](references/how-to/kubernetes.md). Ask which clusters and contexts the session needs and which one is the default. Declare several clusters in `providers.kubernetes.clusters`. Do not recommend `preProvisioned` mode without explaining that users with `edit` in its dedicated namespace share all access assigned to the ServiceAccount group.
 - **GitLab:** [gitlab.md](references/how-to/gitlab.md). Confirm the instance runs GitLab
