@@ -178,6 +178,26 @@ func TestNoSecretPathsInBaseline(t *testing.T) {
 	}
 }
 
+// TestMacOSLibraryRulesAreAllowlisted keeps /Library deny-by-default: only the
+// subtrees that hold code and the Xcode license file are granted, never /Library
+// itself or a data directory.
+func TestMacOSLibraryRulesAreAllowlisted(t *testing.T) {
+	allowed := map[string]bool{
+		"/Library/Apple": true, "/Library/Developer": true, "/Library/Frameworks": true,
+		"/Library/Java": true, "/Library/Perl": true, "/Library/Python": true,
+		"/Library/Ruby": true, "/Library/TeX": true, "/Library/Fonts": true,
+		"/Library/Preferences/com.apple.dt.Xcode.plist": true,
+	}
+	for _, r := range baselineRules {
+		if r.Path == "/Library" {
+			t.Errorf("baseline must not grant /Library itself")
+		}
+		if strings.HasPrefix(r.Path, "/Library/") && !allowed[r.Path] {
+			t.Errorf("baseline rule %q is not an allowlisted /Library subtree", r.Path)
+		}
+	}
+}
+
 // TestMacOSRulesCarriedAsData: macOS rules must be present (for the Seatbelt backend)
 // and must be distinguishable from the Linux-applicable set.
 func TestMacOSRulesCarriedAsData(t *testing.T) {
