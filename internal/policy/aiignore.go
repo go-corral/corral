@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -146,3 +147,96 @@ func globSegMatch(pat, seg string) bool {
 	ok, err := path.Match(pat, seg)
 	return err == nil && ok
 }
+
+// AIIgnoreDiscovery is the discovered repo-level ignore state for one launch/hook init.
+type AIIgnoreDiscovery struct {
+	// Dir is the directory that holds the sources, Root its canonical form.
+	Dir          string
+	Root         string
+	Patterns     []string
+	Files        []string
+	ProtectFiles []string
+}
+
+// isNativeSource reports whether a source filename is one of the built-in
+// (native) AI-ignore files. Only native sources are self-protected from
+// in-sandbox edits.
+func isNativeSource(name string) bool {
+	for _, n := range AIIgnoreNativeSources {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// DiscoverAIIgnore walks up from startDir looking for the nearest directory containing
+// any of the given source filenames and reads them. The search stops at the repo
+// boundary (a directory containing .git). It is strictly best-effort: any read/stat
+// error contributes nothing, and "no files found" returns a zero AIIgnoreDiscovery.
+func DiscoverAIIgnore(startDir string, sources []string) AIIgnoreDiscovery {
+	cur := startDir
+	for cur != "" {
+		var files, protect []string
+		var patterns []string
+		for _, name := range sources {
+			p := filepath.Join(cur, name)
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			files = append(files, p)
+			if isNativeSource(name) {
+				protect = append(protect, p)
+			}
+			patterns = append(patterns, parseIgnoreLines(data)...)
+		}
+		if len(files) > 0 {
+			root, err := CanonicalizeRoot(cur, "")
+			if err != nil {
+				root = filepath.Clean(cur)
+			}
+			return AIIgnoreDiscovery{Dir: cur, Root: root, Patterns: patterns, Files: files, ProtectFiles: protect}
+		}
+		// Repo boundary: do not search above .git.
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			return AIIgnoreDiscovery{}
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return AIIgnoreDiscovery{}
+		}
+		cur = parent
+	}
+	return AIIgnoreDiscovery{}
+}
+
+// parseIgnoreLines splits ignore-file bytes into entries, dropping blank lines
+// and comments.
+func parseIgnoreLines(data []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// AIIgnoreProtectedPaths returns the paths of the given ignore source files, canonical in
+// fsys, mapped to a self-protect reason. Callers pass only native sources.
+func AIIgnoreProtectedPaths(files []string, fsys FS) map[string]string {
+	out := map[string]string{}
+	for _, f := range files {
+		if canon, err := CanonicalizeRootIn(fsys, f, ""); err == nil {
+			out[canon] = "a repo AI ignore file"
+		}
+	}
+	return out
+}
+
+// AIIgnoreNativeSources are the built-in, always-active repo AI-exclusion filenames,
+// and the native set: only these are self-protected.
+var AIIgnoreNativeSources = []string{".aiignore", ".aiexclude"}

@@ -16,7 +16,6 @@ import (
 	"github.com/go-corral/corral/internal/audit"
 	"github.com/go-corral/corral/internal/config"
 	"github.com/go-corral/corral/internal/policy"
-	"github.com/go-corral/corral/internal/providers/aiignore"
 	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sidecar"
@@ -487,7 +486,7 @@ func canonicalAgentConfigDir(cfg *config.Config, home string, env map[string]str
 // settings, and the repo AI ignore files.
 type policyFiles struct {
 	hookPaths []string
-	ai        aiignore.Discovery
+	ai        policy.AIIgnoreDiscovery
 }
 
 // readPolicyFiles reads the policy files on the host. Best-effort: an unreadable file
@@ -496,7 +495,7 @@ func readPolicyFiles(in engineInputs) policyFiles {
 	return policyFiles{
 		hookPaths: agents.LookupOrDefault(in.cfg.EffectiveAgent()).ProtectedPaths(in.cfg.AgentConfigDir(in.home, in.env)),
 		// Configured sources discovered by walking up from the working directory.
-		ai: aiignore.Discover(in.workDir, in.cfg.Providers.AIIgnore.EffectiveSources()),
+		ai: policy.DiscoverAIIgnore(in.workDir, in.cfg.Providers.AIIgnore.EffectiveSources()),
 	}
 }
 
@@ -543,7 +542,7 @@ func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engi
 	// Extra runtime artifacts the self-protect gate guards: the audit log and its rotation
 	// backups, and the native repo AI ignore files.
 	extraProtected := auditProtectedPaths(in.auditPath, fsys)
-	for canon, reason := range aiignore.ProtectedPaths(ai.ProtectFiles, fsys) {
+	for canon, reason := range policy.AIIgnoreProtectedPaths(ai.ProtectFiles, fsys) {
 		extraProtected[canon] = reason
 	}
 
