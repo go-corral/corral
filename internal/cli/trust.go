@@ -320,7 +320,7 @@ func trustWarnings(cfg *config.Config, sources []config.Source) []health.Check {
 
 	var privHome string
 	if home, herr := os.UserHomeDir(); herr == nil {
-		privHome, _ = homeDir(cfg, home, envMap())
+		privHome, _ = cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, envMap()))
 	}
 	kubes := collectKubeconfigs(cfg, wd, privHome)
 	kubeStates := trustStates(kubes.entries)

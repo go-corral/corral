@@ -220,7 +220,7 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 		cfg.Agent = f.agent
 	}
 	host := envMap()
-	privHome, homeOn := homeDir(cfg, f.home, host)
+	privHome, homeOn := cfg.Providers.Home.Dir(f.home, cfg.AgentConfigDir(f.home, host))
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run and every kubeconfig in a sandbox-writable location.

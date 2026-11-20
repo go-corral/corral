@@ -192,7 +192,7 @@ func specParams(cfg *config.Config, home, project string, host map[string]string
 	// Home provider: sandbox's $HOME is the private dir; Home stays the real home so
 	// baseline $HOME-token rules keep allowing the real paths. Empty SandboxHome => HOME == Home.
 	var sandboxHome string
-	if dir, ok := homeDir(cfg, home, host); ok {
+	if dir, ok := cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, host)); ok {
 		sandboxHome = dir
 	}
 	launch := cfg.AgentLaunch()

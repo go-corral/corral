@@ -80,7 +80,7 @@ func cmdValidate(args []string, version string) int {
 		execs:    collectHookExecs(cfg, wd),
 		warnings: append(validateWarnings(cfg, home, env), trustWarnings(cfg, sources)...),
 	}
-	v.privHome, _ = homeDir(cfg, home, env)
+	v.privHome, _ = cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, env))
 	writeValidate(os.Stdout, report.StyleFor(os.Stdout), v)
 	return 0
 }

@@ -11,22 +11,8 @@ import (
 	"strings"
 
 	"github.com/go-corral/corral/internal/config"
-	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 )
-
-// homeDir returns the resolved private-home directory and whether the home provider
-// is enabled. Wiring stays in cli because the resolved dir feeds both specParams
-// and activeProviders — one resolver keeps the two from disagreeing.
-func homeDir(cfg *config.Config, realHome string, host map[string]string) (dir string, enabled bool) {
-	if !cfg.Providers.Home.Enabled {
-		return "", false
-	}
-	if p := cfg.Providers.Home.Path; p != "" {
-		return p, true
-	}
-	return home.DefaultPath(realHome, cfg.AgentConfigDir(realHome, host)), true
-}
 
 // baselineArch maps a backend Kind to the baseline rules' arch vocabulary ("linux"/"macos"),
 // which differs from runtime.GOOS ("linux"/"darwin").

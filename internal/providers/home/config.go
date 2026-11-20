@@ -68,6 +68,17 @@ func keepRel(entry string) (string, bool) {
 	return e, true
 }
 
+// Dir returns the resolved private-home directory and whether the home provider is enabled.
+func (c Config) Dir(realHome, agentConfigDir string) (dir string, enabled bool) {
+	if !c.Enabled {
+		return "", false
+	}
+	if c.Path != "" {
+		return c.Path, true
+	}
+	return DefaultPath(realHome, agentConfigDir), true
+}
+
 // DefaultPath is the sandbox's private $HOME when Path is unset: a persistent
 // ~/.cache/corral/home-<hash> keyed to the active agent's config dir.
 func DefaultPath(realHome, agentConfigDir string) string {
