@@ -143,8 +143,7 @@ type launchPlan struct {
 	cfg            *config.Config
 	sources        []config.Source
 	flags          runFlags
-	host           map[string]string
-	workdir        string
+	projectSrc     string
 	privHome       string
 	homeOn         bool
 	homeArch       string
@@ -268,30 +267,30 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
 	// Activate the agent's in-process policy extension, if it ships one.
-	launch := agentLaunch(cfg)
+	launchCfg := agentLaunch(cfg)
 	var extensionArgs []string
-	if len(launch.ExtensionAsset) > 0 {
-		assetPath, aerr := materializeExtension(f.home, launch.ExtensionName, launch.ExtensionAsset)
+	if len(launchCfg.ExtensionAsset) > 0 {
+		assetPath, aerr := materializeExtension(f.home, launchCfg.ExtensionName, launchCfg.ExtensionAsset)
 		if aerr != nil {
 			return nil, fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
-		if launch.ExtensionEnv != nil {
+		if launchCfg.ExtensionEnv != nil {
 			dir := filepath.Dir(assetPath)
 			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: dir, Dst: dir, ReadOnly: true})
-			extEnv, eerr := launch.ExtensionEnv(assetPath, host)
+			extEnv, eerr := launchCfg.ExtensionEnv(assetPath, host)
 			if eerr != nil {
 				return nil, fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), eerr)
 			}
 			maps.Copy(spec.SetEnv, extEnv)
 		} else {
 			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
-			extensionArgs = []string{launch.ExtensionFlag, assetPath}
+			extensionArgs = []string{launchCfg.ExtensionFlag, assetPath}
 		}
 	}
 	agentArgs := slices.Concat(cfg.AgentArgs(), f.args)
-	if launch.Args != nil {
+	if launchCfg.Args != nil {
 		var aerr error
-		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), f.args); aerr != nil {
+		if agentArgs, aerr = launchCfg.Args(cfg.AgentArgs(), f.args); aerr != nil {
 			return nil, fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
 		}
 	}
@@ -360,8 +359,7 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 		cfg:            cfg,
 		sources:        sources,
 		flags:          f,
-		host:           host,
-		workdir:        projectSrc,
+		projectSrc:     projectSrc,
 		privHome:       privHome,
 		homeOn:         homeOn,
 		homeArch:       homeArch,
@@ -399,44 +397,63 @@ func cmdRun(args []string, version string) int {
 	if p == nil {
 		return code
 	}
+	if f.dryRun {
+		return printDryRun(p)
+	}
+	return launch(p)
+}
+
+func (p *launchPlan) notices(extra []providers.Notice) []providers.Notice {
+	return append(slices.Clone(p.sectionRows), extra...)
+}
+
+// buildSandboxArgv prepares the backend and builds the sandbox argv. On an Argv error it runs the
+// prep's cleanup and returns a zero prep.
+func buildSandboxArgv(backend sandbox.Backend, spec *sandbox.SandboxSpec, command []string, warnLines *lineWriter) (sandbox.LaunchPrep, []string, int) {
+	prep, err := backend.Prepare(spec, warnLines)
+	warnLines.Flush()
+	if err != nil {
+		return prep, nil, fatalf(os.Stderr, "prepare sandbox: %v", err)
+	}
+	argv, err := backend.Argv(*spec, command)
+	if err != nil {
+		prep.Cleanup()
+		return sandbox.LaunchPrep{}, nil, fatalf(os.Stderr, "build sandbox command: %v", err)
+	}
+	return prep, argv, 0
+}
+
+// printDryRun prints the banner and the sandbox command of the plan without a launch.
+func printDryRun(p *launchPlan) int {
+	if err := p.preview.Apply(&p.spec, p.owners); err != nil {
+		return fatalf(os.Stderr, "providers: %v", err)
+	}
+	// The linking pass is skipped on a dry run: it only creates host symlinks and does not
+	// mutate spec, so the printed profile is unaffected.
+	p.warnings = append(p.warnings, p.preview.Warnings...)
+	// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
+	// so it gets a launch-only row.
+	writeStartupBanner(os.Stderr, p.c, p.cfg, p.banner, p.checks, p.warnings, p.notices(p.preview.Notices), p.previewOnly)
+	// Dry-run is an inspection tool and is not gated, but a real run would prompt.
+	writeTrustDryRunNote(os.Stderr, p.c, p.sources, collectHookExecs(p.cfg, p.projectSrc), p.kubes)
+	prep, argv, code := buildSandboxArgv(p.backend, &p.spec, p.command, p.warnLines)
+	if code != 0 {
+		return code
+	}
+	fmt.Println(shellQuote(slices.Concat([]string{"env", "-i"}, p.spec.Environ(), argv)))
+	// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
+	if len(p.previewOnly) > 0 {
+		p.c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
+			len(p.previewOnly), strings.Join(p.previewOnly, ", ")))
+	}
+	prep.Cleanup()
+	return 0
+}
+
+// launch shows the gate, mints the providers, starts the sidecar and supervises the agent.
+func launch(p *launchPlan) int {
 	// Registered before the teardown, so it runs after the session-end hooks.
 	defer p.hookLog.Flush()
-
-	if f.dryRun {
-		if err := p.preview.Apply(&p.spec, p.owners); err != nil {
-			return fatalf(os.Stderr, "providers: %v", err)
-		}
-		// The linking pass is skipped on a dry run: it only creates host symlinks and does not
-		// mutate spec, so the printed profile is unaffected.
-		p.warnings = append(p.warnings, p.preview.Warnings...)
-		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
-		// so it gets a launch-only row.
-		notices := append(slices.Clone(p.sectionRows), p.preview.Notices...)
-		writeStartupBanner(os.Stderr, p.c, p.cfg, p.banner, p.checks, p.warnings, notices, p.previewOnly)
-		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
-		writeTrustDryRunNote(os.Stderr, p.c, p.sources, collectHookExecs(p.cfg, p.workdir), p.kubes)
-		prep, err := p.backend.Prepare(&p.spec, p.warnLines)
-		p.warnLines.Flush()
-		if err != nil {
-			return fatalf(os.Stderr, "prepare sandbox: %v", err)
-		}
-		argv, err := p.backend.Argv(p.spec, p.command)
-		if err != nil {
-			prep.Cleanup()
-			return fatalf(os.Stderr, "build sandbox command: %v", err)
-		}
-		fmt.Println(shellQuote(slices.Concat([]string{"env", "-i"}, p.spec.Environ(), argv)))
-		// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
-		if len(p.previewOnly) > 0 {
-			p.c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
-				len(p.previewOnly), strings.Join(p.previewOnly, ", ")))
-		}
-		prep.Cleanup()
-		return 0
-	}
-
-	// --- real launch ---
-
 	ctx := context.Background()
 	// Startup banner + confirmation gate, before minting. The gate fires only when warnings
 	// exist and stdin is interactive: --yes skips it.
@@ -489,8 +506,7 @@ func cmdRun(args []string, version string) int {
 	}
 
 	// The providers section prints after the gate and the feature providers' mint.
-	notices := append(slices.Clone(p.sectionRows), res.Notices...)
-	writeBannerBody(os.Stderr, p.c, p.flags.home, notices, nil)
+	writeBannerBody(os.Stderr, p.c, p.flags.home, p.notices(res.Notices), nil)
 	writeWarnings(os.Stderr, p.c, res.Warnings)
 	writeWarnings(os.Stderr, p.c, lateShadows)
 
@@ -531,15 +547,10 @@ func cmdRun(args []string, version string) int {
 
 	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-launch
 	// chdir.
-	prep, err = p.backend.Prepare(&p.spec, p.warnLines)
-	p.warnLines.Flush()
-	if err != nil {
-		return fatalf(os.Stderr, "prepare sandbox: %v", err)
-	}
-
-	argv, err := p.backend.Argv(p.spec, p.command)
-	if err != nil {
-		return fatalf(os.Stderr, "build sandbox command: %v", err)
+	var argv []string
+	var code int
+	if prep, argv, code = buildSandboxArgv(p.backend, &p.spec, p.command, p.warnLines); code != 0 {
+		return code
 	}
 
 	if !p.backend.Available() {
