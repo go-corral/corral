@@ -3,6 +3,8 @@ package aiignore
 import (
 	"fmt"
 	"strings"
+
+	"github.com/go-corral/corral/internal/policy"
 )
 
 // Config configures repo-level AI-exclusion discovery (providers.aiignore).
@@ -13,18 +15,14 @@ type Config struct {
 	Sources []string `yaml:"sources"`
 }
 
-// DefaultSources are the built-in, always-active repo AI-exclusion filenames,
-// and the native set: only these are self-protected.
-var DefaultSources = []string{".aiignore", ".aiexclude"}
-
 // EffectiveSources returns the configured source filenames, falling back to
-// DefaultSources for a hand-built Config that never loaded internal/config's
+// policy.AIIgnoreNativeSources for a hand-built Config that never loaded internal/config's
 // defaults.
 func (c Config) EffectiveSources() []string {
 	if len(c.Sources) > 0 {
 		return c.Sources
 	}
-	return append([]string(nil), DefaultSources...)
+	return append([]string(nil), policy.AIIgnoreNativeSources...)
 }
 
 // Validate checks providers.aiignore: each source must be a bare filename.

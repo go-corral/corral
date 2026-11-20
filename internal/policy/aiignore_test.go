@@ -1,6 +1,9 @@
 package policy
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +131,128 @@ func TestAIIgnoreRuleEvaluate(t *testing.T) {
 	}
 	if _, matched, _ := (&AIIgnoreRule{}).Evaluate(toolEvent(t, "Read", map[string]any{"file_path": "/repo/secrets.env"})); matched {
 		t.Errorf("an empty-root rule must be a no-op")
+	}
+}
+
+func writeIgnoreFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Discovery walks up from a subdir, reads both .aiignore and .aiexclude, and strips
+// comments/blank lines.
+func TestDiscoverAIIgnoreWalksUp(t *testing.T) {
+	repo := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "# comment\n\nsecrets.env\n*.pem\n")
+	writeIgnoreFile(t, filepath.Join(repo, ".aiexclude"), "build/\n")
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ai := DiscoverAIIgnore(sub, []string{".aiignore", ".aiexclude"})
+	if ai.Root == "" {
+		t.Fatal("expected to discover ignore files by walking up")
+	}
+	if len(ai.Patterns) != 3 {
+		t.Errorf("patterns = %v, want 3 (secrets.env, *.pem, build/)", ai.Patterns)
+	}
+	if len(ai.Files) != 2 {
+		t.Errorf("want both ignore files discovered, got %v", ai.Files)
+	}
+	// Both defaults are native, so both are self-protected.
+	if len(ai.ProtectFiles) != 2 {
+		t.Errorf("want both native sources self-protected, got %v", ai.ProtectFiles)
+	}
+}
+
+// The upward search stops at the repo boundary (a .git dir): an .aiignore above the repo
+// must not be picked up.
+func TestDiscoverAIIgnoreStopsAtRepoBoundary(t *testing.T) {
+	outer := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(outer, ".aiignore"), "secret\n")
+	repo := filepath.Join(outer, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "x")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if ai := DiscoverAIIgnore(sub, []string{".aiignore", ".aiexclude"}); ai.Root != "" || len(ai.Patterns) != 0 {
+		t.Errorf(".git boundary must stop the search before the outer .aiignore; got root=%q patterns=%v", ai.Root, ai.Patterns)
+	}
+}
+
+// Configurable sources: an extra source (e.g. .gitignore) is discovered and its patterns
+// enforced, but it is borrowed — present in files (so it is masked/enforced) yet absent
+// from protectFiles, so the agent stays free to edit it. Native sources are protected.
+func TestDiscoverAIIgnoreConfigurableSources(t *testing.T) {
+	repo := t.TempDir()
+	writeIgnoreFile(t, filepath.Join(repo, ".aiignore"), "secrets.env\n")
+	writeIgnoreFile(t, filepath.Join(repo, ".gitignore"), "node_modules\n")
+
+	ai := DiscoverAIIgnore(repo, []string{".aiignore", ".aiexclude", ".gitignore"})
+	if !containsSuffix(ai.Patterns, "node_modules") || !containsSuffix(ai.Patterns, "secrets.env") {
+		t.Errorf("expected patterns from both .aiignore and the borrowed .gitignore, got %v", ai.Patterns)
+	}
+	if len(ai.Files) != 2 {
+		t.Fatalf("want .aiignore + .gitignore discovered, got %v", ai.Files)
+	}
+	// .gitignore is borrowed → not self-protected; .aiignore is native → protected.
+	if len(ai.ProtectFiles) != 1 || filepath.Base(ai.ProtectFiles[0]) != ".aiignore" {
+		t.Errorf("only the native .aiignore should be self-protected, got %v", ai.ProtectFiles)
+	}
+}
+
+func containsSuffix(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestParseIgnoreLines(t *testing.T) {
+	got := parseIgnoreLines([]byte("# c\n\n  secrets.env  \r\n*.key\n"))
+	want := []string{"secrets.env", "*.key"}
+	if len(got) != len(want) {
+		t.Fatalf("parseIgnoreLines = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// The discovered ignore files are self-protected: a Write/Edit to .aiignore is denied via
+// policy's self-protect extra-paths seam, so the agent cannot edit away its own exclusions.
+func TestAIIgnoreFilesSelfProtected(t *testing.T) {
+	repo := t.TempDir()
+	f := filepath.Join(repo, ".aiignore")
+	writeIgnoreFile(t, f, "secrets.env\n")
+
+	prot := AIIgnoreProtectedPaths([]string{f}, OSFS{})
+	canon, err := CanonicalizeRoot(f, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prot[canon] != "a repo AI ignore file" {
+		t.Fatalf("ignore file not registered as protected: %v", prot)
+	}
+
+	pp := &PathPatternRule{SelfProtect: SelfProtect{ExtraPaths: prot}}
+	ti, _ := json.Marshal(map[string]string{"file_path": f, "content": "secrets.env\n!keep\n"})
+	d, matched, err := pp.Evaluate(&HookEvent{ToolName: "Write", ToolInput: ti})
+	if err != nil || !matched || d.Action != Deny {
+		t.Errorf("Write to .aiignore must be denied (self-protect); matched=%v action=%v err=%v", matched, d.Action, err)
 	}
 }
