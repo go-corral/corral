@@ -8,10 +8,8 @@ import (
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
-// reservedEnvNames is a literal copy of corral's internal env markers because config must
-// not import sandbox in non-test code. This drift-guard pins the literals to the real
-// sandbox constants so a rename there can't silently let env.set claim a control var.
-// (A test file can import sandbox: sandbox does not import config, so there is no cycle.)
+// Drift-guard: pins the reserved set to the sandbox constants, so a name dropped from
+// sandbox.ReservedEnvNames fails here instead of letting env.set claim a control var.
 func TestReservedEnvNamesMatchSandboxConstants(t *testing.T) {
 	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar, sandbox.ProviderNotesEnvVar, sandbox.BackendNotesEnvVar, sandbox.DisableHooksEnvVar} {
 		if !reservedEnvNames[name] {

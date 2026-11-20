@@ -31,6 +31,7 @@ import (
 	"github.com/go-corral/corral/internal/providers/notes"
 	"github.com/go-corral/corral/internal/providers/paths"
 	"github.com/go-corral/corral/internal/providers/ssh"
+	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sandbox/bwrap"
 	"github.com/go-corral/corral/internal/sandbox/seatbelt"
 	"github.com/go-corral/corral/internal/selfupdate"
@@ -158,29 +159,11 @@ type SecretScan struct {
 	SkipPaths        []string `yaml:"skipPaths"`
 }
 
-// coreReservedEnvNames are the env vars corral's own machinery controls. env.set
-// may not name them, so a config typo can never unset the sandbox marker, retarget
-// the pinned global-config path, profiles, audit-log path, sidecar socket or agent id.
-// CORRAL_DISABLE_HOOKS is reserved so a repo-shipped .corral.yml can't plant an
-// enforcement-off value. CORRAL_PRESENCE_ACK is deliberately not reserved: it
-// only silences a warning, so there is nothing to forge.
-var coreReservedEnvNames = []string{
-	"CORRAL_SANDBOX",
-	"CORRAL_GLOBAL_CONFIG",
-	"CORRAL_PROFILES",
-	"CORRAL_AUDIT_PATH",
-	"CORRAL_SIDECAR_SOCKET",
-	"CORRAL_AGENT",
-	"CORRAL_PROVIDER_NOTES",
-	"CORRAL_BACKEND_NOTES",
-	"CORRAL_DISABLE_HOOKS",
-}
-
 var reservedEnvNames = buildReservedEnvNames()
 
 func buildReservedEnvNames() map[string]bool {
-	m := make(map[string]bool, len(coreReservedEnvNames))
-	for _, n := range coreReservedEnvNames {
+	m := make(map[string]bool, len(sandbox.ReservedEnvNames))
+	for _, n := range sandbox.ReservedEnvNames {
 		m[n] = true
 	}
 	for _, n := range agents.AllReservedEnv() {
@@ -486,7 +469,7 @@ func (c *Config) Validate(home string) error {
 	if err := c.Providers.Paths.Validate(floor); err != nil {
 		return err
 	}
-	if err := c.Providers.Env.Validate(coreReservedEnvNames, reservedEnvNames); err != nil {
+	if err := c.Providers.Env.Validate(sandbox.ReservedEnvNames, reservedEnvNames); err != nil {
 		return err
 	}
 	if err := c.Providers.Notes.Validate(); err != nil {

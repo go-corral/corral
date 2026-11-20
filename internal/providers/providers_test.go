@@ -150,7 +150,10 @@ func TestApplyRejectsProviderEnvClaimingBackendNotesMarker(t *testing.T) {
 // must fail Apply closed. Matters most for a provider whose Env is authored outside the
 // trust-approved config: a session hook's stdout contribution.
 func TestApplyRejectsProviderEnvClaimingControlMarkers(t *testing.T) {
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar} {
+	for _, name := range sandbox.ReservedEnvNames {
+		if name == sandbox.ProviderNotesEnvVar || name == sandbox.BackendNotesEnvVar {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			a := &fakeProvider{name: "hooks", available: true,
 				contrib: &Contribution{Env: map[string]string{name: "/work/proj/evil.yml"}}}
