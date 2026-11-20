@@ -1,14 +1,10 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/go-corral/corral/internal/config"
-	"github.com/go-corral/corral/internal/policy"
 )
 
 // Path separators and special chars in the presence-marker ID are sanitized.
@@ -113,80 +109,5 @@ func TestLocalEngineInputsHomeLookupError(t *testing.T) {
 
 	if _, err := localEngineInputs(); err == nil || !strings.Contains(err.Error(), "home") {
 		t.Errorf("localEngineInputs with no HOME: got %v, want a home resolution error", err)
-	}
-}
-
-// The always-blocked paths and config block.directories/block.files each deny under their own
-// rule name. A config entry equal to an always-blocked directory reports always-blocked. newEngine builds from its inputs alone: the process HOME and cwd point elsewhere.
-func TestNewEngineAlwaysBlockedUnion(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-
-	home := t.TempDir()
-	projDir := filepath.Join(home, "proj")
-	customBlocked := filepath.Join(home, "custom-blocked")
-	for _, dir := range []string{filepath.Join(home, ".ssh"), filepath.Join(home, ".aws"), projDir, customBlocked} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	cfg := &config.Config{}
-	cfg.Providers.Block.Directories = []string{customBlocked, filepath.Join(home, ".aws")}
-
-	in := engineInputs{
-		cfg:       cfg,
-		home:      home,
-		env:       map[string]string{"HOME": home},
-		workDir:   projDir,
-		auditPath: filepath.Join(home, ".claude", "corral-audit.jsonl"),
-	}
-	eng, err := newEngine(in, readPolicyFiles(in), policy.OSFS{})
-	if err != nil {
-		t.Fatalf("newEngine must succeed with a valid config and home; got %v", err)
-	}
-
-	for _, tc := range []struct {
-		file string
-		rule string
-	}{
-		{filepath.Join(home, ".ssh", "id_rsa"), "always-blocked"},
-		{filepath.Join(customBlocked, "file.txt"), "blocked-path"},
-		{filepath.Join(home, ".aws", "credentials"), "always-blocked"},
-	} {
-		event, _ := json.Marshal(map[string]any{
-			"hook_event_name": "PreToolUse",
-			"tool_name":       "Read",
-			"tool_input":      map[string]any{"file_path": tc.file},
-			"cwd":             home,
-		})
-		var stderr strings.Builder
-		if code := policy.RunHook(eng, strings.NewReader(string(event)), &stderr); code != policy.ExitBlock {
-			t.Errorf("%s must be blocked, got code %d (want %d)", tc.file, code, policy.ExitBlock)
-		}
-		if want := "[hook:" + tc.rule + "]"; !strings.Contains(stderr.String(), want) {
-			t.Errorf("%s: deny must carry %s, got %q", tc.file, want, stderr.String())
-		}
-	}
-}
-
-// Every rule of the engine has a fix.
-func TestEveryRuleHasAFix(t *testing.T) {
-	home := t.TempDir()
-	in := engineInputs{
-		cfg:       &config.Config{},
-		home:      home,
-		env:       map[string]string{"HOME": home},
-		workDir:   home,
-		auditPath: filepath.Join(home, "corral-audit.jsonl"),
-	}
-	eng, err := newEngine(in, readPolicyFiles(in), policy.OSFS{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range eng.RuleNames() {
-		if _, ok := policy.Fixes[name]; !ok {
-			t.Errorf("rule %q has no entry in policy.Fixes", name)
-		}
 	}
 }

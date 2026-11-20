@@ -22,6 +22,7 @@ import (
 	"github.com/go-corral/corral/internal/audit"
 	"github.com/go-corral/corral/internal/cli/report"
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/enforce"
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
@@ -524,12 +525,13 @@ func launch(p *launchPlan) int {
 	if p.spec.SetEnv["HOME"] == "" {
 		return fatalf(os.Stderr, "policy: HOME is empty in the sandbox environment")
 	}
-	handler, err := policyHandler(engineInputs{
-		cfg:       p.cfg,
-		home:      p.spec.SetEnv["HOME"],
-		env:       maps.Clone(p.spec.SetEnv),
-		workDir:   p.spec.WorkDir,
-		auditPath: p.spec.SetEnv[sandbox.AuditPathEnvVar],
+	handler, err := enforce.Handler(enforce.Inputs{
+		Config:    p.cfg,
+		Home:      p.spec.SetEnv["HOME"],
+		Env:       maps.Clone(p.spec.SetEnv),
+		WorkDir:   p.spec.WorkDir,
+		AuditPath: p.spec.SetEnv[sandbox.AuditPathEnvVar],
+		Version:   hookVersion,
 	})
 	if err != nil {
 		return fatalf(os.Stderr, "policy: %v", err)

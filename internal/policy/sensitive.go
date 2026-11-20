@@ -121,8 +121,8 @@ func hasAnySuffix(s string, suffixes ...string) bool {
 
 // AgentFootprint is policy's leaf-package mirror of an agent's static enforcement footprint
 // (spec.Footprint): the config-dir marker plus the files/subdirs whose write/delete the hook
-// gates. policy imports no agent — the composition root (cli) maps agents.Footprint onto this,
-// exactly as it maps agents.ConfigPath onto sandbox.Rule — so the policy engine stays agent-neutral.
+// gates. policy imports no agent — the caller maps agents.Footprint onto this — so the policy engine
+// stays agent-neutral.
 type AgentFootprint struct {
 	Dir            string
 	DirReason      string
