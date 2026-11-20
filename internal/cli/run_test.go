@@ -474,7 +474,7 @@ func TestRunBannerBodyPrintsAfterMint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// docker enabled raises the static "root-equivalent" advisory (a header warning, above the
-	// gate); home disabled keeps linkHome out of the path so the abort point is purely the
+	// gate); home disabled keeps home.Link out of the path so the abort point is purely the
 	// backend-availability check.
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
 		[]byte("providers:\n  docker:\n    enabled: true\n  home:\n    enabled: false\n"), 0o644); err != nil {
@@ -578,7 +578,7 @@ func TestRunPostMintAbortFiresTeardown(t *testing.T) {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// home disabled keeps linkHome out of the path so the abort point is purely the
+	// home disabled keeps home.Link out of the path so the abort point is purely the
 	// backend-availability check.
 	if err := os.WriteFile(filepath.Join(proj, ".corral.yml"),
 		[]byte("providers:\n  home:\n    enabled: false\n"), 0o644); err != nil {
@@ -640,7 +640,7 @@ func TestRunSessionHooksEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		// home disabled keeps linkHome out of the path; the launch aborts in the feature-provider mint either way.
+		// home disabled keeps home.Link out of the path; the launch aborts in the feature-provider mint either way.
 		cfg := "providers:\n  home:\n    enabled: false\n" + hooksYAML
 		if err := os.WriteFile(filepath.Join(proj, ".corral.yml"), []byte(cfg), 0o644); err != nil {
 			t.Fatal(err)
@@ -1898,5 +1898,21 @@ func TestPlanLaunchNamesNotExpandedProviders(t *testing.T) {
 	}
 	if !slices.Contains(plan.previewOnly, "gitlab") {
 		t.Errorf("previewOnly = %v, want it to name gitlab", plan.previewOnly)
+	}
+}
+
+// KindBwrap maps to "linux".
+func TestBaselineArchBwrapLinux(t *testing.T) {
+	got := baselineArch(sandbox.KindBwrap)
+	if got != "linux" {
+		t.Errorf("baselineArch(KindBwrap) = %q, want 'linux'", got)
+	}
+}
+
+// KindSeatbelt maps to "macos" (not "darwin").
+func TestBaselineArchSeatbeltMacOS(t *testing.T) {
+	got := baselineArch(sandbox.KindSeatbelt)
+	if got != "macos" {
+		t.Errorf("baselineArch(KindSeatbelt) = %q, want 'macos'", got)
 	}
 }

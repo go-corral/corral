@@ -45,3 +45,23 @@ func TestKeepRel(t *testing.T) {
 		t.Errorf("KeepRel() = %q, want %q", got, want)
 	}
 }
+
+func TestDir(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cfg         Config
+		wantDir     string
+		wantEnabled bool
+	}{
+		{"disabled", Config{Path: "/custom/home"}, "", false},
+		{"set path", Config{Enabled: true, Path: "/custom/home"}, "/custom/home", true},
+		{"default path", Config{Enabled: true}, DefaultPath("/home/u", "/home/u/.claude"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, enabled := tc.cfg.Dir("/home/u", "/home/u/.claude")
+			if dir != tc.wantDir || enabled != tc.wantEnabled {
+				t.Errorf("Dir() = %q, %v, want %q, %v", dir, enabled, tc.wantDir, tc.wantEnabled)
+			}
+		})
+	}
+}
