@@ -132,23 +132,26 @@ type AgentFootprint struct {
 	ProtectedNames []string
 }
 
-// selfProtect carries the inputs selfConfigMatch needs: the active agent's canonical effective
-// config dir and static footprint, every registered agent's footprint (for defense-in-depth), and
-// canonical absolute paths of non-corral hook scripts. hookPaths is nil when config is
-// missing/unreadable/empty, which degrades to the static footprint rules.
-type selfProtect struct {
-	configDir     string
-	footprint     AgentFootprint
-	allFootprints []AgentFootprint
-	hookPaths     []string
-	// extraPaths are additional canonical runtime artifacts corral guards from write/delete
+// SelfProtect lists corral's enforcement and runtime files that BashRule and PathPatternRule guard
+// from write and delete.
+type SelfProtect struct {
+	// ConfigDir is the active agent's canonical effective config dir.
+	ConfigDir string
+	// Footprint is the active agent's static enforcement footprint, anchored under ConfigDir.
+	Footprint AgentFootprint
+	// AllFootprints is every registered agent's footprint, scanned by config-dir path segment.
+	AllFootprints []AgentFootprint
+	// HookPaths are canonical absolute paths of non-corral hook scripts. Nil when config is
+	// missing/unreadable/empty, which degrades to the static footprint rules.
+	HookPaths []string
+	// ExtraPaths are additional canonical runtime artifacts corral guards from write/delete
 	// (audit log + backups, repo-level ignore files), each mapped to a reason. Matched by exact
 	// canonical-path equality; nil when none.
-	extraPaths map[string]string
-	// auditLogBase is the canonical audit-log path. Rotation backups carry timestamped names that
+	ExtraPaths map[string]string
+	// AuditLogBase is the canonical audit-log path. Rotation backups carry timestamped names that
 	// can't be enumerated ahead of time, so the log and every rotation sibling is guarded by prefix.
 	// Empty when unknown.
-	auditLogBase string
+	AuditLogBase string
 }
 
 // selfConfigMatch reports whether path is configuration corral protects from write/delete: the
@@ -159,9 +162,9 @@ type selfProtect struct {
 // .mcp.json to auto-register a server the next session trusts. The user-scope registry
 // ~/.claude.json is deliberately not gated: it doubles as session/project state that must stay
 // writable.
-func selfConfigMatch(path string, sp selfProtect) (string, bool) {
-	configDir := sp.configDir
-	fp := sp.footprint
+func selfConfigMatch(path string, sp SelfProtect) (string, bool) {
+	configDir := sp.ConfigDir
+	fp := sp.Footprint
 	if configDir != "" {
 		if path == configDir {
 			return fp.DirReason, true
@@ -182,19 +185,19 @@ func selfConfigMatch(path string, sp selfProtect) (string, bool) {
 			}
 		}
 	}
-	if slices.Contains(sp.hookPaths, path) {
+	if slices.Contains(sp.HookPaths, path) {
 		return "a registered Claude Code hook script", true
 	}
-	if reason, ok := sp.extraPaths[path]; ok {
+	if reason, ok := sp.ExtraPaths[path]; ok {
 		return reason, true
 	}
-	if sp.auditLogBase != "" && (path == sp.auditLogBase || strings.HasPrefix(path, sp.auditLogBase+".")) {
+	if sp.AuditLogBase != "" && (path == sp.AuditLogBase || strings.HasPrefix(path, sp.AuditLogBase+".")) {
 		return "corral's audit log", true
 	}
 	// Defense-in-depth: for any registered agent's config-dir segment (allFootprints), match the
 	// remainder against that agent's protected files/subtrees. Fires regardless of the active
 	// agent, user, or relocation — one agent's session must not sabotage another's enforcement.
-	if reason, ok := matchAgentFootprint(strings.Split(path, "/"), sp.allFootprints); ok {
+	if reason, ok := matchAgentFootprint(strings.Split(path, "/"), sp.AllFootprints); ok {
 		return reason, true
 	}
 	// corral's own launcher config. Sentinel project basenames match anywhere; the global config
