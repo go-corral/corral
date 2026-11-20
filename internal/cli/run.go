@@ -578,6 +578,28 @@ func launch(p *launchPlan) int {
 	return runSupervised(launcherAbs, argv, p.spec.Environ(), res)
 }
 
+// baselineArch maps a backend Kind to the baseline rules' arch vocabulary ("linux"/"macos"),
+// which differs from runtime.GOOS ("linux"/"darwin").
+func baselineArch(kind sandbox.Kind) string {
+	if kind == sandbox.KindBwrap {
+		return "linux"
+	}
+	return "macos"
+}
+
+// hookGuardDir returns the agent config dir whose private-home shadow drops corral's
+// enforcement, "" when none can.
+func hookGuardDir(cfg *config.Config, realHome string, host map[string]string) string {
+	if len(cfg.AgentLaunch().ExtensionAsset) > 0 {
+		return ""
+	}
+	dir := cfg.AgentConfigDir(realHome, host)
+	if dir != cfg.AgentConfigDir(realHome, nil) {
+		return ""
+	}
+	return dir
+}
+
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the
 // launch directory itself. When it is the user's home, binding it would expose the whole home tree
 // and back the always-blocked masks with the real host secret paths, so a fresh scratch dir is used
