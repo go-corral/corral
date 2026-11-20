@@ -38,7 +38,7 @@ func allTestFootprints() []AgentFootprint { return []AgentFootprint{claudeFootpr
 // on the next bare `pi` run), pi account/state under ~/.pi stays writable, and — cross-agent
 // defense-in-depth — a path carrying the ".pi" segment is still gated while Claude is active.
 func TestSelfConfigMatchPiFootprint(t *testing.T) {
-	piActive := selfProtect{configDir: "/home/u/.pi", footprint: piFootprint(), allFootprints: allTestFootprints()}
+	piActive := SelfProtect{ConfigDir: "/home/u/.pi", Footprint: piFootprint(), AllFootprints: allTestFootprints()}
 	deny := []string{
 		"/home/u/.pi",                                     // the config dir itself (rm target)
 		"/home/u/.pi/agent",                               // intermediate parent — deleting it takes extensions with it
@@ -61,7 +61,7 @@ func TestSelfConfigMatchPiFootprint(t *testing.T) {
 	}
 	// With Claude active, pi's footprint is still enforced via the static allFootprints scan: one
 	// agent's session must not be able to plant an extension that escalates on the next `pi` run.
-	claudeActive := selfProtect{configDir: "/home/u/.claude", footprint: claudeFootprint(), allFootprints: allTestFootprints()}
+	claudeActive := SelfProtect{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}
 	for _, p := range []string{"/home/u/.pi", "/home/u/.pi/agent", "/home/u/.pi/agent/extensions/evil.ts"} {
 		if _, ok := selfConfigMatch(p, claudeActive); !ok {
 			t.Errorf("selfConfigMatch(%q) with claude active must match pi's footprint (cross-agent defense-in-depth)", p)
@@ -72,7 +72,7 @@ func TestSelfConfigMatchPiFootprint(t *testing.T) {
 	// extensions subtree sits directly beneath it — the "extensions" footprint key gates it
 	// there. The static ".pi" segment scan cannot see a custom-named dir, so the anchored
 	// check must carry this alone; pi state under the relocated dir stays writable.
-	relocated := selfProtect{configDir: "/custom/pidir", footprint: piFootprint(), allFootprints: allTestFootprints()}
+	relocated := SelfProtect{ConfigDir: "/custom/pidir", Footprint: piFootprint(), AllFootprints: allTestFootprints()}
 	for _, p := range []string{"/custom/pidir", "/custom/pidir/extensions", "/custom/pidir/extensions/evil.ts"} {
 		if _, ok := selfConfigMatch(p, relocated); !ok {
 			t.Errorf("selfConfigMatch(%q) with relocated pi config dir should match", p)
@@ -102,7 +102,7 @@ func opencodeFootprint() AgentFootprint {
 // TestSelfConfigMatchOpencodeFootprint pins the two-segment marker, the project marker, and the
 // protected base names, and checks that lookalike paths stay writable.
 func TestSelfConfigMatchOpencodeFootprint(t *testing.T) {
-	sp := selfProtect{allFootprints: []AgentFootprint{opencodeFootprint()}}
+	sp := SelfProtect{AllFootprints: []AgentFootprint{opencodeFootprint()}}
 	deny := []string{
 		"/home/other/.config/opencode",
 		"/home/other/.config/opencode/plugins/x.js",

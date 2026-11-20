@@ -177,7 +177,7 @@ func TestAIIgnoreFilesSelfProtected(t *testing.T) {
 		t.Fatalf("ignore file not registered as protected: %v", prot)
 	}
 
-	pp := &policy.PathPatternRule{ExtraProtectedPaths: prot}
+	pp := &policy.PathPatternRule{SelfProtect: policy.SelfProtect{ExtraPaths: prot}}
 	ti, _ := json.Marshal(map[string]string{"file_path": f, "content": "secrets.env\n!keep\n"})
 	d, matched, err := pp.Evaluate(&policy.HookEvent{ToolName: "Write", ToolInput: ti})
 	if err != nil || !matched || d.Action != policy.Deny {

@@ -551,14 +551,23 @@ func newEngine(in engineInputs, files policyFiles, fsys policy.FS) (*policy.Engi
 	// Best-effort: an unresolvable path degrades to the exact-match entries.
 	auditBase, _ := policy.CanonicalizeRootIn(fsys, in.auditPath, "")
 
+	sp := policy.SelfProtect{
+		ConfigDir:     configDir,
+		Footprint:     footprint,
+		AllFootprints: allFootprints,
+		HookPaths:     hookPaths,
+		ExtraPaths:    extraProtected,
+		AuditLogBase:  auditBase,
+	}
+
 	eng := policy.NewEngine(
 		&policy.BlockedPathRule{RuleName: "always-blocked", Roots: alwaysRoots},
 		&policy.BlockedPathRule{RuleName: "blocked-path", Roots: roots},
 		// Repo AI ignore globs: additive deny (no negation).
 		&policy.AIIgnoreRule{Root: aiRoot, Patterns: ai.Patterns},
-		&policy.BashRule{ConfigDir: configDir, Footprint: footprint, AllFootprints: allFootprints, HookPaths: hookPaths, ExtraProtectedPaths: extraProtected, AuditLogBase: auditBase},
+		&policy.BashRule{SelfProtect: sp},
 		// Name-based gate before the costlier content scan.
-		&policy.PathPatternRule{AgentConfigDir: configDir, Footprint: footprint, AllFootprints: allFootprints, HookPaths: hookPaths, ExtraProtectedPaths: extraProtected, AuditLogBase: auditBase},
+		&policy.PathPatternRule{SelfProtect: sp},
 		// Content secret scan: known formats always on; entropy heuristic on positive threshold.
 		&policy.SecretScanRule{
 			EntropyThreshold: cfg.Policy.SecretScan.EntropyThreshold,
