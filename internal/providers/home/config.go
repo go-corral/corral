@@ -11,8 +11,8 @@ import (
 )
 
 // Config configures the private-$HOME provider (providers.home): HOME is
-// redirected to Path and the launcher symlinks the allowed-under-home host
-// paths into it. Default on.
+// redirected to Path and Link symlinks the allowed-under-home host paths into it.
+// Default on.
 type Config struct {
 	Enabled bool `yaml:"enabled"`
 	// Path is the host directory used as the sandbox's $HOME. Empty -> DefaultPath.

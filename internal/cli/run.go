@@ -25,6 +25,7 @@ import (
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
 	"github.com/go-corral/corral/internal/sidecar"
@@ -338,10 +339,10 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 	guardDir := hookGuardDir(cfg, f.home, host)
 	var shadows []string
 	if homeOn {
-		pre := spec // shallow copy: linkHome only reads
+		pre := spec // shallow copy: home.Link only reads
 		pre.Mounts = append(slices.Clone(spec.Mounts), preview.Mounts()...)
 		var serr error
-		if shadows, serr = linkHome(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
+		if shadows, serr = home.Link(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
 			return nil, fatalf(os.Stderr, "home: %v", serr)
 		}
 		warnings = append(warnings, shadows...)
@@ -498,7 +499,7 @@ func launch(p *launchPlan) int {
 	// the full mount set is known.
 	var lateShadows []string
 	if p.homeOn {
-		late, lerr := linkHome(&p.spec, p.flags.home, p.privHome, p.homeArch, p.keep, p.guardDir, true)
+		late, lerr := home.Link(&p.spec, p.flags.home, p.privHome, p.homeArch, p.keep, p.guardDir, true)
 		if lerr != nil {
 			return fatalf(os.Stderr, "home: %v", lerr)
 		}
