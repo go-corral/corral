@@ -4,7 +4,7 @@ import "testing"
 
 // claudeFootprint / piFootprint mirror the production Footprint() of internal/agents/claude and
 // internal/agents/pi. policy is a leaf and cannot import the agents tree, so these tests rebuild
-// the same data the composition root (cli.agentFootprint) maps in; the reason strings are
+// the same data the agent registry supplies; the reason strings are
 // byte-identical to the reasons corral gates for the footprint.
 func claudeFootprint() AgentFootprint {
 	return AgentFootprint{
