@@ -81,11 +81,7 @@ func (c *Config) EffectiveAgent() string {
 }
 
 func (c *Config) agent() agents.Agent {
-	if a, ok := agents.Lookup(c.EffectiveAgent()); ok {
-		return a
-	}
-	a, _ := agents.Lookup(agents.Default)
-	return a
+	return agents.LookupOrDefault(c.EffectiveAgent())
 }
 
 func (c *Config) agentConfig() agents.AgentConfig {

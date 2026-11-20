@@ -7,7 +7,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/agents"
 	"github.com/go-corral/corral/internal/policy"
 )
 
@@ -46,7 +46,7 @@ func TestCanonicalHookPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := canonicalHookPaths(activeAgent(&config.Config{Agent: tc.agent}).ProtectedPaths(dir), policy.OSFS{})
+			got := canonicalHookPaths(agents.LookupOrDefault(tc.agent).ProtectedPaths(dir), policy.OSFS{})
 			sort.Strings(got)
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("canonicalHookPaths = %v, want %v", got, tc.want)
