@@ -68,8 +68,25 @@ func splitAgentArg(args []string) (agent string, rest []string) {
 	return "", args
 }
 
-// cmdRun launches a coding agent inside the sandbox built from the effective config.
-func cmdRun(args []string, version string) int {
+// runFlags is the parsed `corral run` command line, with the home and project defaults
+// resolved.
+type runFlags struct {
+	agent    string
+	dryRun   bool
+	home     string
+	project  string
+	bwrap    string
+	command  string
+	backend  string
+	profiles []string
+	yes      bool
+	args     []string
+	version  string
+}
+
+// parseRunFlags parses the `corral run` command line. ok is false when the command must exit
+// with code.
+func parseRunFlags(args []string, version string) (f runFlags, code int, ok bool) {
 	// Peeled before flag parsing since Go's flag package stops at the first positional.
 	agentName, args := splitAgentArg(args)
 
@@ -89,33 +106,54 @@ func cmdRun(args []string, version string) int {
 		fs.PrintDefaults()
 	}
 	if code, ok := parseFlags(fs, args); !ok {
-		return code
+		return runFlags{}, code, false
 	}
-	c := report.StyleFor(os.Stderr)
-	warnLines := &lineWriter{w: os.Stderr, c: c, g: report.Attention}
 
 	if *home == "" {
 		h, err := os.UserHomeDir()
 		if err != nil {
-			return fatalf(os.Stderr, "cannot resolve home: %v", err)
+			return runFlags{}, fatalf(os.Stderr, "cannot resolve home: %v", err), false
 		}
 		*home = h
 	}
 	if *project == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return fatalf(os.Stderr, "cannot resolve working directory: %v", err)
+			return runFlags{}, fatalf(os.Stderr, "cannot resolve working directory: %v", err), false
 		}
 		*project = wd
 	}
+	return runFlags{
+		agent:    agentName,
+		dryRun:   *dryRun,
+		home:     *home,
+		project:  *project,
+		bwrap:    *bwrapPath,
+		command:  *commandPath,
+		backend:  *backendFlag,
+		profiles: []string(*profiles),
+		yes:      *yes,
+		args:     fs.Args(),
+		version:  version,
+	}, 0, true
+}
+
+// cmdRun launches a coding agent inside the sandbox built from the effective config.
+func cmdRun(args []string, version string) int {
+	f, code, ok := parseRunFlags(args, version)
+	if !ok {
+		return code
+	}
+	c := report.StyleFor(os.Stderr)
+	warnLines := &lineWriter{w: os.Stderr, c: c, g: report.Attention}
 
 	// Decide the backend once: the -backend override if given, else this OS's default.
-	backendKind, err := sandbox.ResolveKind(*backendFlag)
+	backendKind, err := sandbox.ResolveKind(f.backend)
 	if err != nil {
 		return fatalf(os.Stderr, "%v", err)
 	}
 
-	cfg, sources, err := loadConfig([]string(*profiles))
+	cfg, sources, err := loadConfig(f.profiles)
 	if err != nil {
 		return fatalf(os.Stderr, "load config: %v", err)
 	}
@@ -130,7 +168,7 @@ func cmdRun(args []string, version string) int {
 	}
 	// Decide the writable workdir before the trust gate: the gate hashes session-hook
 	// executables whose relative paths anchor to the workdir.
-	projectSrc, substituted, err := resolveWorkdir(*home, *project, *dryRun)
+	projectSrc, substituted, err := resolveWorkdir(f.home, f.project, f.dryRun)
 	if err != nil {
 		return fatalf(os.Stderr, "%v", err)
 	}
@@ -148,29 +186,29 @@ func cmdRun(args []string, version string) int {
 
 	// A `corral run <agent>` positional overrides the configured agent. Set before the trust
 	// gate, because the private home path depends on the agent.
-	if agentName != "" {
-		cfg.Agent = agentName
+	if f.agent != "" {
+		cfg.Agent = f.agent
 	}
 	host := envMap()
-	privHome, homeOn := homeDir(cfg, *home, host)
+	privHome, homeOn := homeDir(cfg, f.home, host)
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run and every kubeconfig in a sandbox-writable location.
 	// Runs before any consumption or mint. --yes is refused here; --dry-run is exempt.
 	kubes := collectKubeconfigs(cfg, projectSrc, privHome)
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, *yes, os.Stdin, os.Stderr, c) {
+	if !f.dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, f.yes, os.Stdin, os.Stderr, c) {
 		return 1
 	}
-	if err := prepareAuditDir(cfg, *home, *dryRun); err != nil {
+	if err := prepareAuditDir(cfg, f.home, f.dryRun); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
-	if err := checkResolvedPathGrants(cfg, *home); err != nil {
+	if err := checkResolvedPathGrants(cfg, f.home); err != nil {
 		return fatalf(os.Stderr, "config invalid: %v", err)
 	}
 
 	// Resolve the program to run: the configured agent's binary on PATH, or -command to override.
-	commandBin := *commandPath
+	commandBin := f.command
 	if commandBin == "" {
 		agent, ok := agents.Lookup(cfg.EffectiveAgent())
 		if !ok {
@@ -182,7 +220,7 @@ func cmdRun(args []string, version string) int {
 		}
 	}
 
-	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
+	spec := sandbox.DefaultSpec(specParams(cfg, f.home, projectSrc, host, commandBin))
 	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
 	if spec.SetEnv == nil {
@@ -194,15 +232,15 @@ func cmdRun(args []string, version string) int {
 	}
 	// Pin the audit-log path so the sidecar and commands inside the sandbox do not resolve it
 	// against the private home.
-	agentConfigDir := cfg.AgentConfigDir(*home, host)
-	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
+	agentConfigDir := cfg.AgentConfigDir(f.home, host)
+	auditPath := configuredAuditPath(cfg, trust.StateDir(f.home, host["XDG_STATE_HOME"]), agentConfigDir)
 	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
 	// Activate the agent's in-process policy extension, if it ships one.
 	launch := agentLaunch(cfg)
 	var extensionArgs []string
 	if len(launch.ExtensionAsset) > 0 {
-		assetPath, aerr := materializeExtension(*home, launch.ExtensionName, launch.ExtensionAsset)
+		assetPath, aerr := materializeExtension(f.home, launch.ExtensionName, launch.ExtensionAsset)
 		if aerr != nil {
 			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
@@ -219,20 +257,20 @@ func cmdRun(args []string, version string) int {
 			extensionArgs = []string{launch.ExtensionFlag, assetPath}
 		}
 	}
-	agentArgs := slices.Concat(cfg.AgentArgs(), fs.Args())
+	agentArgs := slices.Concat(cfg.AgentArgs(), f.args)
 	if launch.Args != nil {
 		var aerr error
-		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), fs.Args()); aerr != nil {
+		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), f.args); aerr != nil {
 			return fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
 		}
 	}
 	// The config sections apply before the gate, so their warnings feed it and their masks are in
 	// the spec before any feature provider mounts.
-	owners, sectionRows, sectionWarnings := applyConfigSections(&spec, cfg, *home, projectSrc)
+	owners, sectionRows, sectionWarnings := applyConfigSections(&spec, cfg, f.home, projectSrc)
 
 	// Construct the backend and compute launch advisories before any mint. Written to stderr
 	// so --dry-run's argv stays pipeable.
-	backend := newBackend(backendKind, *bwrapPath, cfg.Sandbox)
+	backend := newBackend(backendKind, f.bwrap, cfg.Sandbox)
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
 	checks := sessionWarnings(cfg, backendKind, backend.ReadOnlyTargets(spec))
@@ -251,46 +289,46 @@ func cmdRun(args []string, version string) int {
 			Fix:    "unset " + sandbox.DisableHooksEnvVar})
 	}
 	ctx := context.Background()
-	sess := newSession(*home, projectSrc)
+	sess := newSession(f.home, projectSrc)
 	// A preStart session hook's captured stderr renders in the banner's format.
 	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
 	// Registered before the teardown, so it runs after the session-end hooks.
 	defer hookLog.Flush()
 	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
-	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
+	active := activeProviders(cfg, f.home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
 	command = append(command, agentArgs...)
 
 	// Side-effect-free preview of the feature providers: each one's static, secret-free contribution.
 	// Credential-minters and session hooks are named (previewOnly) rather than expanded.
 	preview, previewOnly, perr := providers.ResolvePreview(ctx, sess, active)
-	if perr != nil && *dryRun {
+	if perr != nil && f.dryRun {
 		return fatalf(os.Stderr, "providers: %v", perr)
 	}
 	// Private-home shadows go through the gate: a detect-only pass over the full static mount set.
 	homeArch := baselineArch(backendKind)
 	keep := cfg.Providers.Home.KeepRel()
-	guardDir := hookGuardDir(cfg, *home, host)
+	guardDir := hookGuardDir(cfg, f.home, host)
 	var shadows []string
 	if homeOn {
 		pre := spec // shallow copy: linkHome only reads
 		pre.Mounts = append(slices.Clone(spec.Mounts), preview.Mounts()...)
 		var serr error
-		if shadows, serr = linkHome(&pre, *home, privHome, homeArch, keep, guardDir, false); serr != nil {
+		if shadows, serr = linkHome(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
 			return fatalf(os.Stderr, "home: %v", serr)
 		}
 		warnings = append(warnings, shadows...)
 	}
 
 	banner := bannerInfo{
-		version:  version,
-		home:     *home,
+		version:  f.version,
+		home:     f.home,
 		workdir:  spec.WorkDir,
 		auditLog: auditPath,
-		profiles: []string(*profiles),
+		profiles: f.profiles,
 	}
 
-	if *dryRun {
+	if f.dryRun {
 		if err := preview.Apply(&spec, owners); err != nil {
 			return fatalf(os.Stderr, "providers: %v", err)
 		}
@@ -327,11 +365,11 @@ func cmdRun(args []string, version string) int {
 
 	// Startup banner + confirmation gate, before minting. The gate fires only when warnings
 	// exist and stdin is interactive: --yes skips it.
-	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
+	banner.latest = checkUpdateOnStart(ctx, cfg, f.home, f.version)
 	// Print the banner around the gate and the feature providers' output, so the providers section
 	// renders as one contiguous block.
 	writeBannerHeader(os.Stderr, c, cfg, banner, checks, warnings)
-	if len(checks)+len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
+	if len(checks)+len(warnings) > 0 && !confirmProceed(f.yes, os.Stdin, os.Stderr, c) {
 		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
 	}
 
@@ -368,7 +406,7 @@ func cmdRun(args []string, version string) int {
 	// the full mount set is known.
 	var lateShadows []string
 	if homeOn {
-		late, lerr := linkHome(&spec, *home, privHome, homeArch, keep, guardDir, true)
+		late, lerr := linkHome(&spec, f.home, privHome, homeArch, keep, guardDir, true)
 		if lerr != nil {
 			return fatalf(os.Stderr, "home: %v", lerr)
 		}
@@ -377,7 +415,7 @@ func cmdRun(args []string, version string) int {
 
 	// The providers section prints after the gate and the feature providers' mint.
 	notices := append(slices.Clone(sectionRows), res.Notices...)
-	writeBannerBody(os.Stderr, c, *home, notices, nil)
+	writeBannerBody(os.Stderr, c, f.home, notices, nil)
 	writeWarnings(os.Stderr, c, res.Warnings)
 	writeWarnings(os.Stderr, c, lateShadows)
 
