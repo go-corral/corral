@@ -140,10 +140,7 @@ func Resolve(ctx context.Context, sess Session, active []Active) (res *Resolved,
 		if c == nil {
 			continue
 		}
-		res.items = append(res.items, newResolvedItem(p.Name(), c))
-		res.Notices = append(res.Notices, NoticesFor(p.Name(), c.Status)...)
-		res.AgentNotes = append(res.AgentNotes, NoticesFor(p.Name(), c.AgentNotes)...)
-		res.Warnings = append(res.Warnings, c.Warnings...)
+		res.merge(p.Name(), c)
 		if c.Cleanup != nil {
 			res.cleanups = append(res.cleanups, namedCleanup{provider: p.Name(), fn: c.Cleanup, hint: c.CleanupHint})
 		}
@@ -152,6 +149,14 @@ func Resolve(ctx context.Context, sess Session, active []Active) (res *Resolved,
 		}
 	}
 	return res, nil
+}
+
+// merge appends one provider's contribution: its item, notices, agent notes and warnings.
+func (r *Resolved) merge(provider string, c *Contribution) {
+	r.items = append(r.items, newResolvedItem(provider, c))
+	r.Notices = append(r.Notices, NoticesFor(provider, c.Status)...)
+	r.AgentNotes = append(r.AgentNotes, NoticesFor(provider, c.AgentNotes)...)
+	r.Warnings = append(r.Warnings, c.Warnings...)
 }
 
 // ResolvePreview builds a side-effect-free preview for `corral run --dry-run`. Each
@@ -178,10 +183,7 @@ func ResolvePreview(ctx context.Context, sess Session, active []Active) (res *Re
 		if c == nil {
 			continue
 		}
-		res.items = append(res.items, newResolvedItem(p.Name(), c))
-		res.Notices = append(res.Notices, NoticesFor(p.Name(), c.Status)...)
-		res.AgentNotes = append(res.AgentNotes, NoticesFor(p.Name(), c.AgentNotes)...)
-		res.Warnings = append(res.Warnings, c.Warnings...)
+		res.merge(p.Name(), c)
 	}
 	return res, notExpanded, nil
 }
@@ -222,11 +224,11 @@ func (r *Resolved) Apply(spec *sandbox.SandboxSpec, owners Owners) error {
 		seenEnv[k] = owner
 	}
 	// Pre-claim corral's own env channels so a provider Env can neither plant nor clobber them.
-	seenEnv[sandbox.ProviderNotesEnvVar] = "corral (reserved for provider notes)"
-	seenEnv[sandbox.BackendNotesEnvVar] = "corral (reserved for backend notes)"
-	for _, name := range []string{sandbox.SandboxEnvVar, sandbox.GlobalConfigEnvVar, sandbox.ProfilesEnvVar, sandbox.AuditPathEnvVar, sandbox.SidecarSocketEnvVar, sandbox.AgentEnvVar} {
+	for _, name := range sandbox.ReservedEnvNames {
 		seenEnv[name] = "corral (reserved control marker)"
 	}
+	seenEnv[sandbox.ProviderNotesEnvVar] = "corral (reserved for provider notes)"
+	seenEnv[sandbox.BackendNotesEnvVar] = "corral (reserved for backend notes)"
 
 	for _, it := range r.items {
 		for _, m := range it.mounts {

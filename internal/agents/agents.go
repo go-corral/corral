@@ -45,6 +45,16 @@ func Lookup(name string) (Agent, bool) {
 	return a, ok
 }
 
+// LookupOrDefault returns the agent registered under name, or the default agent for an unknown name.
+// It never returns nil, so the fail-closed hook can call it without a check.
+func LookupOrDefault(name string) Agent {
+	if a, ok := Lookup(name); ok {
+		return a
+	}
+	a, _ := Lookup(Default)
+	return a
+}
+
 func Known() []string {
 	names := make([]string, 0, len(registry))
 	for name := range registry {

@@ -18,6 +18,15 @@ func TestLookupKnownAndUnknown(t *testing.T) {
 	}
 }
 
+func TestLookupOrDefault(t *testing.T) {
+	if got := LookupOrDefault("pi").Name(); got != "pi" {
+		t.Errorf(`LookupOrDefault("pi") = %q, want "pi"`, got)
+	}
+	if got := LookupOrDefault("nope").Name(); got != Default {
+		t.Errorf(`LookupOrDefault("nope") = %q, want %q`, got, Default)
+	}
+}
+
 func TestDefaultIsRegistered(t *testing.T) {
 	// Drift-guard: the Default literal must always name a registered agent, else the
 	// launcher's default selection would fail closed on a perfectly normal launch.

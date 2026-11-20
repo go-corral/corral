@@ -103,10 +103,7 @@ func agentsArea(cfg *config.Config, cfgErr error, home string, homeErr error) do
 	self, _ := os.Executable()
 	configured := ""
 	if cfgErr == nil {
-		configured = cfg.EffectiveAgent()
-		if _, ok := agents.Lookup(configured); !ok {
-			configured = agents.Default
-		}
+		configured = agents.LookupOrDefault(cfg.EffectiveAgent()).Name()
 	}
 	var installed []string
 	for _, name := range agents.Known() {
@@ -156,11 +153,7 @@ func doctorAgent(name string) agents.Agent {
 			name = cfg.EffectiveAgent()
 		}
 	}
-	if a, ok := agents.Lookup(name); ok {
-		return a
-	}
-	a, _ := agents.Lookup(agents.Default)
-	return a
+	return agents.LookupOrDefault(name)
 }
 
 // providersArea probes the host prerequisite of each enabled provider that has one.
