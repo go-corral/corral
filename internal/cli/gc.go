@@ -52,7 +52,7 @@ func cmdGC(args []string) int {
 // gcCandidates returns the providers `corral gc` should query for orphans. workDir is the
 // sandbox-writable workdir for the kubeconfig gate and anchors a relative kubeconfig.path.
 func gcCandidates(cfg *config.Config, home string, host map[string]string, workDir string) []providers.Provider {
-	privHome, _ := homeDir(cfg, home, host)
+	privHome, _ := cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, host))
 	approved := gcApprovedKubeconfigs(cfg, workDir, privHome, trust.NewStore(trust.DefaultDir(home)))
 	var out []providers.Provider
 	for _, a := range activeProviders(cfg, home, host, workDir, approved, nil, nil) {

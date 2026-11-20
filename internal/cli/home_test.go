@@ -23,9 +23,9 @@ func testHomeDir(t *testing.T, agent, realHome string, env map[string]string) st
 	t.Helper()
 	cfg := &config.Config{Agent: agent}
 	cfg.Providers.Home.Enabled = true
-	dir, ok := homeDir(cfg, realHome, env)
+	dir, ok := cfg.Providers.Home.Dir(realHome, cfg.AgentConfigDir(realHome, env))
 	if !ok {
-		t.Fatal("homeDir: provider unexpectedly disabled")
+		t.Fatal("home.Dir: provider unexpectedly disabled")
 	}
 	return dir
 }
@@ -74,7 +74,7 @@ func TestHomeDirKeyedToConfigDir(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Providers.Home.Enabled = true
 	cfg.Providers.Home.Path = "/custom/home"
-	if d, _ := homeDir(cfg, realHome, map[string]string{"CLAUDE_CONFIG_DIR": filepath.Join(realHome, ".claude-personal")}); d != "/custom/home" {
+	if d, _ := cfg.Providers.Home.Dir(realHome, cfg.AgentConfigDir(realHome, map[string]string{"CLAUDE_CONFIG_DIR": filepath.Join(realHome, ".claude-personal")})); d != "/custom/home" {
 		t.Errorf("explicit home path must win: got %q, want /custom/home", d)
 	}
 }
