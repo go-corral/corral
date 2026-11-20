@@ -1855,3 +1855,48 @@ func TestRunDryRunPassesPiArgsAfterBridge(t *testing.T) {
 		t.Errorf("claude args leaked into the pi argv:\n%s", out)
 	}
 }
+
+// TestPlanLaunchPinsAuditPathAndProfiles: the plan's spec pins the configured audit-log path and
+// the applied profiles in order.
+func TestPlanLaunchPinsAuditPathAndProfiles(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(home, "state", "audit.jsonl")
+	writeCorralYML(t, proj, "policy:\n  audit:\n    path: "+audit+"\nprofiles:\n  a:\n    hostname: host-a\n  b:\n    hostname: host-b\n")
+	isolateConfigEnv(t, home, proj)
+
+	plan, code := planLaunch(runFlags{dryRun: true, home: home, project: proj, bwrap: "bwrap", profiles: []string{"a", "b"}, version: "dev"})
+	if plan == nil {
+		t.Fatalf("planLaunch exit=%d", code)
+	}
+	if got := plan.spec.SetEnv[sandbox.AuditPathEnvVar]; got != audit {
+		t.Errorf("%s = %q, want %q", sandbox.AuditPathEnvVar, got, audit)
+	}
+	if got := plan.spec.SetEnv[sandbox.ProfilesEnvVar]; got != "a,b" {
+		t.Errorf("%s = %q, want %q", sandbox.ProfilesEnvVar, got, "a,b")
+	}
+}
+
+// TestPlanLaunchNamesNotExpandedProviders: a credential-minter cannot be previewed, so the plan
+// names it in previewOnly.
+func TestPlanLaunchNamesNotExpandedProviders(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCorralYML(t, proj, "providers:\n  gitlab:\n    enabled: true\n")
+	isolateConfigEnv(t, home, proj)
+	t.Setenv("GITLAB_TOKEN", "x")
+
+	plan, code := planLaunch(runFlags{dryRun: true, home: home, project: proj, bwrap: "bwrap", version: "dev"})
+	if plan == nil {
+		t.Fatalf("planLaunch exit=%d", code)
+	}
+	if !slices.Contains(plan.previewOnly, "gitlab") {
+		t.Errorf("previewOnly = %v, want it to name gitlab", plan.previewOnly)
+	}
+}
