@@ -1900,3 +1900,19 @@ func TestPlanLaunchNamesNotExpandedProviders(t *testing.T) {
 		t.Errorf("previewOnly = %v, want it to name gitlab", plan.previewOnly)
 	}
 }
+
+// KindBwrap maps to "linux".
+func TestBaselineArchBwrapLinux(t *testing.T) {
+	got := baselineArch(sandbox.KindBwrap)
+	if got != "linux" {
+		t.Errorf("baselineArch(KindBwrap) = %q, want 'linux'", got)
+	}
+}
+
+// KindSeatbelt maps to "macos" (not "darwin").
+func TestBaselineArchSeatbeltMacOS(t *testing.T) {
+	got := baselineArch(sandbox.KindSeatbelt)
+	if got != "macos" {
+		t.Errorf("baselineArch(KindSeatbelt) = %q, want 'macos'", got)
+	}
+}
