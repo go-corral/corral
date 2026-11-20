@@ -22,29 +22,15 @@ import (
 	"github.com/go-corral/corral/internal/trust"
 )
 
-// Hook event names: the `corral hook` subcommands and the sidecar request types.
-const (
-	eventPreToolUse       = "pre-tool-use"
-	eventPostToolUse      = "post-tool-use"
-	eventSessionStart     = "session-start"
-	eventUserPromptSubmit = "user-prompt-submit"
-)
-
-// Deny presentations: the `--decision` values of pre-tool-use.
-const (
-	decisionJSON  = "json"
-	decisionExit2 = "exit2"
-)
-
 // hookVersion is the corral version, set once by Main. The session-start note names it.
 var hookVersion = "dev"
 
 // hookDispatch maps each hook event to its handler. cmdHook fails closed on unknown events.
 var hookDispatch = map[string]func(args []string) int{
-	eventPreToolUse:       cmdHookPreToolUse,
-	eventPostToolUse:      cmdHookPostToolUse,
-	eventSessionStart:     cmdHookSessionStart,
-	eventUserPromptSubmit: cmdHookUserPromptSubmit,
+	sidecar.EventPreToolUse:       cmdHookPreToolUse,
+	sidecar.EventPostToolUse:      cmdHookPostToolUse,
+	sidecar.EventSessionStart:     cmdHookSessionStart,
+	sidecar.EventUserPromptSubmit: cmdHookUserPromptSubmit,
 }
 
 // cmdHook dispatches the hook enforcer subcommands (the hot path: fast, fail-closed).
@@ -97,7 +83,7 @@ func runUserPromptSubmitHook(stdin io.Reader, stdout io.Writer) int {
 
 	// The prompt secret scan runs sandboxed or not. Soft warn-and-resubmit, keyed per prompt.
 	// When the policy cannot be evaluated, it scans for known credential formats only.
-	resp := evaluate(sidecar.Request{Type: eventUserPromptSubmit}, data)
+	resp := evaluate(sidecar.Request{Type: sidecar.EventUserPromptSubmit}, data)
 	if resp.Error != "" {
 		if code, handled := promptSecretWarn(ev, 0, nil, stdout); handled {
 			return code
@@ -302,9 +288,9 @@ func (s *stringSlice) Set(v string) error {
 // cmdHookPreToolUse runs the PreToolUse gate: install fail-closed signal handling, evaluate
 // stdin, reproduce the answer, exit 0 or 2.
 func cmdHookPreToolUse(args []string) int {
-	fs := flag.NewFlagSet(eventPreToolUse, flag.ContinueOnError)
-	decision := fs.String("decision", decisionJSON, fmt.Sprintf("how to report a block: %q (clean policy decision) or %q", decisionJSON, decisionExit2))
-	if err := fs.Parse(args); err != nil || (*decision != decisionJSON && *decision != decisionExit2) {
+	fs := flag.NewFlagSet(sidecar.EventPreToolUse, flag.ContinueOnError)
+	decision := fs.String("decision", sidecar.DecisionJSON, fmt.Sprintf("how to report a block: %q (clean policy decision) or %q", sidecar.DecisionJSON, sidecar.DecisionExit2))
+	if err := fs.Parse(args); err != nil || (*decision != sidecar.DecisionJSON && *decision != sidecar.DecisionExit2) {
 		// A gate that can't parse its own flags must block.
 		return policy.BlockFailClosed(os.Stderr, "bad hook arguments")
 	}
@@ -316,7 +302,7 @@ func cmdHookPreToolUse(args []string) int {
 	if err != nil {
 		return policy.BlockFailClosed(os.Stderr, "cannot read hook input: %v", err)
 	}
-	resp := evaluate(sidecar.Request{Type: eventPreToolUse, Decision: *decision}, data)
+	resp := evaluate(sidecar.Request{Type: sidecar.EventPreToolUse, Decision: *decision}, data)
 	if resp.Error != "" {
 		return policy.BlockFailClosed(os.Stderr, "cannot evaluate policy: %s", resp.Error)
 	}
@@ -350,7 +336,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 		}
 	}()
 
-	fs := flag.NewFlagSet(eventPostToolUse, flag.ContinueOnError)
+	fs := flag.NewFlagSet(sidecar.EventPostToolUse, flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		// Learn the tool name before withholding: otherwise pre-parse paths fall back to the
 		// Bash schema, which an mcp__* caller silently ignores.
@@ -366,7 +352,7 @@ func cmdHookPostToolUse(args []string) (code int) {
 	} else {
 		gate.ObserveShapeFrom(bytes.NewReader(data))
 	}
-	resp := evaluate(sidecar.Request{Type: eventPostToolUse}, data)
+	resp := evaluate(sidecar.Request{Type: sidecar.EventPostToolUse}, data)
 	if resp.Error != "" {
 		fmt.Fprintf(os.Stderr, "corral: cannot evaluate policy, withholding the tool response (fail-closed): %s\n", resp.Error)
 		return gate.Replace(policy.Unscanned("cannot evaluate policy"))
@@ -447,22 +433,22 @@ func eventHandler(in engineInputs, build func(fsys policy.FS) (*policy.Engine, e
 		var stdout, stderr bytes.Buffer
 		var code int
 		switch req.Type {
-		case eventPreToolUse:
+		case sidecar.EventPreToolUse:
 			eng, err := build(fsys)
 			if err != nil {
 				return sidecar.Response{Error: err.Error()}
 			}
 			present := policy.PresentJSON
-			if req.Decision == decisionExit2 {
+			if req.Decision == sidecar.DecisionExit2 {
 				present = policy.PresentExit2
 			}
 			code = policy.RunHookWithAudit(eng, aud, fsys, bytes.NewReader(payload), &stdout, &stderr, present)
-		case eventPostToolUse:
+		case sidecar.EventPostToolUse:
 			code = policy.RunPostToolUseHook(entropy, 0, aud, bytes.NewReader(payload), policy.NewPostToolUseGate(&stdout), &stderr)
-		case eventUserPromptSubmit:
+		case sidecar.EventUserPromptSubmit:
 			ev, _ := policy.ParseEvent(payload)
 			code, _ = promptSecretWarn(ev, entropy, aud, &stdout)
-		case eventSessionStart:
+		case sidecar.EventSessionStart:
 			code = policy.WriteSessionStartContext(&stdout, sandboxSystemNote(
 				runtime.GOOS, hookVersion, in.env[sandbox.BackendNotesEnvVar], in.env[sandbox.ProviderNotesEnvVar],
 			))
