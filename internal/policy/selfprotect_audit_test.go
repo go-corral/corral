@@ -7,9 +7,9 @@ import (
 )
 
 // The always-on audit log and its rotation backups are self-protected from write/delete
-// from inside the sandbox, via the selfProtect extra-protected-paths mechanism that the
+// from inside the sandbox, via the SelfProtect.ExtraPaths mechanism that the
 // repo-level ignore file also reuses. Reads stay allowed (harmless).
-func TestExtraProtectedPathsGuardAuditLog(t *testing.T) {
+func TestExtraPathsGuardAuditLog(t *testing.T) {
 	dir := t.TempDir()
 	logPath, err := Canonicalize(filepath.Join(dir, "corral-audit.jsonl"), "")
 	if err != nil {
@@ -22,7 +22,7 @@ func TestExtraProtectedPathsGuardAuditLog(t *testing.T) {
 	extra := map[string]string{logPath: "corral's audit log", backup: "corral's audit log"}
 
 	// PathPatternRule: a Write/Edit of the log or a rotation backup is denied.
-	pp := &PathPatternRule{ExtraProtectedPaths: extra}
+	pp := &PathPatternRule{SelfProtect: SelfProtect{ExtraPaths: extra}}
 	for _, target := range []string{logPath, backup} {
 		d, matched, err := pp.Evaluate(toolEvent(t, "Write", map[string]any{"file_path": target, "content": "x"}))
 		if err != nil || !matched || d.Action != Deny {
@@ -35,7 +35,7 @@ func TestExtraProtectedPathsGuardAuditLog(t *testing.T) {
 	}
 
 	// BashRule: redirect-over, recursive-rm, and truncate of the log are all denied.
-	br := &BashRule{ExtraProtectedPaths: extra}
+	br := &BashRule{SelfProtect: SelfProtect{ExtraPaths: extra}}
 	for _, cmd := range []string{
 		"echo wiped > " + logPath,
 		"rm -rf " + logPath,
@@ -49,7 +49,7 @@ func TestExtraProtectedPathsGuardAuditLog(t *testing.T) {
 }
 
 // A rotation backup created mid-session has a timestamped name that was not known at hook
-// init, so it is not in ExtraProtectedPaths. The AuditLogBase prefix guard must still protect
+// init, so it is not in ExtraPaths. The AuditLogBase prefix guard must still protect
 // it (and the .gz form) from delete/truncate/edit; without it, time-based rotation would
 // move up to a full interval of history into an unprotected file.
 func TestAuditLogBasePrefixGuardsTimestampedBackups(t *testing.T) {
@@ -62,7 +62,7 @@ func TestAuditLogBasePrefixGuardsTimestampedBackups(t *testing.T) {
 	rawBackup := filepath.Join(dir, "corral-audit.jsonl.20260101T120000Z")
 	gzBackup := filepath.Join(dir, "corral-audit.jsonl.20260101T120000Z.gz")
 
-	pp := &PathPatternRule{AuditLogBase: base}
+	pp := &PathPatternRule{SelfProtect: SelfProtect{AuditLogBase: base}}
 	for _, target := range []string{rawBackup, gzBackup} {
 		d, matched, err := pp.Evaluate(toolEvent(t, "Write", map[string]any{"file_path": target, "content": "x"}))
 		if err != nil || !matched || d.Action != Deny {
@@ -70,7 +70,7 @@ func TestAuditLogBasePrefixGuardsTimestampedBackups(t *testing.T) {
 		}
 	}
 
-	br := &BashRule{AuditLogBase: base}
+	br := &BashRule{SelfProtect: SelfProtect{AuditLogBase: base}}
 	for _, cmd := range []string{"rm -rf " + rawBackup, "truncate -s 0 " + gzBackup} {
 		d, matched, err := br.Evaluate(bashEvent(t, cmd))
 		if err != nil || !matched || d.Action != Deny {
@@ -106,7 +106,7 @@ func TestAuditLogBasePrefixGuardResolvesSymlinkedAncestor(t *testing.T) {
 	rawBackup := filepath.Join(linkDir, "corral-audit.jsonl.20260101T120000Z")   // via the symlink
 	gzBackup := filepath.Join(linkDir, "corral-audit.jsonl.20260101T120000Z.gz") // via the symlink
 
-	br := &BashRule{AuditLogBase: base}
+	br := &BashRule{SelfProtect: SelfProtect{AuditLogBase: base}}
 	for _, cmd := range []string{
 		"rm -rf " + rawBackup,
 		"truncate -s 0 " + gzBackup,

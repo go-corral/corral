@@ -10,20 +10,7 @@ import (
 // protect /etc and corral's config and runtime files from changes that could disable enforcement.
 // BlockedPathRule handles always-blocked directories; this rule adds file and non-home cases.
 type PathPatternRule struct {
-	AgentConfigDir string
-	// Footprint is the active agent's static enforcement footprint, anchored under AgentConfigDir.
-	// AllFootprints is every registered agent's footprint, scanned by config-dir path segment.
-	Footprint     AgentFootprint
-	AllFootprints []AgentFootprint
-	// HookPaths are canonical absolute paths of non-corral hook scripts; nil falls back to the
-	// static AgentConfigDir/hooks assumption.
-	HookPaths []string
-	// ExtraProtectedPaths are additional canonical runtime artifacts whose Edit/Write is
-	// self-protected, each mapped to a reason. Nil when none.
-	ExtraProtectedPaths map[string]string
-	// AuditLogBase is the canonical audit-log path; the live log and rotation backups are
-	// prefix-protected from Edit/Write. Empty when unknown.
-	AuditLogBase string
+	SelfProtect SelfProtect
 }
 
 func (r *PathPatternRule) Name() string { return "path-pattern" }
@@ -98,7 +85,7 @@ func (r *PathPatternRule) writeGuards(canon string) (Decision, bool) {
 	if etc := logicalSysPath(canon); Within(etc, "/etc") {
 		return r.deny(fmt.Sprintf("writing under /etc (%q)", canon)), true
 	}
-	if reason, ok := selfConfigMatch(canon, selfProtect{configDir: r.AgentConfigDir, footprint: r.Footprint, allFootprints: r.AllFootprints, hookPaths: r.HookPaths, extraPaths: r.ExtraProtectedPaths, auditLogBase: r.AuditLogBase}); ok {
+	if reason, ok := selfConfigMatch(canon, r.SelfProtect); ok {
 		return r.deny(fmt.Sprintf("%q is %s; editing it would disable enforcement", canon, reason)), true
 	}
 	return Decision{}, false

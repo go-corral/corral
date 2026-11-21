@@ -241,8 +241,8 @@ func TestEventPathsResolveInEventFS(t *testing.T) {
 	link := filepath.Join(t.TempDir(), "e")
 	fsys := fakeFS{links: map[string]string{link: "/home/u/.claude/settings.json"}}
 	eng := NewEngine(
-		&BashRule{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()},
-		&PathPatternRule{AgentConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()},
+		&BashRule{SelfProtect: SelfProtect{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}},
+		&PathPatternRule{SelfProtect: SelfProtect{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}},
 	)
 	for _, tc := range []struct {
 		name string

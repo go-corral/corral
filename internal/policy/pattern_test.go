@@ -85,7 +85,7 @@ func TestPathPatternRuleReadAllows(t *testing.T) {
 }
 
 func TestPathPatternRuleWriteGuards(t *testing.T) {
-	r := &PathPatternRule{AgentConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}
+	r := &PathPatternRule{SelfProtect: SelfProtect{ConfigDir: "/home/u/.claude", Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}}
 	cases := []struct{ name, tool, path string }{
 		{"write-etc", "Write", "/etc/cron.d/job"},  // whole /etc is write-blocked
 		{"edit-etc-noncred", "Edit", "/etc/hosts"}, // even a non-credential /etc file
@@ -109,7 +109,7 @@ func TestPathPatternRuleWriteGuards(t *testing.T) {
 func TestPathPatternRuleSelfProtectFallbackComponent(t *testing.T) {
 	// Even when the configured dir differs, a `.claude/settings.json` path is
 	// self-protected via the defense-in-depth static path-segment scan (allFootprints).
-	r := &PathPatternRule{AgentConfigDir: "/some/other/dir", AllFootprints: allTestFootprints()}
+	r := &PathPatternRule{SelfProtect: SelfProtect{ConfigDir: "/some/other/dir", AllFootprints: allTestFootprints()}}
 	d, matched := evalOrSkip(t, r, toolEvent(t, "Edit", map[string]any{"file_path": "/home/u/.claude/settings.json"}))
 	if !matched || d.Action != Deny {
 		t.Errorf("`.claude/settings.json` must be self-protected via fallback; matched=%v", matched)
@@ -117,7 +117,7 @@ func TestPathPatternRuleSelfProtectFallbackComponent(t *testing.T) {
 }
 
 func TestPathPatternRuleWriteAllows(t *testing.T) {
-	r := &PathPatternRule{AgentConfigDir: "/home/u/.claude"}
+	r := &PathPatternRule{SelfProtect: SelfProtect{ConfigDir: "/home/u/.claude"}}
 	cases := []struct{ tool, path string }{
 		{"Write", "/home/u/project/app.go"},
 		{"Edit", "/home/u/project/.vscode/settings.json"}, // not .claude → allowed
@@ -321,7 +321,7 @@ func TestSelfConfigMatch(t *testing.T) {
 		if strings.HasPrefix(p, "/custom") {
 			dir = "/custom/cfg"
 		}
-		if _, ok := selfConfigMatch(p, selfProtect{configDir: dir, footprint: claudeFootprint(), allFootprints: allTestFootprints()}); !ok {
+		if _, ok := selfConfigMatch(p, SelfProtect{ConfigDir: dir, Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}); !ok {
 			t.Errorf("selfConfigMatch(%q) should match", p)
 		}
 	}
@@ -334,7 +334,7 @@ func TestSelfConfigMatch(t *testing.T) {
 		"/home/u/project/corral-notes.md", // not a sentinel name
 	}
 	for _, p := range allow {
-		if reason, ok := selfConfigMatch(p, selfProtect{configDir: cfg, footprint: claudeFootprint(), allFootprints: allTestFootprints()}); ok {
+		if reason, ok := selfConfigMatch(p, SelfProtect{ConfigDir: cfg, Footprint: claudeFootprint(), AllFootprints: allTestFootprints()}); ok {
 			t.Errorf("selfConfigMatch(%q) must NOT match (got %q) — agent state stays writable", p, reason)
 		}
 	}

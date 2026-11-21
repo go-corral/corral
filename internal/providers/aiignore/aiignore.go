@@ -1,12 +1,11 @@
 // Package aiignore is the providers.aiignore config section: the repo's AI-exclusion
-// files. Mask is the launcher half; Discover and ProtectedPaths are the half the hook
-// reuses: pure reads, safe on the fail-closed hook path.
+// files. It holds the config, the launch-time mask that expands the ignore patterns to
+// concrete paths, and the diagnostics for the patterns the matcher drops.
 package aiignore
 
 import (
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -16,28 +15,6 @@ import (
 
 // WalkCap bounds the launch-time filesystem walk that expands ignore patterns.
 const WalkCap = 200_000
-
-// Discovery is the discovered repo-level ignore state for one launch/hook init.
-type Discovery struct {
-	// Dir is the directory that holds the sources, Root its canonical form.
-	Dir          string
-	Root         string
-	Patterns     []string
-	Files        []string
-	ProtectFiles []string
-}
-
-// isNativeSource reports whether a source filename is one of the built-in
-// (native) AI-ignore files. Only native sources are self-protected from
-// in-sandbox edits.
-func isNativeSource(name string) bool {
-	for _, n := range DefaultSources {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
 
 // NegationCount reports how many entries are "!" re-include negations, which
 // corral's matcher drops (it has no negation). A source using them is
@@ -50,61 +27,6 @@ func NegationCount(patterns []string) int {
 		}
 	}
 	return n
-}
-
-// Discover walks up from startDir looking for the nearest directory containing
-// any of the given source filenames and reads them. The search stops at the repo
-// boundary (a directory containing .git). It is strictly best-effort: any read/stat
-// error contributes nothing, and "no files found" returns a zero Discovery.
-func Discover(startDir string, sources []string) Discovery {
-	cur := startDir
-	for cur != "" {
-		var files, protect []string
-		var patterns []string
-		for _, name := range sources {
-			p := filepath.Join(cur, name)
-			data, err := os.ReadFile(p)
-			if err != nil {
-				continue
-			}
-			files = append(files, p)
-			if isNativeSource(name) {
-				protect = append(protect, p)
-			}
-			patterns = append(patterns, parseIgnoreLines(data)...)
-		}
-		if len(files) > 0 {
-			root, err := policy.CanonicalizeRoot(cur, "")
-			if err != nil {
-				root = filepath.Clean(cur)
-			}
-			return Discovery{Dir: cur, Root: root, Patterns: patterns, Files: files, ProtectFiles: protect}
-		}
-		// Repo boundary: do not search above .git.
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return Discovery{}
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return Discovery{}
-		}
-		cur = parent
-	}
-	return Discovery{}
-}
-
-// parseIgnoreLines splits ignore-file bytes into entries, dropping blank lines
-// and comments.
-func parseIgnoreLines(data []byte) []string {
-	var out []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
 }
 
 // ConcreteMasks expands the ignore patterns to the concrete paths that currently
@@ -143,18 +65,6 @@ func ConcreteMasks(root string, patterns []string) (dirs, files []string) {
 	return dirs, files
 }
 
-// ProtectedPaths returns the paths of the given ignore source files, canonical in
-// fsys, mapped to a self-protect reason. Callers pass only native sources.
-func ProtectedPaths(files []string, fsys policy.FS) map[string]string {
-	out := map[string]string{}
-	for _, f := range files {
-		if canon, err := policy.CanonicalizeRootIn(fsys, f, ""); err == nil {
-			out[canon] = "a repo AI ignore file"
-		}
-	}
-	return out
-}
-
 // Masks is what the repo's ignore sources add to a launch: the concrete matches to
 // mask, the banner rows, and the agent notes.
 type Masks struct {
@@ -167,7 +77,7 @@ type Masks struct {
 // Mask discovers the ignore sources from workDir and expands their patterns to the
 // concrete matches. It returns zero Masks when no source has a pattern.
 func Mask(workDir string, sources []string) Masks {
-	d := Discover(workDir, sources)
+	d := policy.DiscoverAIIgnore(workDir, sources)
 	if len(d.Patterns) == 0 {
 		return Masks{}
 	}

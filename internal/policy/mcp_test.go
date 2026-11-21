@@ -159,19 +159,19 @@ func TestBashRuleSkipsMCP(t *testing.T) {
 // not a file edit and is intentionally unaffected.
 func TestSelfConfigMatchMCPRegistry(t *testing.T) {
 	// The project MCP registry is protected from hand-edits.
-	if _, ok := selfConfigMatch("/work/proj/.mcp.json", selfProtect{}); !ok {
+	if _, ok := selfConfigMatch("/work/proj/.mcp.json", SelfProtect{}); !ok {
 		t.Error(".mcp.json must be recognized as a protected MCP registry file")
 	}
 	// The user-scope ~/.claude.json is intentionally not, because it doubles as Claude
 	// Code session state that must stay writable, so blanket-blocking it would break
 	// legitimate writes.
 	for _, p := range []string{"/home/u/.claude.json", "/home/u/.claude/.claude.json"} {
-		if _, ok := selfConfigMatch(p, selfProtect{}); ok {
+		if _, ok := selfConfigMatch(p, SelfProtect{}); ok {
 			t.Errorf("%s must remain writable (session state), not flagged", p)
 		}
 	}
 	// A normal project file must not be flagged.
-	if _, ok := selfConfigMatch("/work/proj/main.go", selfProtect{}); ok {
+	if _, ok := selfConfigMatch("/work/proj/main.go", SelfProtect{}); ok {
 		t.Error("a normal file must not be flagged as a protected registry")
 	}
 }
