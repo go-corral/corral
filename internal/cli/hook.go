@@ -494,7 +494,7 @@ type policyFiles struct {
 // contributes nothing.
 func readPolicyFiles(in engineInputs) policyFiles {
 	return policyFiles{
-		hookPaths: activeAgent(in.cfg).ProtectedPaths(in.cfg.AgentConfigDir(in.home, in.env)),
+		hookPaths: agents.LookupOrDefault(in.cfg.EffectiveAgent()).ProtectedPaths(in.cfg.AgentConfigDir(in.home, in.env)),
 		// Configured sources discovered by walking up from the working directory.
 		ai: aiignore.Discover(in.workDir, in.cfg.Providers.AIIgnore.EffectiveSources()),
 	}
@@ -588,16 +588,6 @@ func canonicalHookPaths(paths []string, fsys policy.FS) []string {
 	return out
 }
 
-// activeAgent resolves the active agent's adapter: the configured agent, else the
-// default for an unregistered name — defensive, since the fail-closed hook must never nil-deref.
-func activeAgent(cfg *config.Config) agents.Agent {
-	if a, ok := agents.Lookup(cfg.EffectiveAgent()); ok {
-		return a
-	}
-	a, _ := agents.Lookup(agents.Default)
-	return a
-}
-
 // agentFootprint maps an agent's static footprint (agents.Footprint) onto policy's mirror
 // (policy.AgentFootprint). policy imports no agent; cli, the composition root, translates.
 func agentFootprint(a agents.Agent) policy.AgentFootprint {
@@ -616,7 +606,7 @@ func agentFootprint(a agents.Agent) policy.AgentFootprint {
 // checks) and every registered agent's (drives the defense-in-depth path-segment scan, so one agent's
 // session can't sabotage another's). Pure data, no I/O: the fail-closed hook's hot path stays fast.
 func agentFootprints(cfg *config.Config) (policy.AgentFootprint, []policy.AgentFootprint) {
-	active := agentFootprint(activeAgent(cfg))
+	active := agentFootprint(agents.LookupOrDefault(cfg.EffectiveAgent()))
 	var all []policy.AgentFootprint
 	for _, name := range agents.Known() {
 		if a, ok := agents.Lookup(name); ok {

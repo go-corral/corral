@@ -54,6 +54,23 @@ const PresenceAckEnvVar = "CORRAL_PRESENCE_ACK"
 // in-sandbox enforcement switch.
 const DisableHooksEnvVar = "CORRAL_DISABLE_HOOKS"
 
+// ReservedEnvNames are the env vars corral's own machinery controls. Neither env.set
+// nor a provider contribution may name them, so a config typo can never unset the
+// sandbox marker, retarget the pinned global-config path, profiles, audit-log path,
+// sidecar socket or agent id, and a repo-shipped .corral.yml can't plant an
+// enforcement-off CORRAL_DISABLE_HOOKS or model-facing notes.
+var ReservedEnvNames = []string{
+	SandboxEnvVar,
+	GlobalConfigEnvVar,
+	ProfilesEnvVar,
+	AuditPathEnvVar,
+	SidecarSocketEnvVar,
+	AgentEnvVar,
+	ProviderNotesEnvVar,
+	BackendNotesEnvVar,
+	DisableHooksEnvVar,
+}
+
 // InsideCorral reports whether the process runs inside a corral sandbox.
 // Deliberately spoofable: it backs the presence warning, the SessionStart
 // note, and the hook's refusal to evaluate policy in-process without a sidecar.

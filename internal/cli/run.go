@@ -35,17 +35,6 @@ import (
 // cleanupTimeout bounds provider teardown so a stuck network call cannot hang corral.
 const cleanupTimeout = 30 * time.Second
 
-// resolveAgentBinary resolves the agent's program to launch: the first Binaries name on
-// PATH, else the bare first entry.
-func resolveAgentBinary(a agents.Agent) string {
-	for _, name := range a.Binaries() {
-		if p, err := exec.LookPath(name); err == nil {
-			return p
-		}
-	}
-	return a.Binaries()[0]
-}
-
 // agentLaunch is a test seam over cfg.AgentLaunch.
 var agentLaunch = func(cfg *config.Config) agents.Launch { return cfg.AgentLaunch() }
 
@@ -187,7 +176,10 @@ func cmdRun(args []string, version string) int {
 		if !ok {
 			return fatalf(os.Stderr, "unknown agent %q", cfg.EffectiveAgent())
 		}
-		commandBin = resolveAgentBinary(agent)
+		var found bool
+		if commandBin, found = agentBinary(agent); !found {
+			commandBin = agent.Binaries()[0]
+		}
 	}
 
 	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
