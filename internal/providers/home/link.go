@@ -1,4 +1,4 @@
-package cli
+package home
 
 import (
 	"cmp"
@@ -10,60 +10,35 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-corral/corral/internal/config"
-	"github.com/go-corral/corral/internal/providers/home"
+	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
-// homeDir returns the resolved private-home directory and whether the home provider
-// is enabled. Wiring stays in cli because the resolved dir feeds both specParams
-// and activeProviders — one resolver keeps the two from disagreeing.
-func homeDir(cfg *config.Config, realHome string, host map[string]string) (dir string, enabled bool) {
-	if !cfg.Providers.Home.Enabled {
-		return "", false
-	}
-	if p := cfg.Providers.Home.Path; p != "" {
-		return p, true
-	}
-	return home.DefaultPath(realHome, cfg.AgentConfigDir(realHome, host)), true
-}
-
-// baselineArch maps a backend Kind to the baseline rules' arch vocabulary ("linux"/"macos"),
-// which differs from runtime.GOOS ("linux"/"darwin").
-func baselineArch(kind sandbox.Kind) string {
-	if kind == sandbox.KindBwrap {
-		return "linux"
-	}
-	return "macos"
-}
-
-// linkHome populates the sandbox-private home with symlinks back to every allowed-under-realHome
+// Link populates the sandbox-private home with symlinks back to every allowed-under-realHome
 // host path. Always-blocked safety is structural: no always-blocked dir is ever a baseline target
 // or mounted. It only creates or retargets symlinks; a pre-existing real file/dir is left untouched
 // and returned as a launch warning. keep holds private-home-relative paths whose warning is
 // suppressed. With apply false nothing on disk changes.
-func linkHome(spec *sandbox.SandboxSpec, realHome, fakeHome, goos string, keep []string, guardDir string, apply bool) (shadows []string, err error) {
-	cands := homeCandidates(spec, realHome, fakeHome, goos)
+func Link(spec *sandbox.SandboxSpec, realHome, privHome, goos string, keep []string, guardDir string, apply bool) (shadows []string, err error) {
+	realHome, privHome = filepath.Clean(realHome), filepath.Clean(privHome)
+	cands := homeCandidates(spec, realHome, privHome, goos)
 	// Shallowest paths first so a parent dir's symlink is created before any child.
 	slices.SortFunc(cands, func(a, b string) int {
-		return cmp.Compare(strings.Count(a, string(os.PathSeparator)), strings.Count(b, string(os.PathSeparator)))
+		return cmp.Compare(strings.Count(filepath.Clean(a), string(os.PathSeparator)), strings.Count(filepath.Clean(b), string(os.PathSeparator)))
 	})
 
 	for _, real := range cands {
-		rel, ok := relUnderDir(realHome, real)
-		if !ok {
-			continue // not strictly under the real home
-		}
+		rel, _ := filepath.Rel(realHome, real) // cannot fail: homeCandidates checked real is under realHome
 		// Skip targets that do not exist on the host.
 		if _, err := os.Lstat(real); err != nil {
 			continue
 		}
-		link := filepath.Join(fakeHome, rel)
+		link := filepath.Join(privHome, rel)
 		if link == real {
 			continue // would self-reference
 		}
 		// Parent already redirects — skip.
-		if ancestorIsSymlink(fakeHome, link) {
+		if ancestorIsSymlink(privHome, link) {
 			continue
 		}
 		switch fi, err := os.Lstat(link); {
@@ -128,32 +103,25 @@ func keptEntry(keep []string, rel string) bool {
 	return false
 }
 
-// hookGuardDir returns the agent config dir whose private-home shadow drops corral's
-// enforcement, "" when none can.
-func hookGuardDir(cfg *config.Config, realHome string, host map[string]string) string {
-	if len(cfg.AgentLaunch().ExtensionAsset) > 0 {
-		return ""
-	}
-	dir := cfg.AgentConfigDir(realHome, host)
-	if dir != cfg.AgentConfigDir(realHome, nil) {
-		return ""
-	}
-	return dir
-}
-
 // homeCandidates collects the real host paths under realHome that the sandbox allows:
-// the launch rule set plus assembled spec mounts, excluding the workdir and anything under fakeHome.
-func homeCandidates(spec *sandbox.SandboxSpec, realHome, fakeHome, goos string) []string {
+// the launch rule set plus assembled spec mounts, excluding the workdir and anything under privHome.
+// The checks and the dedup use the cleaned path; the returned path keeps its spelling, because
+// the kernel resolves ".." after following symlinks. realHome and privHome must be clean.
+func homeCandidates(spec *sandbox.SandboxSpec, realHome, privHome, goos string) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(p string) {
-		if p == "" || seen[p] {
+		if p == "" {
 			return
 		}
-		if !underDir(p, realHome) || underDir(p, fakeHome) || p == fakeHome {
+		c := filepath.Clean(p)
+		if seen[c] {
 			return
 		}
-		seen[p] = true
+		if !pathutil.Under(c, realHome) || pathutil.Under(c, privHome) || c == privHome {
+			return
+		}
+		seen[c] = true
 		out = append(out, p)
 	}
 
@@ -172,21 +140,6 @@ func homeCandidates(spec *sandbox.SandboxSpec, realHome, fakeHome, goos string) 
 		add(m.Src)
 	}
 	return out
-}
-
-// relUnderDir returns p's path relative to dir and whether p is strictly under dir.
-func relUnderDir(dir, p string) (rel string, ok bool) {
-	rel, err := filepath.Rel(dir, p)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", false
-	}
-	return rel, true
-}
-
-// underDir reports whether p is strictly under dir.
-func underDir(p, dir string) bool {
-	_, ok := relUnderDir(dir, p)
-	return ok
 }
 
 // ancestorIsSymlink reports whether any directory component between base and link's

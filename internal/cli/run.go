@@ -25,6 +25,7 @@ import (
 	"github.com/go-corral/corral/internal/health"
 	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/providers"
+	"github.com/go-corral/corral/internal/providers/home"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/selfupdate"
 	"github.com/go-corral/corral/internal/sidecar"
@@ -220,7 +221,7 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 		cfg.Agent = f.agent
 	}
 	host := envMap()
-	privHome, homeOn := homeDir(cfg, f.home, host)
+	privHome, homeOn := cfg.Providers.Home.Dir(f.home, cfg.AgentConfigDir(f.home, host))
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run and every kubeconfig in a sandbox-writable location.
@@ -338,10 +339,10 @@ func planLaunch(f runFlags) (*launchPlan, int) {
 	guardDir := hookGuardDir(cfg, f.home, host)
 	var shadows []string
 	if homeOn {
-		pre := spec // shallow copy: linkHome only reads
+		pre := spec // shallow copy: home.Link only reads
 		pre.Mounts = append(slices.Clone(spec.Mounts), preview.Mounts()...)
 		var serr error
-		if shadows, serr = linkHome(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
+		if shadows, serr = home.Link(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
 			return nil, fatalf(os.Stderr, "home: %v", serr)
 		}
 		warnings = append(warnings, shadows...)
@@ -498,7 +499,7 @@ func launch(p *launchPlan) int {
 	// the full mount set is known.
 	var lateShadows []string
 	if p.homeOn {
-		late, lerr := linkHome(&p.spec, p.flags.home, p.privHome, p.homeArch, p.keep, p.guardDir, true)
+		late, lerr := home.Link(&p.spec, p.flags.home, p.privHome, p.homeArch, p.keep, p.guardDir, true)
 		if lerr != nil {
 			return fatalf(os.Stderr, "home: %v", lerr)
 		}
@@ -575,6 +576,28 @@ func launch(p *launchPlan) int {
 
 	// We outlive the child to serve the sidecar; the deferred teardown reclaims backend resources.
 	return runSupervised(launcherAbs, argv, p.spec.Environ(), res)
+}
+
+// baselineArch maps a backend Kind to the baseline rules' arch vocabulary ("linux"/"macos"),
+// which differs from runtime.GOOS ("linux"/"darwin").
+func baselineArch(kind sandbox.Kind) string {
+	if kind == sandbox.KindBwrap {
+		return "linux"
+	}
+	return "macos"
+}
+
+// hookGuardDir returns the agent config dir whose private-home shadow drops corral's
+// enforcement, "" when none can.
+func hookGuardDir(cfg *config.Config, realHome string, host map[string]string) string {
+	if len(cfg.AgentLaunch().ExtensionAsset) > 0 {
+		return ""
+	}
+	dir := cfg.AgentConfigDir(realHome, host)
+	if dir != cfg.AgentConfigDir(realHome, nil) {
+		return ""
+	}
+	return dir
 }
 
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the

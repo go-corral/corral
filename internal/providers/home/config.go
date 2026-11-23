@@ -11,8 +11,8 @@ import (
 )
 
 // Config configures the private-$HOME provider (providers.home): HOME is
-// redirected to Path and the launcher symlinks the allowed-under-home host
-// paths into it. Default on.
+// redirected to Path and Link symlinks the allowed-under-home host paths into it.
+// Default on.
 type Config struct {
 	Enabled bool `yaml:"enabled"`
 	// Path is the host directory used as the sandbox's $HOME. Empty -> DefaultPath.
@@ -66,6 +66,17 @@ func keepRel(entry string) (string, bool) {
 		return "", false
 	}
 	return e, true
+}
+
+// Dir returns the resolved private-home directory and whether the home provider is enabled.
+func (c Config) Dir(realHome, agentConfigDir string) (dir string, enabled bool) {
+	if !c.Enabled {
+		return "", false
+	}
+	if c.Path != "" {
+		return c.Path, true
+	}
+	return DefaultPath(realHome, agentConfigDir), true
 }
 
 // DefaultPath is the sandbox's private $HOME when Path is unset: a persistent

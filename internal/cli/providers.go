@@ -19,7 +19,7 @@ var resolveProviders = providers.Resolve
 
 // launchDeps assembles the registry's host-input carrier for a launch.
 func launchDeps(cfg *config.Config, home string, host map[string]string, workDir string) registry.Deps {
-	dir, _ := homeDir(cfg, home, host)
+	dir, _ := cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, host))
 	return registry.Deps{Home: home, Host: host, WorkDir: workDir, HomeDir: dir}
 }
 

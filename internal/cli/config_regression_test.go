@@ -65,9 +65,9 @@ func TestSpecParamsHomeProviderEnabled(t *testing.T) {
 	cfg.Providers.Home.Enabled = true
 	// Path is empty, so it will use the default: the keyed home for the default agent's config dir.
 	host := map[string]string{}
-	privateHome, ok := homeDir(cfg, home, host)
+	privateHome, ok := cfg.Providers.Home.Dir(home, cfg.AgentConfigDir(home, host))
 	if !ok {
-		t.Fatal("homeDir: provider unexpectedly disabled")
+		t.Fatal("home.Dir: provider unexpectedly disabled")
 	}
 
 	params := specParams(cfg, home, proj, host, "")
