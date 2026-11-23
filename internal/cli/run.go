@@ -68,8 +68,25 @@ func splitAgentArg(args []string) (agent string, rest []string) {
 	return "", args
 }
 
-// cmdRun launches a coding agent inside the sandbox built from the effective config.
-func cmdRun(args []string, version string) int {
+// runFlags is the parsed `corral run` command line, with the home and project defaults
+// resolved.
+type runFlags struct {
+	agent    string
+	dryRun   bool
+	home     string
+	project  string
+	bwrap    string
+	command  string
+	backend  string
+	profiles []string
+	yes      bool
+	args     []string
+	version  string
+}
+
+// parseRunFlags parses the `corral run` command line. ok is false when the command must exit
+// with code.
+func parseRunFlags(args []string, version string) (f runFlags, code int, ok bool) {
 	// Peeled before flag parsing since Go's flag package stops at the first positional.
 	agentName, args := splitAgentArg(args)
 
@@ -89,50 +106,101 @@ func cmdRun(args []string, version string) int {
 		fs.PrintDefaults()
 	}
 	if code, ok := parseFlags(fs, args); !ok {
-		return code
+		return runFlags{}, code, false
 	}
-	c := report.StyleFor(os.Stderr)
-	warnLines := &lineWriter{w: os.Stderr, c: c, g: report.Attention}
 
 	if *home == "" {
 		h, err := os.UserHomeDir()
 		if err != nil {
-			return fatalf(os.Stderr, "cannot resolve home: %v", err)
+			return runFlags{}, fatalf(os.Stderr, "cannot resolve home: %v", err), false
 		}
 		*home = h
 	}
 	if *project == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return fatalf(os.Stderr, "cannot resolve working directory: %v", err)
+			return runFlags{}, fatalf(os.Stderr, "cannot resolve working directory: %v", err), false
 		}
 		*project = wd
 	}
+	return runFlags{
+		agent:    agentName,
+		dryRun:   *dryRun,
+		home:     *home,
+		project:  *project,
+		bwrap:    *bwrapPath,
+		command:  *commandPath,
+		backend:  *backendFlag,
+		profiles: []string(*profiles),
+		yes:      *yes,
+		args:     fs.Args(),
+		version:  version,
+	}, 0, true
+}
+
+// launchPlan holds what the dry run and the real launch read after planLaunch.
+type launchPlan struct {
+	cfg            *config.Config
+	sources        []config.Source
+	flags          runFlags
+	projectSrc     string
+	privHome       string
+	homeOn         bool
+	homeArch       string
+	keep           []string
+	guardDir       string
+	kubes          kubeconfigs
+	spec           sandbox.SandboxSpec
+	owners         providers.Owners
+	sectionRows    []providers.Notice
+	checks         []health.Check
+	warnings       []string
+	backend        sandbox.Backend
+	auditPath      string
+	agentConfigDir string
+	command        []string
+	sess           providers.Session
+	active         []providers.Active
+	preview        *providers.Resolved
+	previewOnly    []string
+	shadows        []string
+	banner         bannerInfo
+	c              report.Style
+	warnLines      *lineWriter
+	hookLog        *lineWriter
+}
+
+// planLaunch runs every step before the confirmation gate: config, trust gate, spec, backend,
+// warnings, the provider preview and the private-home shadow check. On failure it returns a nil
+// plan and the exit code.
+func planLaunch(f runFlags) (*launchPlan, int) {
+	c := report.StyleFor(os.Stderr)
+	warnLines := &lineWriter{w: os.Stderr, c: c, g: report.Attention}
 
 	// Decide the backend once: the -backend override if given, else this OS's default.
-	backendKind, err := sandbox.ResolveKind(*backendFlag)
+	backendKind, err := sandbox.ResolveKind(f.backend)
 	if err != nil {
-		return fatalf(os.Stderr, "%v", err)
+		return nil, fatalf(os.Stderr, "%v", err)
 	}
 
-	cfg, sources, err := loadConfig([]string(*profiles))
+	cfg, sources, err := loadConfig(f.profiles)
 	if err != nil {
-		return fatalf(os.Stderr, "load config: %v", err)
+		return nil, fatalf(os.Stderr, "load config: %v", err)
 	}
 	var applied []string
 	for _, s := range sources {
 		if s.Kind == "profile" {
 			if strings.Contains(s.Path, ",") {
-				return fatalf(os.Stderr, "profile %q: name contains a comma, which is not allowed", s.Path)
+				return nil, fatalf(os.Stderr, "profile %q: name contains a comma, which is not allowed", s.Path)
 			}
 			applied = append(applied, s.Path)
 		}
 	}
 	// Decide the writable workdir before the trust gate: the gate hashes session-hook
 	// executables whose relative paths anchor to the workdir.
-	projectSrc, substituted, err := resolveWorkdir(*home, *project, *dryRun)
+	projectSrc, substituted, err := resolveWorkdir(f.home, f.project, f.dryRun)
 	if err != nil {
-		return fatalf(os.Stderr, "%v", err)
+		return nil, fatalf(os.Stderr, "%v", err)
 	}
 	if substituted {
 		c.Message(os.Stderr, report.Attention, fmt.Sprintf("launched from home; using a fresh scratch workdir at %s "+
@@ -142,39 +210,39 @@ func cmdRun(args []string, version string) int {
 	// profiles must load from there too.
 	if len(applied) > 0 {
 		if _, _, err := config.Load(config.LoadOptions{Profiles: applied, GlobalPath: os.Getenv(sandbox.GlobalConfigEnvVar), ProjectDir: projectSrc}); err != nil {
-			return fatalf(os.Stderr, "profiles %s: the hook in workdir %s cannot load them: %v", strings.Join(applied, ","), projectSrc, err)
+			return nil, fatalf(os.Stderr, "profiles %s: the hook in workdir %s cannot load them: %v", strings.Join(applied, ","), projectSrc, err)
 		}
 	}
 
 	// A `corral run <agent>` positional overrides the configured agent. Set before the trust
 	// gate, because the private home path depends on the agent.
-	if agentName != "" {
-		cfg.Agent = agentName
+	if f.agent != "" {
+		cfg.Agent = f.agent
 	}
 	host := envMap()
-	privHome, homeOn := homeDir(cfg, *home, host)
+	privHome, homeOn := homeDir(cfg, f.home, host)
 
 	// Trust gate: a committed .corral.yml/.corral.local.yml is approve-once, as is every
 	// executable a session hook would run and every kubeconfig in a sandbox-writable location.
 	// Runs before any consumption or mint. --yes is refused here; --dry-run is exempt.
 	kubes := collectKubeconfigs(cfg, projectSrc, privHome)
-	if !*dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, *yes, os.Stdin, os.Stderr, c) {
-		return 1
+	if !f.dryRun && !checkRepoConfigTrust(sources, collectHookExecs(cfg, projectSrc), kubes, f.yes, os.Stdin, os.Stderr, c) {
+		return nil, 1
 	}
-	if err := prepareAuditDir(cfg, *home, *dryRun); err != nil {
-		return fatalf(os.Stderr, "config invalid: %v", err)
+	if err := prepareAuditDir(cfg, f.home, f.dryRun); err != nil {
+		return nil, fatalf(os.Stderr, "config invalid: %v", err)
 	}
 	// Always-blocked guard, symlink-resolving half. Runs after the trust gate, before consumption.
-	if err := checkResolvedPathGrants(cfg, *home); err != nil {
-		return fatalf(os.Stderr, "config invalid: %v", err)
+	if err := checkResolvedPathGrants(cfg, f.home); err != nil {
+		return nil, fatalf(os.Stderr, "config invalid: %v", err)
 	}
 
 	// Resolve the program to run: the configured agent's binary on PATH, or -command to override.
-	commandBin := *commandPath
+	commandBin := f.command
 	if commandBin == "" {
 		agent, ok := agents.Lookup(cfg.EffectiveAgent())
 		if !ok {
-			return fatalf(os.Stderr, "unknown agent %q", cfg.EffectiveAgent())
+			return nil, fatalf(os.Stderr, "unknown agent %q", cfg.EffectiveAgent())
 		}
 		var found bool
 		if commandBin, found = agentBinary(agent); !found {
@@ -182,7 +250,7 @@ func cmdRun(args []string, version string) int {
 		}
 	}
 
-	spec := sandbox.DefaultSpec(specParams(cfg, *home, projectSrc, host, commandBin))
+	spec := sandbox.DefaultSpec(specParams(cfg, f.home, projectSrc, host, commandBin))
 	// Pin the exact global config so commands inside the sandbox read the same file.
 	pinGlobalConfig(&spec, sources)
 	if spec.SetEnv == nil {
@@ -194,45 +262,45 @@ func cmdRun(args []string, version string) int {
 	}
 	// Pin the audit-log path so the sidecar and commands inside the sandbox do not resolve it
 	// against the private home.
-	agentConfigDir := cfg.AgentConfigDir(*home, host)
-	auditPath := configuredAuditPath(cfg, trust.StateDir(*home, host["XDG_STATE_HOME"]), agentConfigDir)
+	agentConfigDir := cfg.AgentConfigDir(f.home, host)
+	auditPath := configuredAuditPath(cfg, trust.StateDir(f.home, host["XDG_STATE_HOME"]), agentConfigDir)
 	spec.SetEnv[sandbox.AuditPathEnvVar] = auditPath
 
 	// Activate the agent's in-process policy extension, if it ships one.
-	launch := agentLaunch(cfg)
+	launchCfg := agentLaunch(cfg)
 	var extensionArgs []string
-	if len(launch.ExtensionAsset) > 0 {
-		assetPath, aerr := materializeExtension(*home, launch.ExtensionName, launch.ExtensionAsset)
+	if len(launchCfg.ExtensionAsset) > 0 {
+		assetPath, aerr := materializeExtension(f.home, launchCfg.ExtensionName, launchCfg.ExtensionAsset)
 		if aerr != nil {
-			return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
+			return nil, fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), aerr)
 		}
-		if launch.ExtensionEnv != nil {
+		if launchCfg.ExtensionEnv != nil {
 			dir := filepath.Dir(assetPath)
 			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: dir, Dst: dir, ReadOnly: true})
-			extEnv, eerr := launch.ExtensionEnv(assetPath, host)
+			extEnv, eerr := launchCfg.ExtensionEnv(assetPath, host)
 			if eerr != nil {
-				return fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), eerr)
+				return nil, fatalf(os.Stderr, "activate %s policy extension: %v", cfg.EffectiveAgent(), eerr)
 			}
 			maps.Copy(spec.SetEnv, extEnv)
 		} else {
 			spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: assetPath, Dst: assetPath, ReadOnly: true})
-			extensionArgs = []string{launch.ExtensionFlag, assetPath}
+			extensionArgs = []string{launchCfg.ExtensionFlag, assetPath}
 		}
 	}
-	agentArgs := slices.Concat(cfg.AgentArgs(), fs.Args())
-	if launch.Args != nil {
+	agentArgs := slices.Concat(cfg.AgentArgs(), f.args)
+	if launchCfg.Args != nil {
 		var aerr error
-		if agentArgs, aerr = launch.Args(cfg.AgentArgs(), fs.Args()); aerr != nil {
-			return fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
+		if agentArgs, aerr = launchCfg.Args(cfg.AgentArgs(), f.args); aerr != nil {
+			return nil, fatalf(os.Stderr, "%s args: %v", cfg.EffectiveAgent(), aerr)
 		}
 	}
 	// The config sections apply before the gate, so their warnings feed it and their masks are in
 	// the spec before any feature provider mounts.
-	owners, sectionRows, sectionWarnings := applyConfigSections(&spec, cfg, *home, projectSrc)
+	owners, sectionRows, sectionWarnings := applyConfigSections(&spec, cfg, f.home, projectSrc)
 
 	// Construct the backend and compute launch advisories before any mint. Written to stderr
 	// so --dry-run's argv stays pipeable.
-	backend := newBackend(backendKind, *bwrapPath, cfg.Sandbox)
+	backend := newBackend(backendKind, f.bwrap, cfg.Sandbox)
 	// Fold the resolved backend's model-facing notes into the sandbox env.
 	setBackendNotes(&spec, backend)
 	checks := sessionWarnings(cfg, backendKind, backend.ReadOnlyTargets(spec))
@@ -250,88 +318,150 @@ func cmdRun(args []string, version string) int {
 			Reason: "no effect here: this session is enforced; an agent started without corral run is not",
 			Fix:    "unset " + sandbox.DisableHooksEnvVar})
 	}
-	ctx := context.Background()
-	sess := newSession(*home, projectSrc)
+	sess := newSession(f.home, projectSrc)
 	// A preStart session hook's captured stderr renders in the banner's format.
 	hookLog := &lineWriter{w: os.Stderr, c: c, g: report.None}
-	// Registered before the teardown, so it runs after the session-end hooks.
-	defer hookLog.Flush()
 	// The kubernetes provider loads a gated kubeconfig only from bytes with the hash the gate checked.
-	active := activeProviders(cfg, *home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
+	active := activeProviders(cfg, f.home, host, projectSrc, kubes.approved(), bannerSessionHookPresenter(os.Stderr, c), hookLog)
 	command := append([]string{commandBin}, extensionArgs...)
 	command = append(command, agentArgs...)
 
 	// Side-effect-free preview of the feature providers: each one's static, secret-free contribution.
 	// Credential-minters and session hooks are named (previewOnly) rather than expanded.
-	preview, previewOnly, perr := providers.ResolvePreview(ctx, sess, active)
-	if perr != nil && *dryRun {
-		return fatalf(os.Stderr, "providers: %v", perr)
+	preview, previewOnly, perr := providers.ResolvePreview(context.Background(), sess, active)
+	if perr != nil && f.dryRun {
+		return nil, fatalf(os.Stderr, "providers: %v", perr)
 	}
 	// Private-home shadows go through the gate: a detect-only pass over the full static mount set.
 	homeArch := baselineArch(backendKind)
 	keep := cfg.Providers.Home.KeepRel()
-	guardDir := hookGuardDir(cfg, *home, host)
+	guardDir := hookGuardDir(cfg, f.home, host)
 	var shadows []string
 	if homeOn {
 		pre := spec // shallow copy: linkHome only reads
 		pre.Mounts = append(slices.Clone(spec.Mounts), preview.Mounts()...)
 		var serr error
-		if shadows, serr = linkHome(&pre, *home, privHome, homeArch, keep, guardDir, false); serr != nil {
-			return fatalf(os.Stderr, "home: %v", serr)
+		if shadows, serr = linkHome(&pre, f.home, privHome, homeArch, keep, guardDir, false); serr != nil {
+			return nil, fatalf(os.Stderr, "home: %v", serr)
 		}
 		warnings = append(warnings, shadows...)
 	}
 
 	banner := bannerInfo{
-		version:  version,
-		home:     *home,
+		version:  f.version,
+		home:     f.home,
 		workdir:  spec.WorkDir,
 		auditLog: auditPath,
-		profiles: []string(*profiles),
+		profiles: f.profiles,
 	}
 
-	if *dryRun {
-		if err := preview.Apply(&spec, owners); err != nil {
-			return fatalf(os.Stderr, "providers: %v", err)
-		}
-		// The linking pass is skipped on a dry run: it only creates host symlinks and does not
-		// mutate spec, so the printed profile is unaffected.
-		warnings = append(warnings, preview.Warnings...)
-		// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
-		// so it gets a launch-only row.
-		notices := append(slices.Clone(sectionRows), preview.Notices...)
-		writeStartupBanner(os.Stderr, c, cfg, banner, checks, warnings, notices, previewOnly)
-		// Dry-run is an inspection tool and is not gated, but a real run would prompt.
-		writeTrustDryRunNote(os.Stderr, c, sources, collectHookExecs(cfg, projectSrc), kubes)
-		prep, err := backend.Prepare(&spec, warnLines)
-		warnLines.Flush()
-		if err != nil {
-			return fatalf(os.Stderr, "prepare sandbox: %v", err)
-		}
-		argv, err := backend.Argv(spec, command)
-		if err != nil {
-			prep.Cleanup()
-			return fatalf(os.Stderr, "build sandbox command: %v", err)
-		}
-		fmt.Println(shellQuote(slices.Concat([]string{"env", "-i"}, spec.Environ(), argv)))
-		// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
-		if len(previewOnly) > 0 {
-			c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
-				len(previewOnly), strings.Join(previewOnly, ", ")))
-		}
+	return &launchPlan{
+		cfg:            cfg,
+		sources:        sources,
+		flags:          f,
+		projectSrc:     projectSrc,
+		privHome:       privHome,
+		homeOn:         homeOn,
+		homeArch:       homeArch,
+		keep:           keep,
+		guardDir:       guardDir,
+		kubes:          kubes,
+		spec:           spec,
+		owners:         owners,
+		sectionRows:    sectionRows,
+		checks:         checks,
+		warnings:       warnings,
+		backend:        backend,
+		auditPath:      auditPath,
+		agentConfigDir: agentConfigDir,
+		command:        command,
+		sess:           sess,
+		active:         active,
+		preview:        preview,
+		previewOnly:    previewOnly,
+		shadows:        shadows,
+		banner:         banner,
+		c:              c,
+		warnLines:      warnLines,
+		hookLog:        hookLog,
+	}, 0
+}
+
+// cmdRun launches a coding agent inside the sandbox built from the effective config.
+func cmdRun(args []string, version string) int {
+	f, code, ok := parseRunFlags(args, version)
+	if !ok {
+		return code
+	}
+	p, code := planLaunch(f)
+	if p == nil {
+		return code
+	}
+	if f.dryRun {
+		return printDryRun(p)
+	}
+	return launch(p)
+}
+
+func (p *launchPlan) notices(extra []providers.Notice) []providers.Notice {
+	return append(slices.Clone(p.sectionRows), extra...)
+}
+
+// buildSandboxArgv prepares the backend and builds the sandbox argv. On an Argv error it runs the
+// prep's cleanup and returns a zero prep.
+func buildSandboxArgv(backend sandbox.Backend, spec *sandbox.SandboxSpec, command []string, warnLines *lineWriter) (sandbox.LaunchPrep, []string, int) {
+	prep, err := backend.Prepare(spec, warnLines)
+	warnLines.Flush()
+	if err != nil {
+		return prep, nil, fatalf(os.Stderr, "prepare sandbox: %v", err)
+	}
+	argv, err := backend.Argv(*spec, command)
+	if err != nil {
 		prep.Cleanup()
-		return 0
+		return sandbox.LaunchPrep{}, nil, fatalf(os.Stderr, "build sandbox command: %v", err)
 	}
+	return prep, argv, 0
+}
 
-	// --- real launch ---
+// printDryRun prints the banner and the sandbox command of the plan without a launch.
+func printDryRun(p *launchPlan) int {
+	if err := p.preview.Apply(&p.spec, p.owners); err != nil {
+		return fatalf(os.Stderr, "providers: %v", err)
+	}
+	// The linking pass is skipped on a dry run: it only creates host symlinks and does not
+	// mutate spec, so the printed profile is unaffected.
+	p.warnings = append(p.warnings, p.preview.Warnings...)
+	// Dry-run is network-free, so no version warning. A side-effect provider can't be previewed,
+	// so it gets a launch-only row.
+	writeStartupBanner(os.Stderr, p.c, p.cfg, p.banner, p.checks, p.warnings, p.notices(p.preview.Notices), p.previewOnly)
+	// Dry-run is an inspection tool and is not gated, but a real run would prompt.
+	writeTrustDryRunNote(os.Stderr, p.c, p.sources, collectHookExecs(p.cfg, p.projectSrc), p.kubes)
+	prep, argv, code := buildSandboxArgv(p.backend, &p.spec, p.command, p.warnLines)
+	if code != 0 {
+		return code
+	}
+	fmt.Println(shellQuote(slices.Concat([]string{"env", "-i"}, p.spec.Environ(), argv)))
+	// Name side-effect providers that would act at launch — to stderr so stdout stays pipeable.
+	if len(p.previewOnly) > 0 {
+		p.c.Message(os.Stderr, report.None, fmt.Sprintf("%d provider(s) not expanded in the profile above — they act only at launch (credential minting, session hooks): %s",
+			len(p.previewOnly), strings.Join(p.previewOnly, ", ")))
+	}
+	prep.Cleanup()
+	return 0
+}
 
+// launch shows the gate, mints the providers, starts the sidecar and supervises the agent.
+func launch(p *launchPlan) int {
+	// Registered before the teardown, so it runs after the session-end hooks.
+	defer p.hookLog.Flush()
+	ctx := context.Background()
 	// Startup banner + confirmation gate, before minting. The gate fires only when warnings
 	// exist and stdin is interactive: --yes skips it.
-	banner.latest = checkUpdateOnStart(ctx, cfg, *home, version)
+	p.banner.latest = checkUpdateOnStart(ctx, p.cfg, p.flags.home, p.flags.version)
 	// Print the banner around the gate and the feature providers' output, so the providers section
 	// renders as one contiguous block.
-	writeBannerHeader(os.Stderr, c, cfg, banner, checks, warnings)
-	if len(checks)+len(warnings) > 0 && !confirmProceed(*yes, os.Stdin, os.Stderr, c) {
+	writeBannerHeader(os.Stderr, p.c, p.cfg, p.banner, p.checks, p.warnings)
+	if len(p.checks)+len(p.warnings) > 0 && !confirmProceed(p.flags.yes, os.Stdin, os.Stderr, p.c) {
 		return fatalf(os.Stderr, "launch aborted — warnings not confirmed (pass --yes to skip this prompt)")
 	}
 
@@ -342,8 +472,8 @@ func cmdRun(args []string, version string) int {
 	// so the interrupt tears down through the normal fail-closed teardown.
 	mintCtx, stopMint := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stopMint()
-	res, err := resolveProviders(mintCtx, sess, active)
-	hookLog.Flush()
+	res, err := resolveProviders(mintCtx, p.sess, p.active)
+	p.hookLog.Flush()
 	if err != nil {
 		return fatalf(os.Stderr, "providers: %v", err)
 	}
@@ -361,45 +491,44 @@ func cmdRun(args []string, version string) int {
 		return fatalf(os.Stderr, "launch aborted — interrupted during provider mint")
 	}
 	// owners attributes a collision with a config section to that section, not "baseline".
-	if err := res.Apply(&spec, owners); err != nil {
+	if err := res.Apply(&p.spec, p.owners); err != nil {
 		return fatalf(os.Stderr, "providers: %v", err)
 	}
 	// With the home provider active, populate the private home with symlinks. After Apply so
 	// the full mount set is known.
 	var lateShadows []string
-	if homeOn {
-		late, lerr := linkHome(&spec, *home, privHome, homeArch, keep, guardDir, true)
+	if p.homeOn {
+		late, lerr := linkHome(&p.spec, p.flags.home, p.privHome, p.homeArch, p.keep, p.guardDir, true)
 		if lerr != nil {
 			return fatalf(os.Stderr, "home: %v", lerr)
 		}
-		lateShadows = slices.DeleteFunc(late, func(s string) bool { return slices.Contains(shadows, s) })
+		lateShadows = slices.DeleteFunc(late, func(s string) bool { return slices.Contains(p.shadows, s) })
 	}
 
 	// The providers section prints after the gate and the feature providers' mint.
-	notices := append(slices.Clone(sectionRows), res.Notices...)
-	writeBannerBody(os.Stderr, c, *home, notices, nil)
-	writeWarnings(os.Stderr, c, res.Warnings)
-	writeWarnings(os.Stderr, c, lateShadows)
+	writeBannerBody(os.Stderr, p.c, p.flags.home, p.notices(res.Notices), nil)
+	writeWarnings(os.Stderr, p.c, res.Warnings)
+	writeWarnings(os.Stderr, p.c, lateShadows)
 
 	// Move the selected agent's legacy default log before the sidecar writes the new one.
-	if cfg.Policy.Audit.Path == "" {
-		for _, err := range audit.MoveLegacy(legacyAuditPath(agentConfigDir), auditPath) {
-			c.Message(os.Stderr, report.Attention, fmt.Sprintf("legacy audit log not moved: %v; move the file into %s or delete it by hand",
-				err, filepath.Dir(auditPath)))
+	if p.cfg.Policy.Audit.Path == "" {
+		for _, err := range audit.MoveLegacy(legacyAuditPath(p.agentConfigDir), p.auditPath) {
+			p.c.Message(os.Stderr, report.Attention, fmt.Sprintf("legacy audit log not moved: %v; move the file into %s or delete it by hand",
+				err, filepath.Dir(p.auditPath)))
 		}
 	}
 
 	// The sidecar evaluates the session's hook events against a policy fixed here, built from
 	// what the sandbox sees: its HOME, environment, and working directory.
-	if spec.SetEnv["HOME"] == "" {
+	if p.spec.SetEnv["HOME"] == "" {
 		return fatalf(os.Stderr, "policy: HOME is empty in the sandbox environment")
 	}
 	handler, err := policyHandler(engineInputs{
-		cfg:       cfg,
-		home:      spec.SetEnv["HOME"],
-		env:       maps.Clone(spec.SetEnv),
-		workDir:   spec.WorkDir,
-		auditPath: spec.SetEnv[sandbox.AuditPathEnvVar],
+		cfg:       p.cfg,
+		home:      p.spec.SetEnv["HOME"],
+		env:       maps.Clone(p.spec.SetEnv),
+		workDir:   p.spec.WorkDir,
+		auditPath: p.spec.SetEnv[sandbox.AuditPathEnvVar],
 	})
 	if err != nil {
 		return fatalf(os.Stderr, "policy: %v", err)
@@ -411,32 +540,27 @@ func cmdRun(args []string, version string) int {
 	// Registered after the teardown, so it runs first on an abort and, on a launch, after
 	// runSupervised has run the session-end hooks.
 	defer func() { _ = srv.Close() }()
-	spec.SetEnv[sandbox.SidecarSocketEnvVar] = srv.Path()
+	p.spec.SetEnv[sandbox.SidecarSocketEnvVar] = srv.Path()
 	// An overlay comes after every read-write bind and blocked-path mask, so neither a writable
 	// ancestor nor a masked ancestor of the directory covers it.
-	spec.Mounts = append(spec.Mounts, sandbox.Mount{Src: srv.Dir(), ReadOnly: true, Overlay: true})
+	p.spec.Mounts = append(p.spec.Mounts, sandbox.Mount{Src: srv.Dir(), ReadOnly: true, Overlay: true})
 
 	// Backend pre-launch ceremony. Prepare mutates spec in place and returns cleanup + a pre-launch
 	// chdir.
-	prep, err = backend.Prepare(&spec, warnLines)
-	warnLines.Flush()
-	if err != nil {
-		return fatalf(os.Stderr, "prepare sandbox: %v", err)
+	var argv []string
+	var code int
+	if prep, argv, code = buildSandboxArgv(p.backend, &p.spec, p.command, p.warnLines); code != 0 {
+		return code
 	}
 
-	argv, err := backend.Argv(spec, command)
-	if err != nil {
-		return fatalf(os.Stderr, "build sandbox command: %v", err)
-	}
-
-	if !backend.Available() {
-		return fatalf(os.Stderr, "%s", backend.UnavailableHint())
+	if !p.backend.Available() {
+		return fatalf(os.Stderr, "%s", p.backend.UnavailableHint())
 	}
 
 	// Resolve the sandbox launcher (argv[0]: bwrap or sandbox-exec) to an absolute path.
 	launcherAbs, err := exec.LookPath(argv[0])
 	if err != nil {
-		return fatalf(os.Stderr, "resolve %s path: %v", backend.Name(), err)
+		return fatalf(os.Stderr, "resolve %s path: %v", p.backend.Name(), err)
 	}
 
 	// A backend with no in-sandbox working-directory control asks the launcher to chdir.
@@ -450,7 +574,7 @@ func cmdRun(args []string, version string) int {
 	fmt.Fprintln(os.Stderr)
 
 	// We outlive the child to serve the sidecar; the deferred teardown reclaims backend resources.
-	return runSupervised(launcherAbs, argv, spec.Environ(), res)
+	return runSupervised(launcherAbs, argv, p.spec.Environ(), res)
 }
 
 // resolveWorkdir decides what host directory to mount as the writable project. Normally the
