@@ -121,8 +121,8 @@ func TestBareSessionAndLaunchShareDefaultAuditPath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run --dry-run exit=%d", code)
 	}
-	if want := auditPinArg(in.auditPath); !strings.Contains(out, want) {
-		t.Errorf("the launch must pin the bare session's audit path %q:\n%s", in.auditPath, out)
+	if want := auditPinArg(in.AuditPath); !strings.Contains(out, want) {
+		t.Errorf("the launch must pin the bare session's audit path %q:\n%s", in.AuditPath, out)
 	}
 }
 

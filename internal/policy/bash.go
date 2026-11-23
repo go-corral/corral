@@ -12,20 +12,7 @@ import (
 // constructs a regex gate misses: two-step pipe-to-shell, split/symbolic world-writable chmod,
 // and shell redirections into secret files. A command that cannot be parsed is denied (fail-closed).
 type BashRule struct {
-	ConfigDir string // canonical effective agent config dir; shell writes/deletes under it are blocked
-	// Footprint is the active agent's static enforcement footprint, anchored under ConfigDir.
-	// AllFootprints is every registered agent's footprint, scanned by config-dir path segment.
-	Footprint     AgentFootprint
-	AllFootprints []AgentFootprint
-	// HookPaths are canonical absolute paths of non-corral hook scripts; nil falls back to
-	// the static ConfigDir/hooks assumption.
-	HookPaths []string
-	// ExtraProtectedPaths are additional canonical runtime artifacts whose write/delete is
-	// blocked, each mapped to a reason. Nil when none.
-	ExtraProtectedPaths map[string]string
-	// AuditLogBase is the canonical audit-log path; the live log and rotation backups are
-	// prefix-protected from shell delete/truncate. Empty when unknown.
-	AuditLogBase string
+	SelfProtect SelfProtect
 }
 
 func (r *BashRule) Name() string { return "bash" }
@@ -50,8 +37,7 @@ func (r *BashRule) Evaluate(ev *HookEvent) (Decision, bool, error) {
 			Reason: fmt.Sprintf("could not parse the shell command, so it cannot be verified safe: %v", perr),
 		}, true, nil
 	}
-	sp := selfProtect{configDir: r.ConfigDir, footprint: r.Footprint, allFootprints: r.AllFootprints, hookPaths: r.HookPaths, extraPaths: r.ExtraProtectedPaths, auditLogBase: r.AuditLogBase}
-	if d, hit := pb.check(r.Name(), sp, ev); hit {
+	if d, hit := pb.check(r.Name(), r.SelfProtect, ev); hit {
 		return d, true, nil
 	}
 	return Decision{}, false, nil
@@ -241,7 +227,7 @@ func isWriteRedir(op syntax.RedirOperator) bool {
 	return false
 }
 
-func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Decision, bool) {
+func (pb *parsedBash) check(ruleName string, sp SelfProtect, ev *HookEvent) (Decision, bool) {
 	deny := func(reason string) (Decision, bool) {
 		return Decision{Action: Deny, Rule: ruleName, Reason: reason}, true
 	}
@@ -323,7 +309,7 @@ func (pb *parsedBash) check(ruleName string, sp selfProtect, ev *HookEvent) (Dec
 }
 
 // checkRM denies a recursive rm targeting a catastrophic or secret path.
-func checkRM(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
+func checkRM(sc simpleCommand, sp SelfProtect, ev *HookEvent) (string, bool) {
 	recursive := false
 	var targets []argWord
 	for _, a := range sc.args() {
@@ -358,7 +344,7 @@ func checkRM(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 }
 
 // checkFind denies `find … -delete` targeting a secret/credential path or corral's own config.
-func checkFind(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
+func checkFind(sc simpleCommand, sp SelfProtect, ev *HookEvent) (string, bool) {
 	deletes := false
 	for _, a := range sc.args() {
 		if a.text == "-delete" {
@@ -378,7 +364,7 @@ func checkFind(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
 // checkLn denies creating a link whose source or link name is a secret/credential path or
 // corral's own config: `ln -s ~/.ssh /tmp/bridge` builds a symlink bridge, `ln ~/.aws/credentials x`
 // hard-links secret content. Either endpoint being sensitive is enough.
-func checkLn(sc simpleCommand, sp selfProtect, ev *HookEvent) (string, bool) {
+func checkLn(sc simpleCommand, sp SelfProtect, ev *HookEvent) (string, bool) {
 	for _, a := range sc.args() {
 		if strings.HasPrefix(a.text, "-") {
 			continue
@@ -412,7 +398,7 @@ func pathCandidates(text string, expanded bool, ev *HookEvent) []string {
 // own protected config (selfConfigMatch). The self return distinguishes the two. classifySensitive
 // is tested before selfConfigMatch; the two never match the same canonical path, so the order does
 // not change which message a token produces.
-func matchSensitive(text string, expanded bool, ev *HookEvent, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
+func matchSensitive(text string, expanded bool, ev *HookEvent, sp SelfProtect, checkSelf bool) (reason string, self bool, hit bool) {
 	for _, c := range pathCandidates(text, expanded, ev) {
 		if r, h := classifySensitive(c); h {
 			return r, false, true
@@ -426,7 +412,7 @@ func matchSensitive(text string, expanded bool, ev *HookEvent, sp selfProtect, c
 	return "", false, false
 }
 
-func firstSensitiveArg(args []argWord, ev *HookEvent, sp selfProtect, checkSelf bool) (reason string, self bool, hit bool) {
+func firstSensitiveArg(args []argWord, ev *HookEvent, sp SelfProtect, checkSelf bool) (reason string, self bool, hit bool) {
 	for _, a := range args {
 		if r, s, h := matchSensitive(a.text, a.hasExpansion, ev, sp, checkSelf); h {
 			return r, s, h

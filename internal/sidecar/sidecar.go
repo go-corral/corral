@@ -44,6 +44,20 @@ const (
 // callTimeout stays below the 10 second Claude Code hook timeout.
 var callTimeout = 8 * time.Second
 
+// Hook event names: the `corral hook` subcommands and the sidecar request types.
+const (
+	EventPreToolUse       = "pre-tool-use"
+	EventPostToolUse      = "post-tool-use"
+	EventSessionStart     = "session-start"
+	EventUserPromptSubmit = "user-prompt-submit"
+)
+
+// Deny presentations: the `--decision` values of pre-tool-use.
+const (
+	DecisionJSON  = "json"
+	DecisionExit2 = "exit2"
+)
+
 // Request is the header line of a connection.
 type Request struct {
 	Type     string `json:"type"`

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-corral/corral/internal/config"
+	"github.com/go-corral/corral/internal/enforce"
 	"github.com/go-corral/corral/internal/policy"
 	"github.com/go-corral/corral/internal/sandbox"
 	"github.com/go-corral/corral/internal/sidecar"
@@ -43,9 +43,9 @@ func serveHandler(t *testing.T, h sidecar.Handler) {
 }
 
 // serveTestSidecar serves the policy built from in, as the launcher does.
-func serveTestSidecar(t *testing.T, in engineInputs) {
+func serveTestSidecar(t *testing.T, in enforce.Inputs) {
 	t.Helper()
-	h, err := policyHandler(in)
+	h, err := enforce.Handler(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,18 +77,19 @@ func blockedProject(t *testing.T) (home, proj string) {
 }
 
 // testEngineInputs blocks home/vault and logs to home/audit.
-func testEngineInputs(t *testing.T) (in engineInputs, vault string) {
+func testEngineInputs(t *testing.T) (in enforce.Inputs, vault string) {
 	t.Helper()
 	home := t.TempDir()
 	vault = filepath.Join(home, "vault")
 	cfg := &config.Config{}
 	cfg.Providers.Block.Directories = []string{vault}
-	return engineInputs{
-		cfg:       cfg,
-		home:      home,
-		env:       map[string]string{"HOME": home},
-		workDir:   home,
-		auditPath: filepath.Join(home, "audit", "corral-audit.jsonl"),
+	return enforce.Inputs{
+		Config:    cfg,
+		Home:      home,
+		Env:       map[string]string{"HOME": home},
+		WorkDir:   home,
+		AuditPath: filepath.Join(home, "audit", "corral-audit.jsonl"),
+		Version:   hookVersion,
 	}, vault
 }
 
@@ -118,130 +119,6 @@ func (f sandboxFS) ReadRegular(p string, limit int64) ([]byte, bool, error) {
 
 func writePreToolUse(file string) string {
 	return fmt.Sprintf(`{"hook_event_name":"PreToolUse","tool_name":"Write","cwd":"/","tool_input":{"file_path":%q,"content":"{}"}}`, file)
-}
-
-func TestPolicyHandler(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
-	in, vault := testEngineInputs(t)
-	h, err := policyHandler(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blocked := []byte(preToolUseEvent(t, in.home, filepath.Join(vault, "creds")))
-
-	resp := h(sidecar.Request{Type: "pre-tool-use", Decision: "json"}, blocked, policy.OSFS{})
-	if resp.Code != policy.ExitAllow || !strings.Contains(resp.Stdout, `"permissionDecision":"deny"`) || resp.Stderr != "" || resp.Error != "" {
-		t.Errorf("JSON deny: got %+v", resp)
-	}
-
-	resp = h(sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}, blocked, policy.OSFS{})
-	if resp.Code != policy.ExitBlock || resp.Stdout != "" || !strings.Contains(resp.Stderr, "[hook:blocked-path]") || resp.Error != "" {
-		t.Errorf("exit2 deny: got %+v", resp)
-	}
-
-	post := `{"hook_event_name":"PostToolUse","tool_name":"mcp__db__get","tool_response":"the value is ` + promptAWSKey + `"}`
-	resp = h(sidecar.Request{Type: "post-tool-use"}, []byte(post), policy.OSFS{})
-	if resp.Code != policy.ExitAllow || !strings.Contains(resp.Stdout, `"updatedToolOutput"`) || strings.Contains(resp.Stdout, promptAWSKey) || resp.Error != "" {
-		t.Errorf("secret response: got %+v", resp)
-	}
-
-	resp = h(sidecar.Request{Type: "user-prompt-submit"}, []byte(promptEvent("s1", "key "+promptAWSKey)), policy.OSFS{})
-	if resp.Code != policy.ExitAllow || !strings.Contains(resp.Stdout, `"block"`) || strings.Contains(resp.Stdout, promptAWSKey) || resp.Error != "" {
-		t.Errorf("secret prompt: got %+v", resp)
-	}
-
-	if resp = h(sidecar.Request{Type: "notification"}, nil, policy.OSFS{}); resp.Error == "" {
-		t.Errorf("unknown request type: got %+v, want an error", resp)
-	}
-
-	data, err := os.ReadFile(in.auditPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, rule := range []string{`"rule":"blocked-path"`, `"rule":"response-secret"`, `"rule":"prompt-secret-scan"`} {
-		if !strings.Contains(string(data), rule) {
-			t.Errorf("audit log missing %s:\n%s", rule, data)
-		}
-	}
-}
-
-// lexicalFS sees the paths under dir without resolving symlinks, as bwrap does for a bind
-// whose host parent is a symlink. Other paths resolve on the host.
-type lexicalFS struct{ dir string }
-
-func (f lexicalFS) EvalSymlinks(p string) (string, error) {
-	if p == f.dir || strings.HasPrefix(p, f.dir+string(filepath.Separator)) {
-		return filepath.Clean(p), nil
-	}
-	return policy.OSFS{}.EvalSymlinks(p)
-}
-
-func (f lexicalFS) ReadRegular(p string, limit int64) ([]byte, bool, error) {
-	return policy.OSFS{}.ReadRegular(p, limit)
-}
-
-// A blocked directory and an AI ignore root behind a host symlink stay protected when the
-// sandbox sees the paths without the symlink.
-func TestPolicyHandlerResolvesRootsInTheEventFS(t *testing.T) {
-	in, _ := testEngineInputs(t)
-	link := filepath.Join(in.home, "link")
-	if err := os.Symlink(t.TempDir(), link); err != nil {
-		t.Fatal(err)
-	}
-	vault := filepath.Join(link, "vault")
-	in.cfg.Providers.Block.Directories = []string{vault}
-	in.workDir = filepath.Join(link, "proj")
-	if err := os.Mkdir(in.workDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(in.workDir, ".aiignore"), []byte("notes.txt\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	h, err := policyHandler(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for file, rule := range map[string]string{
-		filepath.Join(vault, "creds"):          "[hook:blocked-path]",
-		filepath.Join(in.workDir, "notes.txt"): "[hook:ai-ignore]",
-	} {
-		event := []byte(preToolUseEvent(t, in.home, file))
-		resp := h(sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}, event, lexicalFS{dir: link})
-		if resp.Code != policy.ExitBlock || !strings.Contains(resp.Stderr, rule) {
-			t.Errorf("%s: got %+v, want a %s deny", file, resp, rule)
-		}
-	}
-}
-
-// The sidecar serves connections concurrently, so the handler is called concurrently.
-func TestPolicyHandlerConcurrent(t *testing.T) {
-	in, vault := testEngineInputs(t)
-	h, err := policyHandler(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blocked := []byte(preToolUseEvent(t, in.home, filepath.Join(vault, "creds")))
-
-	const n = 8
-	var wg sync.WaitGroup
-	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if resp := h(sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}, blocked, policy.OSFS{}); resp.Code != policy.ExitBlock {
-				t.Errorf("concurrent deny: got %+v", resp)
-			}
-		}()
-	}
-	wg.Wait()
-
-	data, err := os.ReadFile(in.auditPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(data), "\n"); got != n {
-		t.Errorf("want %d audit records, got %d:\n%s", n, got, data)
-	}
 }
 
 func TestEvaluateInsideSandboxWithoutSidecar(t *testing.T) {
@@ -376,9 +253,9 @@ func TestSidecarSessionStartMatchesHook(t *testing.T) {
 	t.Setenv(sandbox.BackendNotesEnvVar, "host: wrong")
 	t.Setenv(sandbox.ProviderNotesEnvVar, "host: wrong")
 	in, _ := testEngineInputs(t)
-	in.env[sandbox.BackendNotesEnvVar] = backendNote
-	in.env[sandbox.ProviderNotesEnvVar] = providerNote
-	h, err := policyHandler(in)
+	in.Env[sandbox.BackendNotesEnvVar] = backendNote
+	in.Env[sandbox.ProviderNotesEnvVar] = providerNote
+	h, err := enforce.Handler(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +453,7 @@ func TestSidecarEvaluatesPathsInHookFS(t *testing.T) {
 	tmp := t.TempDir()
 	link, result := filepath.Join(tmp, "e"), filepath.Join(tmp, "result.txt")
 	hookFS := sandboxFS{
-		links: map[string]string{link: filepath.Join(in.home, ".claude", "settings.json")},
+		links: map[string]string{link: filepath.Join(in.Home, ".claude", "settings.json")},
 		files: map[string]string{result: "key=" + promptAWSKey},
 	}
 	req := sidecar.Request{Type: "pre-tool-use", Decision: "exit2"}
@@ -645,7 +522,7 @@ func TestSidecarSeesSandboxPrivateTmp(t *testing.T) {
 		t.Skip("bwrap not available on this system")
 	}
 	in, _ := testEngineInputs(t)
-	target := filepath.Join(in.home, ".claude", "settings.json")
+	target := filepath.Join(in.Home, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +541,7 @@ func TestSidecarSeesSandboxPrivateTmp(t *testing.T) {
 	cmd := exec.Command(bwrap,
 		"--bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
 		"--ro-bind", filepath.Dir(sock), filepath.Dir(sock),
-		"--bind", in.home, in.home,
+		"--bind", in.Home, in.Home,
 		"--ro-bind", self, self,
 		"--chdir", "/",
 		self, "-test.run=^TestSidecarSeesSandboxPrivateTmp$", "-test.v")
