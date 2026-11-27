@@ -61,9 +61,18 @@ Tokens (`$HOME`, `$AGENT_CONFIG_DIR`, …) are expanded per launch.
 | `/Applications` | ro | — | macOS Applications |
 | `/private/var/select` | ro | — | macOS shell selector — /bin/sh reads /var/select/sh at startup. A single /var leaf; the broad /private/var stays denied by absence. |
 | `/private/var/db/timezone` | ro | — | Local timezone data (/etc/localtime resolves here on macOS). A single /var/db leaf; the broad /private/var stays denied by absence. |
-| `/private/var/db/xcode_select_link` | ro | node | Active Xcode/CommandLineTools selector (xcrun/git/clang readlink it to find the toolchain; target is under /Library, already granted). A single /var/db leaf. |
+| `/private/var/db/xcode_select_link` | ro | node | Active Xcode/CommandLineTools selector (xcrun/git/clang readlink it to find the toolchain; target is under /Library/Developer or /Applications, both granted). A single /var/db leaf. |
 | `/sbin` | ro | — | System binaries |
-| `/Library` | ro | — | macOS frameworks and locale data |
+| `/Library/Apple` | ro | optional | Rosetta runtime and Apple-installed tools |
+| `/Library/Developer` | ro | optional | Command Line Tools, SDKs, Swift toolchains, CoreSimulator and simulator runtimes |
+| `/Library/Frameworks` | ro | optional | Third-party frameworks such as python.org Python and CRAN R |
+| `/Library/Java` | ro | optional | JDKs found by /usr/libexec/java_home and JNI libraries on the default java.library.path |
+| `/Library/Perl` | ro | optional | Site directory of /usr/bin/perl |
+| `/Library/Python` | ro | optional | Site directory of /usr/bin/python3 |
+| `/Library/Ruby` | ro | optional | Site directory and gems of /usr/bin/ruby |
+| `/Library/TeX` | ro | optional | MacTeX links into /usr/local/texlive |
+| `/Library/Fonts` | ro | optional | System-wide fonts loaded by rendering tools |
+| `/Library/Preferences/com.apple.dt.Xcode.plist` | ro | optional, node | Xcode license acceptance: xcrun reads it when Xcode.app is selected, and fails with a license error without it. The rest of /Library/Preferences stays denied. |
 | `/` | ro | node | Root dir node (dyld reads it at launch); traversal only, no subtree |
 | `/etc` | ro | node | /etc symlink (kernel readlink to /private/etc) |
 | `/tmp` | ro | node | /tmp symlink (kernel readlink to /private/tmp) |

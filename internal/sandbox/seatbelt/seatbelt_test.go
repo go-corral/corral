@@ -7,10 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/go-corral/corral/internal/pathutil"
 	"github.com/go-corral/corral/internal/sandbox"
 )
 
@@ -129,16 +129,24 @@ func TestMetadataAncestors(t *testing.T) {
 }
 
 func TestCompileMacOSBaselineBehavior(t *testing.T) {
-	read, write, homePaths := compileMacOSBaseline(sandbox.BaselineRules(), macTestTokens(), noResolve{})
+	read, write, seeds := compileMacOSBaseline(sandbox.BaselineRules(), macTestTokens(), noResolve{})
 
-	// System roots: read-only subpaths, never writable.
-	for _, p := range []string{"/usr", "/System", "/Library", "/sbin", "/opt"} {
+	// System roots and the /Library code subtrees: read-only subpaths, never writable.
+	for _, p := range []string{
+		"/usr", "/System", "/sbin", "/opt",
+		"/Library/Apple", "/Library/Developer", "/Library/Frameworks", "/Library/Java",
+		"/Library/Perl", "/Library/Python", "/Library/Ruby", "/Library/TeX", "/Library/Fonts",
+	} {
 		if !hasItem(read, sbSubpath, p) {
 			t.Errorf("%s must be a read subpath", p)
 		}
 		if hasItem(write, sbSubpath, p) {
 			t.Errorf("%s must NOT be writable", p)
 		}
+	}
+	// /Library itself holds host data: neither its subtree nor its listing is readable.
+	if hasItem(read, sbSubpath, "/Library") || hasItem(read, sbLiteral, "/Library") {
+		t.Error("/Library itself must not be readable")
 	}
 
 	// /etc nodes are /private-normalized; resolv.conf is a single node (literal).
@@ -187,15 +195,15 @@ func TestCompileMacOSBaselineBehavior(t *testing.T) {
 		}
 	}
 
-	// homePaths carries the readable $HOME-internal paths (for ancestor derivation),
-	// and only those strictly under $HOME.
-	for _, p := range homePaths {
-		if !pathutil.Under(p, "/Users/u") {
-			t.Errorf("homePaths must be strictly under $HOME; got %q", p)
+	// seeds carries every non-regex readable path (for ancestor derivation), inside
+	// and outside $HOME.
+	for _, p := range []string{"/private/etc/resolv.conf", "/Library/Java", "/Users/u/.claude"} {
+		if !slices.Contains(seeds, p) {
+			t.Errorf("seeds must contain %q; got %v", p, seeds)
 		}
 	}
-	if len(homePaths) == 0 {
-		t.Error("expected some $HOME-internal readable paths")
+	if slices.Contains(seeds, "^/dev/ttys") {
+		t.Error("a regex rule must not seed ancestors")
 	}
 }
 
@@ -222,21 +230,12 @@ func TestCompileMacOSNonStandardHome(t *testing.T) {
 		"SESSION_TMPDIR":   "/var/folders/zz/T",
 		"AGENT_BIN_DIR":    "/opt/claude/bin",
 	}
-	read, _, homePaths := compileMacOSBaseline(sandbox.BaselineRules(), tok, noResolve{})
+	read, _, seeds := compileMacOSBaseline(sandbox.BaselineRules(), tok, noResolve{})
 	if !hasItem(read, sbSubpath, "/private/var/root/.claude") {
 		t.Error("$AGENT_CONFIG_DIR must compile under /private for a /var/root home")
 	}
-	found := false
-	for _, p := range homePaths {
-		if p == "/private/var/root/.claude" {
-			found = true
-		}
-		if !strings.HasPrefix(p, "/private/var/root/") {
-			t.Errorf("homePaths must be under the normalized home; got %q", p)
-		}
-	}
-	if !found {
-		t.Error("normalized $HOME-internal path missing from homePaths (metadata would be empty)")
+	if !slices.Contains(seeds, "/private/var/root/.claude") {
+		t.Error("normalized $HOME-internal path missing from seeds (metadata would be empty)")
 	}
 	profile, err := macBackend().profile(withTok(sandbox.SandboxSpec{SetEnv: map[string]string{}}, tok))
 	if err != nil {
@@ -253,20 +252,14 @@ func TestCompileMacOSClaudeBinDirUnderHome(t *testing.T) {
 	// not cover it. Verify it lands in the read set (not write) and seeds its ancestors.
 	tok := macTestTokens()
 	tok["AGENT_BIN_DIR"] = "/Users/u/.nvm/versions/node/v20/bin"
-	read, write, homePaths := compileMacOSBaseline(sandbox.BaselineRules(), tok, noResolve{})
+	read, write, seeds := compileMacOSBaseline(sandbox.BaselineRules(), tok, noResolve{})
 	if !hasItem(read, sbSubpath, "/Users/u/.nvm/versions/node/v20/bin") {
 		t.Error("$AGENT_BIN_DIR under $HOME must be a read subpath")
 	}
 	if hasItem(write, sbSubpath, "/Users/u/.nvm/versions/node/v20/bin") {
 		t.Error("$AGENT_BIN_DIR is read-only; must not be writable")
 	}
-	found := false
-	for _, p := range homePaths {
-		if p == "/Users/u/.nvm/versions/node/v20/bin" {
-			found = true
-		}
-	}
-	if !found {
+	if !slices.Contains(seeds, "/Users/u/.nvm/versions/node/v20/bin") {
 		t.Error("$HOME-internal AGENT_BIN_DIR must seed metadata ancestors")
 	}
 	profile, err := macBackend().profile(withTok(sandbox.SandboxSpec{SetEnv: map[string]string{}}, tok))
@@ -427,11 +420,11 @@ func allowBody(t *testing.T, profile, header string) string {
 		t.Fatalf("profile missing block %q", header)
 	}
 	rest := profile[start+len(header):]
-	end := strings.Index(rest, ")\n")
+	end := strings.Index(rest, "\n)\n")
 	if end < 0 {
 		t.Fatalf("unterminated block %q", header)
 	}
-	return rest[:end]
+	return rest[:end+1]
 }
 
 // TestSeatbeltExecEmptyBlockedPathsHasNoExecInDeny: with no blocked paths the whole
@@ -640,16 +633,6 @@ func TestPrepareGrantUserTempNotDarwin(t *testing.T) {
 	}
 }
 
-// allowBlock returns the body of the first (allow <op> …) block with the given header.
-func allowBlock(profile, header string) string {
-	i := strings.Index(profile, header)
-	if i < 0 {
-		return ""
-	}
-	rest := profile[i:]
-	return rest[:strings.Index(rest, "\n)\n")]
-}
-
 // The granted per-user temp directory is a read-write subpath like any mount, so the
 // sidecar deny and the blocked-path deny, which come after the allow blocks, still win
 // inside it. The sidecar deny covers every session's sidecar directory in it, not only
@@ -665,7 +648,7 @@ func TestSeatbeltProfileGrantUserTemp(t *testing.T) {
 	}
 	grant := `(subpath "/private/var/folders/zz/abc123/T")`
 	for _, header := range []string{"(allow file-write*\n", "(allow file-read*\n"} {
-		if !strings.Contains(allowBlock(profile, header), grant) {
+		if !strings.Contains(allowBody(t, profile, header), grant) {
 			t.Errorf("%s block must hold %s; profile:\n%s", strings.TrimSpace(header), grant, profile)
 		}
 	}
@@ -677,6 +660,29 @@ func TestSeatbeltProfileGrantUserTemp(t *testing.T) {
 	} {
 		if i := strings.Index(profile, rule); i < lastAllow {
 			t.Errorf("%s must come after the allow blocks (found at %d, last allow at %d)", rule, i, lastAllow)
+		}
+	}
+}
+
+// Baseline paths outside $HOME seed metadata ancestors too, so realpath works through
+// /Library and /private/etc, while /Library itself stays unreadable and unlisted.
+func TestSeatbeltProfileBaselineAncestors(t *testing.T) {
+	profile, err := macBackend().profile(withTok(sandbox.SandboxSpec{SetEnv: map[string]string{}}, macTestTokens()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := allowBody(t, profile, "(allow file-read-metadata\n")
+	for _, anc := range []string{"/Library", "/private/etc", "/private/var/db"} {
+		if !strings.Contains(meta, `(literal "`+anc+`")`) {
+			t.Errorf("metadata ancestors must include %q", anc)
+		}
+	}
+	for _, header := range []string{"(allow file-read*\n", "(allow process-exec*\n"} {
+		body := allowBody(t, profile, header)
+		for _, rule := range []string{`(subpath "/Library")`, `(literal "/Library")`} {
+			if strings.Contains(body, rule) {
+				t.Errorf("%s block must not contain %s", strings.TrimSpace(header), rule)
+			}
 		}
 	}
 }

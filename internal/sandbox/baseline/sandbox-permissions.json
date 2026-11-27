@@ -107,7 +107,7 @@
     },
     {
       "path": "/private/var/db/xcode_select_link",
-      "description": "Active Xcode/CommandLineTools selector (xcrun/git/clang readlink it to find the toolchain; target is under /Library, already granted). A single /var/db leaf.",
+      "description": "Active Xcode/CommandLineTools selector (xcrun/git/clang readlink it to find the toolchain; target is under /Library/Developer or /Applications, both granted). A single /var/db leaf.",
       "recursive": false,
       "archs": ["macos"]
     },
@@ -117,8 +117,64 @@
       "archs": ["macos"]
     },
     {
-      "path": "/Library",
-      "description": "macOS frameworks and locale data",
+      "path": "/Library/Apple",
+      "description": "Rosetta runtime and Apple-installed tools",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Developer",
+      "description": "Command Line Tools, SDKs, Swift toolchains, CoreSimulator and simulator runtimes",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Frameworks",
+      "description": "Third-party frameworks such as python.org Python and CRAN R",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Java",
+      "description": "JDKs found by /usr/libexec/java_home and JNI libraries on the default java.library.path",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Perl",
+      "description": "Site directory of /usr/bin/perl",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Python",
+      "description": "Site directory of /usr/bin/python3",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Ruby",
+      "description": "Site directory and gems of /usr/bin/ruby",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/TeX",
+      "description": "MacTeX links into /usr/local/texlive",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Fonts",
+      "description": "System-wide fonts loaded by rendering tools",
+      "optional": true,
+      "archs": ["macos"]
+    },
+    {
+      "path": "/Library/Preferences/com.apple.dt.Xcode.plist",
+      "description": "Xcode license acceptance: xcrun reads it when Xcode.app is selected, and fails with a license error without it. The rest of /Library/Preferences stays denied.",
+      "recursive": false,
+      "optional": true,
       "archs": ["macos"]
     },
     {
